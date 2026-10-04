@@ -37,4 +37,11 @@ uv run python -m bot.main
   - **Detection:** a fine-tuned YOLO11/YOLOv8 nano (~1-3 ms per frame on the RTX 5090) finds cells, food, viruses and ejected mass. Plain OpenCV colour/circle detection is the cheap baseline.
   - **Training data:** labels come free by rendering frames from the simulator or the real server, which know every object's exact position and size.
   - **Pairing with Jev:** detections become JSON state for the trained net and for Jev's judgments (Jev takes text/JSON, not images; check the TypeSafe docs).
+  - **Reusing the trained nets:** they read an object list through the encoder (`sim/obs.py`, `rl/guided.py`), so YOLO only has to produce that list. The rest has to be reconstructed:
+    - "mine" from our own colour/name;
+    - owner groups from colour/name;
+    - velocities and merge timers from a tracker (ByteTrack), since they need object IDs across frames;
+    - the camera from the grid lines and our own cells.
+
+    Detections are noisy, so first train with noise in the sim (drop objects, jitter sizes, swap IDs), then do a short final round on real detector output.
   - **Where:** servers that allow bots only. The official agar.io servers ban them.
