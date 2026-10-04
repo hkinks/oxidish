@@ -24,6 +24,17 @@ sim/watch.py      live browser viewer (http://127.0.0.1:8096) + sim/watch.html
 - **Scripted bot:** `sim.bots`. Takes half the slots in `--bot-frac` of the arenas.
 - **Inactive (farming drills):** `--farm-frac` of the arenas hold only `--farm-players` learners and nothing else. This gives a clean farming signal.
 
+**Drill arenas** (they come first; the rest are normal self-play arenas):
+
+| Flag | Arena |
+|---|---|
+| `--farm-frac` | only `--farm-players` learners, nothing else: clean farming signal |
+| `--hunt-frac` | `--hunt-players` learners at 400-2000 mass among small scripted bots (20-200): split-kills pay off at once |
+| `--flee-frac` | `--flee-players` learners at 100-600 mass and `--flee-hunters` scripted bots at 1500-6000 that chase them |
+| `--giant-frac` | a full arena of learners plus `--giants` scripted bots at 5k-20k mass (like a strong human on the real server) and `--giant-learners` learners that start that big |
+
+Drill players respawn at their drill size, so the pressure stays on all game.
+
 **Network** (`rl.model.Policy`): 17 moves (16 headings + stay), split and eject heads, and a separate critic. The inputs are 15 grid channels (48x48, the server's real view) plus 16 scalars:
 
 | Channels | Meaning |
@@ -146,3 +157,16 @@ TensorBoard shows each member as `e1/m<k>`.
 - Rule changes as fixes for learned behaviour are a dead end:
   - Big-cell hunting in the champion (`big_hunt`, bot/params.py) **lost** 33-67 to plain farming in 24 long 2x-food matches. It is now off by default.
   - Strategy (hunt when big, split-kill, farm efficiently) has to come from learning. The rules are only useful as sparring partners.
+
+## Ideas from other agar.io RL projects (2026-10-04)
+
+Surveyed GoBigger (OpenDILab, ICLR 2023), AgarCL (arXiv 2505.18347), the RPG paper (arXiv 2103.04564, staghuntrpg/agar), Wiehe et al. 2018 and AgarAI.
+- **Nobody has solved it.** AgarCL's DQN/PPO/SAC (160M frames each) never learned useful splits nor beat the fixed bots. Wiehe et al. beat a greedy bot at pellet collection, but not at fighting. RPG got splits against scripted cells only with reward randomization plus fine-tuning.
+- **No usable pretrained agents.** Only RPG ships checkpoints, for its own 2-player environment.
+- **Ideas worth trying here, ranked:**
+  1. Decide every 4-8 ticks (all three projects use frame skip/action repeat), and make a split a committed macro (hold the heading for a few steps), so its payoff isn't lost in per-step credit.
+  2. Explore splits only where they can pay: sample the split floor only when a `killable` target is in split range.
+  3. Opponent curriculum: ramp scripted-bot speed/aggression from 0 to 1 early (RPG), with a ladder of food-collector, then aggressive, then evasive bots (GoBigger).
+  4. Reward randomization: per-agent random weights on kill bonus, loss penalty, split bonus and explore bonus (RPG). A no-loss-penalty variant pushes hunting.
+  5. Fix farming by imitating the nearest-pellet routine first (behaviour cloning, then PPO, or a KL term).
+  6. Steadier continued training: PPO clip 0.1, a KL stop, and a gate against the best old net.

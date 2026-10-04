@@ -104,6 +104,12 @@ def main() -> None:
                         "--flee-hunters big scripted bots (1500-6000) that chase them; nothing else")
     p.add_argument("--flee-players", type=int, default=6)
     p.add_argument("--flee-hunters", type=int, default=8)
+    p.add_argument("--giant-frac", type=float, default=0.0,
+                   help="giant arenas: a full arena of learners plus --giants scripted bots at 5k-20k mass "
+                        "(like a strong human on the real server) and --giant-learners learners that start "
+                        "that big; everyone respawns at their drill size")
+    p.add_argument("--giants", type=int, default=4)
+    p.add_argument("--giant-learners", type=int, default=2)
     p.add_argument("--bot-frac", type=float, default=0.1, help="arenas where half the slots are scripted bots")
     p.add_argument("--league-every", type=int, default=25)
     p.add_argument("--league-size", type=int, default=8, help="snapshots kept in memory")
@@ -182,7 +188,8 @@ def main() -> None:
     # ---- slot roles: 0 learner (current policy), 1 league snapshot, 2 scripted bot
     n_league, n_bot = round(B * args.league_frac), round(B * args.bot_frac)
     n_farm, n_hunt, n_flee = round(B * args.farm_frac), round(B * args.hunt_frac), round(B * args.flee_frac)
-    n_league = max(0, min(n_league, B - n_farm - n_hunt - n_flee - n_bot))   # drills come first
+    n_giant = round(B * args.giant_frac)
+    n_league = max(0, min(n_league, B - n_farm - n_hunt - n_flee - n_giant - n_bot))   # drills come first
     role = torch.zeros(B, P, dtype=torch.long, device=dev)
     half = P - P // 2
     role[B - n_league - n_bot:B - n_bot, half:] = 1
@@ -203,7 +210,14 @@ def main() -> None:
         env.active[fl, k + hn:] = False
         env.spawn_mass[fl, :k] = torch.tensor([100.0, 600.0], device=dev)
         env.spawn_mass[fl, k:k + hn] = torch.tensor([1500.0, 6000.0], device=dev)
-    assert n_farm + n_hunt + n_flee + n_league + n_bot <= B, "drill + league + bot arenas exceed --b"
+    if n_giant:                                     # giant arenas: after the escape arenas
+        n0 = n_farm + n_hunt + n_flee
+        gi = slice(n0, n0 + n_giant)
+        gb, gl = args.giants, args.giant_learners
+        role[gi, P - gb:] = 2
+        env.spawn_mass[gi, P - gb:] = torch.tensor([5000.0, 20000.0], device=dev)
+        env.spawn_mass[gi, :gl] = torch.tensor([5000.0, 20000.0], device=dev)
+    assert n_farm + n_hunt + n_flee + n_giant + n_league + n_bot <= B, "drill + league + bot arenas exceed --b"
     flat = role.reshape(-1)
     learn_idx = (flat == 0).nonzero()[:, 0]
     league_arenas = list(range(B - n_league - n_bot, B - n_bot))

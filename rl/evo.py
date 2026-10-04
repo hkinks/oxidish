@@ -33,7 +33,7 @@ from sim.tourney import farm as farm_test, run as tourney
 DEFAULT_ARCH = {"width": 256, "convs": [[32, 1], [64, 2], [64, 2]], "pool": 1, "in_mask": None,
                 "s_mask": None, "shared": False}
 DEFAULT_HP = {"lr": 1e-4, "ent": 0.001, "gamma": 0.998, "explore": 0.02, "kill_reward": [0.5, 1.0],
-              "virus_reward": [0.5, 0.5, 1.0], "explore_reward": 0.02, "epochs": 3, "farm_frac": 0.15, "hunt_frac": 0.15, "flee_frac": 0.1,
+              "virus_reward": [0.5, 0.5, 1.0], "explore_reward": 0.02, "epochs": 3, "farm_frac": 0.15, "hunt_frac": 0.15, "flee_frac": 0.1, "giant_frac": 0.1,
               "growth": None, "action_bonus": [0.0, 0.0]}
 CH_MINE = 2   # our own cells: always visible to the net
 
@@ -83,7 +83,7 @@ def mutate(genome: dict, rng: random.Random, arch_p: float = 0.35) -> tuple[dict
                 arch["shared"] = not arch["shared"]
                 notes.append(f"shared {arch['shared']}")
         else:
-            kind = rng.choice(["lr", "ent", "gamma", "explore", "kill", "virus", "explore_reward", "epochs", "farm", "hunt", "hunt", "flee", "growth", "growth", "bonus", "bonus"])
+            kind = rng.choice(["lr", "ent", "gamma", "explore", "kill", "virus", "explore_reward", "epochs", "farm", "hunt", "hunt", "flee", "giant", "growth", "growth", "bonus", "bonus"])
             if kind == "lr":
                 hp["lr"] = min(5e-4, max(2e-5, hp["lr"] * rng.choice([0.5, 0.7, 1.4, 2])))
                 notes.append(f"lr {hp['lr']:.1e}")
@@ -127,6 +127,9 @@ def mutate(genome: dict, rng: random.Random, arch_p: float = 0.35) -> tuple[dict
             elif kind == "flee":
                 hp["flee_frac"] = rng.choice([x for x in (0.0, 0.1, 0.2) if x != hp.get("flee_frac", 0.1)])
                 notes.append(f"escape drills {hp['flee_frac']:.0%} of arenas")
+            elif kind == "giant":
+                hp["giant_frac"] = rng.choice([x for x in (0.0, 0.1, 0.2) if x != hp.get("giant_frac", 0.1)])
+                notes.append(f"giant arenas {hp['giant_frac']:.0%}")
             elif kind == "hunt":
                 hp["hunt_frac"] = rng.choice([x for x in (0.0, 0.1, 0.2, 0.3) if x != hp.get("hunt_frac", 0.15)])
                 notes.append(f"hunt drills {hp['hunt_frac']:.0%} of arenas")
@@ -156,6 +159,7 @@ def train_cmd(m: dict, name: str, args) -> list[str]:
            "--farm-frac", str(hp.get("farm_frac", DEFAULT_HP["farm_frac"])),
            "--hunt-frac", str(hp.get("hunt_frac", DEFAULT_HP["hunt_frac"])),
            "--flee-frac", str(hp.get("flee_frac", DEFAULT_HP["flee_frac"])),
+           "--giant-frac", str(hp.get("giant_frac", DEFAULT_HP["giant_frac"])),
            "--action-bonus", ",".join(map(str, hp.get("action_bonus", [0.0, 0.0])))]
     if hp.get("growth"):
         cmd += ["--growth", ",".join(map(str, hp["growth"]))]
