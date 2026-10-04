@@ -169,16 +169,16 @@ def main() -> None:
                  kill_reward=tuple(float(x) for x in args.kill_reward.split(",")))
     # ---- slot roles: 0 learner (current policy), 1 league snapshot, 2 scripted bot
     n_league, n_bot = round(B * args.league_frac), round(B * args.bot_frac)
+    n_farm, n_hunt = round(B * args.farm_frac), round(B * args.hunt_frac)
+    n_league = max(0, min(n_league, B - n_farm - n_hunt - n_bot))   # drills come first
     role = torch.zeros(B, P, dtype=torch.long, device=dev)
     half = P - P // 2
     role[B - n_league - n_bot:B - n_bot, half:] = 1
     role[B - n_bot:, half:] = 2
-    n_farm = round(B * args.farm_frac)              # farm arenas: the first n_farm (all-learner) arenas
-    if n_farm:
+    if n_farm:                                      # farm arenas: the first n_farm (all-learner) arenas
         env.active[:n_farm, args.farm_players:] = False
         role[:n_farm, args.farm_players:] = 3          # inactive: no actions, no samples
-    n_hunt = round(B * args.hunt_frac)              # hunt arenas: right after the farm arenas
-    if n_hunt:
+    if n_hunt:                                      # hunt arenas: right after the farm arenas
         h = slice(n_farm, n_farm + n_hunt)
         role[h, args.hunt_players:] = 2
         env.spawn_mass[h, :args.hunt_players] = torch.tensor([400.0, 2000.0], device=dev)
