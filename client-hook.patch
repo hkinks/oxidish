@@ -1,0 +1,59 @@
+diff --git a/assets/js/main_out.js b/assets/js/main_out.js
+index 4f08f5d..9519b64 100644
+--- a/assets/js/main_out.js
++++ b/assets/js/main_out.js
+@@ -198,6 +198,7 @@
+             27: new Uint8Array([27]),
+             28: new Uint8Array([28]),
+             30: new Uint8Array([30]),
++            205: new Uint8Array([205]),
+             31: new Uint8Array([31]),
+             29: new Uint8Array([29]),
+             33: new Uint8Array([33]),
+@@ -1312,6 +1313,11 @@
+                     wsSend(UINT8[17]);
+                     pressed.space = 1;
+                     break;
++                case 107: // numpad +
++                case 187: // + / = key: arena server cheat, +500 mass on the biggest cell
++                    if (isTyping || overlayShown) break;
++                    wsSend(UINT8[205]);
++                    break;
+                 case 87: // W
+                     if (isTyping || overlayShown) break;
+                     wsSend(UINT8[21]);
+@@ -1619,5 +1625,21 @@
+         sendPlay(arg);
+         hideOverlay();
+     };
++    // agario-bot: read-only view of client state for the bot
++    wHandle.__bot = {
++        get cells() { return cells; },
++        get border() { return border; },
++        get camera() { return camera; },
++        get canvas() { return mainCanvas; },
++        get overlayShown() { return overlayShown; },
++        get leaderboard() { return leaderboard.items || []; },
++        // Aim at a world point by moving the client's own mouse, so its 60 ms mouse
++        // packets carry our target instead of fighting it (used by external bot shims).
++        aim(wx, wy) {
++            mouse.x = (wx - camera.x) * camera.z + mainCanvas.width / 2;
++            mouse.y = (wy - camera.y) * camera.z + mainCanvas.height / 2;
++        },
++        send(bytes) { wsSend(new Uint8Array(bytes)); }, // arena-only custom packets (follow)
++    };
+     wHandle.onload = init;
+ })(window, window.jQuery);
+diff --git a/index.html b/index.html
+index ad42175..753f0af 100644
+--- a/index.html
++++ b/index.html
+@@ -142,7 +142,7 @@
+             			Move your <b>Mouse</b> to control your cell<br/>
+             			Press <b>Space</b> to split<br/>
+             			Press <b>W</b> to eject mass<br/>
+-            			Press <b>E</b> to split minions<br/>
++            			Press <b>+</b> to add 500 mass (cheat: tags your name with (+))<br/>Press <b>E</b> to split minions<br/>
+             			Press <b>R</b> to make minions eject mass<br/>
+             			Press <b>T</b> to freeze/unfreeze minions<br/>
+             			Press <b>P</b> to make minions collect food<br/>

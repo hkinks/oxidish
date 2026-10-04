@@ -1,0 +1,13 @@
+.env
+logs/
+.venv/
+__pycache__/
+vendor/
+node_modules/
+*.pt
+# runs/: checkpoints and search state stay local; the genomes at the top level are kept
+runs/*
+!runs/*.json
+!runs/r2/
+runs/r2/*
+!runs/r2/champion_009.json

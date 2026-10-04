@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sim Watch</title>
+<style>
+  :root { --bg: #f4f6f8; --grid: #e2e6ea; --panel: rgba(255,255,255,.88); --text: #1d2329; --muted: #66707a; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg: #12161a; --grid: #1f262d; --panel: rgba(24,29,34,.9); --text: #e6eaee; --muted: #8b96a1; }
+  }
+  :root[data-theme="dark"] { --bg: #12161a; --grid: #1f262d; --panel: rgba(24,29,34,.9); --text: #e6eaee; --muted: #8b96a1; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+               font: 14px/1.4 system-ui, -apple-system, Segoe UI, sans-serif; overflow: hidden; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+  .panel { position: fixed; background: var(--panel); border-radius: 10px; padding: 10px 12px;
+           box-shadow: 0 2px 10px rgba(0,0,0,.15); }
+  #top { bottom: 12px; left: 50%; transform: translateX(-50%); display: flex; gap: 6px; align-items: center;
+         flex-wrap: wrap; justify-content: center; max-width: calc(100vw - 32px); padding: 6px 10px; }
+  #top button { font: inherit; border: 1px solid var(--grid); background: transparent; color: var(--text);
+                border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+  #top button.on { background: #2f7de1; color: #fff; border-color: #2f7de1; }
+  #top button.ready { background: #19a979; color: #fff; border-color: #19a979; }
+  #info { color: var(--muted); font-size: 12px; width: 100%; text-align: center; }
+  #prog { top: 12px; left: 12px; width: 300px; max-width: calc(100vw - 48px); }
+  #prog canvas { width: 100%; height: 120px; display: block; }
+  #prog .cap { font-size: 12px; color: var(--muted); }
+  #models { top: 172px; left: 12px; min-width: 220px; }
+  #models div { display: flex; justify-content: space-between; gap: 14px; font-size: 13px; }
+  #models .sw { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+  #models h3, #prog h3 { margin: 0 0 4px; font-size: 13px; color: var(--muted); font-weight: 600; }
+  #board { top: 12px; right: 12px; min-width: 210px; max-height: calc(100vh - 110px); overflow-y: auto; }
+  #board.hide { display: none; }
+  #board div[data-i] { font-size: 13px; }
+  #rows > div { display: flex; justify-content: space-between; gap: 12px; cursor: pointer; padding: 1px 4px; border-radius: 4px; }
+  #rows > div.sel { background: rgba(47,125,225,.18); }
+  #board .sw { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+  #board h3 { margin: 0 0 6px; font-size: 13px; color: var(--muted); font-weight: 600; }
+
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="top" class="panel">
+  <span>Speed</span>
+  <button data-s="1">1×</button><button data-s="2">2×</button><button data-s="4">4×</button>
+  <button data-s="8">8×</button><button data-s="0">max</button>
+  <button id="newround" title="restart the arena: everyone starts from scratch">new round</button>
+  <button id="pause">pause</button>
+  <button id="view">whole map</button>
+  <button id="back" style="display:none">all arenas</button>
+  <button id="list">players</button>
+  <span id="info"></span>
+</div>
+<div id="prog" class="panel"><div class="cap" id="progcap">Learning curve: waiting for the first evaluation</div><canvas id="pc"></canvas></div>
+<div id="models" class="panel"><h3>Models in this arena</h3><div id="mrows"></div></div>
+<div id="board" class="panel"><h3 id="title">Players</h3><div id="rows"></div></div>
+<script>
+const cv = document.getElementById("c"), ctx = cv.getContext("2d");
+let F = null, focus = -1, follow = -1, wholeMap = true, cam = {x: 0, y: 0, z: 0.1};
+const colors = Array.from({length: 64}, (_, i) => `hsl(${(i * 137.5) % 360} 70% 55%)`);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const dpr = () => devicePixelRatio || 1;
+
+function resize() { cv.width = innerWidth * dpr(); cv.height = innerHeight * dpr(); }
+addEventListener("resize", resize); resize();
+
+document.querySelectorAll("[data-s]").forEach(b => b.onclick = () => fetch("/speed?x=" + b.dataset.s));
+document.getElementById("pause").onclick = () => fetch("/speed?x=pause");
+document.getElementById("newround").onclick = () => fetch("/newround");
+document.getElementById("view").onclick = () => { if (focus < 0) return; wholeMap = !wholeMap; };
+const back = document.getElementById("back");
+const boardEl = document.getElementById("board"), listBtn = document.getElementById("list");
+listBtn.classList.add("on");
+listBtn.onclick = () => { boardEl.classList.toggle("hide"); listBtn.classList.toggle("on"); };
+back.onclick = () => { focus = -1; follow = -1; };
+
+const modelColors = ["#2f7de1", "#e8743b", "#19a979", "#945ecf", "#ed4a7b", "#13a4b4", "#bf399e", "#6c8893"];
+const modelOf = i => (F && F.names && F.names[i]) ? F.names[i] : "?";
+let modelIdx = {};
+const colorOf = i => {
+  const m = modelOf(i);
+  if (!(m in modelIdx)) modelIdx[m] = Object.keys(modelIdx).length;
+  return m === "bot" ? "#9aa3ab" : modelColors[modelIdx[m] % modelColors.length];
+};
+const name = i => (F && F.names && F.names[i]) ? `${F.names[i]} #${i}` : `#${i}`;
+const tiles = () => {
+  const n = F.arenas.length, cols = Math.ceil(Math.sqrt(n)), rows = Math.ceil(n / cols);
+  const W = cv.width, H = cv.height, w = W / cols, h = H / rows;
+  return F.arenas.map((_, i) => ({x: (i % cols) * w, y: Math.floor(i / cols) * h, w, h}));
+};
+
+cv.onclick = e => {
+  if (!F || focus >= 0) return;
+  const x = e.clientX * dpr(), y = e.clientY * dpr();
+  tiles().forEach((t, i) => { if (x >= t.x && x < t.x + t.w && y >= t.y && y < t.y + t.h) { focus = i; follow = -1; wholeMap = false; } });
+};
+
+function drawArena(A, t, cx, cy, z, label) {
+  const half = F.map / 2;
+  ctx.save(); ctx.beginPath(); ctx.rect(t.x, t.y, t.w, t.h); ctx.clip();
+  const sx = x => (x - cx) * z + t.x + t.w / 2, sy = y => (y - cy) * z + t.y + t.h / 2;
+  ctx.fillStyle = css("--bg"); ctx.fillRect(t.x, t.y, t.w, t.h);
+  ctx.strokeStyle = css("--grid"); ctx.lineWidth = 1;
+  const step = z < 0.08 ? 1000 : 250;
+  for (let x = -half; x <= half; x += step) { ctx.beginPath(); ctx.moveTo(sx(x), sy(-half)); ctx.lineTo(sx(x), sy(half)); ctx.stroke(); }
+  for (let y = -half; y <= half; y += step) { ctx.beginPath(); ctx.moveTo(sx(-half), sy(y)); ctx.lineTo(sx(half), sy(y)); ctx.stroke(); }
+  const fr = Math.max(F.food_r * z, 0.8);
+  ctx.fillStyle = "#8bc34a";
+  for (let i = 0; i < A.food.length; i += 2) ctx.fillRect(sx(A.food[i]) - fr, sy(A.food[i + 1]) - fr, fr * 2, fr * 2);
+  ctx.fillStyle = "#b0855a";
+  const er = Math.max(F.eject_r * z, 1.2);
+  for (let i = 0; i < A.eject.length; i += 2) { ctx.beginPath(); ctx.arc(sx(A.eject[i]), sy(A.eject[i + 1]), er, 0, 7); ctx.fill(); }
+  for (const c of A.cells.slice().sort((a, b) => a[2] - b[2])) {
+    const r = Math.max(c[2] * z, 1.5);
+    ctx.beginPath(); ctx.arc(sx(c[0]), sy(c[1]), r, 0, 7);
+    ctx.fillStyle = colorOf(c[3]); ctx.fill();
+    ctx.lineWidth = Math.max(1, r * 0.06); ctx.strokeStyle = "rgba(0,0,0,.25)"; ctx.stroke();
+    if (r > 14) {
+      ctx.fillStyle = "#fff"; ctx.font = `600 ${Math.max(10, r * 0.35)}px system-ui`; ctx.textAlign = "center";
+      ctx.fillText(name(c[3]), sx(c[0]), sy(c[1]) + r * 0.12);
+    }
+  }
+  for (const v of A.virus) {
+    ctx.beginPath(); ctx.arc(sx(v[0]), sy(v[1]), Math.max(v[2] * z, 2), 0, 7);
+    ctx.fillStyle = "rgba(51,204,51,.75)"; ctx.fill(); ctx.strokeStyle = "#1e7a1e"; ctx.lineWidth = 1.5; ctx.stroke();
+  }
+  if (label) {
+    ctx.fillStyle = css("--muted"); ctx.font = `600 ${13 * dpr()}px system-ui`; ctx.textAlign = "left";
+    const top = A.mass.map((m, i) => [i, m]).sort((a, b) => b[1] - a[1])[0];
+    ctx.fillText(`${label} · top: ${name(top[0])} ${top[1]}`, t.x + 10 * dpr(), t.y + t.h - 10 * dpr());
+    ctx.strokeStyle = css("--grid"); ctx.lineWidth = 2; ctx.strokeRect(t.x, t.y, t.w, t.h);
+  }
+  ctx.restore();
+}
+
+function draw() {
+  requestAnimationFrame(draw);
+  if (!F || !F.arenas) return;
+  if (F.arenas.length === 1) focus = 0;
+  back.style.display = focus >= 0 && F.arenas.length > 1 ? "" : "none";
+  if (focus < 0) {
+    tiles().forEach((t, i) => drawArena(F.arenas[i], t, 0, 0, Math.min(t.w, t.h) / F.map * 0.98, `arena ${i + 1} (click to zoom)`));
+    return;
+  }
+  const A = F.arenas[focus], W = cv.width, H = cv.height;
+  let target = follow;
+  if (target < 0) {
+    let bm = -1;
+    A.mass.forEach((m, i) => { if (i < A.mass.length - F.bots && m > bm) { bm = m; target = i; } });
+  }
+  let tx = 0, ty = 0, tz = Math.min(W, H) / F.map;
+  if (!wholeMap) {
+    const mine = A.cells.filter(c => c[3] === target);
+    if (mine.length) {
+      let m = 0;
+      mine.forEach(c => { const w = c[2] * c[2]; tx += c[0] * w; ty += c[1] * w; m += w; });
+      tx /= m; ty /= m;
+      tz = Math.min(W, H) / (900 + Math.sqrt(m) * 9);
+    } else { tx = cam.x; ty = cam.y; tz = cam.z; }
+  }
+  cam.x += (tx - cam.x) * 0.2; cam.y += (ty - cam.y) * 0.2; cam.z += (tz - cam.z) * 0.15;
+  drawArena(A, {x: 0, y: 0, w: W, h: H}, cam.x, cam.y, cam.z, "");
+}
+
+// clicks are handled once on the container: the rows are re-rendered every 300 ms, and a
+// listener on a row could vanish between mouse-down and mouse-up
+document.getElementById("rows").addEventListener("click", e => {
+  const d = e.target.closest("[data-i]");
+  if (!d) return;
+  const i = +d.dataset.i, k = +d.dataset.k;
+  if (focus !== k) { focus = k; follow = i; } else follow = follow === i ? -1 : i;
+  wholeMap = follow < 0;
+  board();
+});
+
+function board() {
+  const A = focus >= 0 ? F.arenas[focus] : null;
+  let rows;
+  if (A) rows = A.mass.map((m, i) => [i, m, focus]);
+  else rows = F.arenas.flatMap((a, k) => a.mass.map((m, i) => [i, m, k]));
+  rows = rows.filter(r => r[1] > 0).sort((a, b) => b[1] - a[1]);
+  document.getElementById("title").textContent =
+    `Players by mass (${rows.length} alive) · click to follow` + (follow >= 0 ? ", click again to stop" : "");
+  document.getElementById("rows").innerHTML = rows.map(([i, m, k], r) =>
+    `<div data-i="${i}" data-k="${k}" class="${i === follow && (!A || k === focus) ? "sel" : ""}">` +
+    `<span>${r + 1}. <span class="sw" style="background:${colorOf(i)}"></span>${name(i)}${F.arenas.length > 1 ? ` <small>a${k + 1}</small>` : ""}</span><b>${m}</b></div>`).join("");
+  document.querySelectorAll("[data-s]").forEach(b => b.classList.toggle("on", +b.dataset.s === F.speed));
+  // per-model summary for the shown arena
+  const A2 = F.arenas[Math.max(focus, 0)];
+  const agg = {};
+  A2.mass.forEach((m, i) => {
+    const k = modelOf(i), a = agg[k] || (agg[k] = {n: 0, alive: 0, mass: 0, best: 0, i});
+    a.n++; if (m > 0) a.alive++; a.mass += m; a.best = Math.max(a.best, m);
+  });
+  document.getElementById("mrows").innerHTML =
+    `<div style="color:var(--muted)"><span>model (players)</span><span>avg · best mass</span></div>` +
+    Object.entries(agg).sort((a, b) => b[1].mass / b[1].n - a[1].mass / a[1].n).map(([k, a]) =>
+      `<div><span><span class="sw" style="background:${colorOf(a.i)}"></span>${k} (${a.n})</span>` +
+      `<span>${Math.round(a.mass / a.n)} · ${a.best}</span></div>`).join("");
+  document.getElementById("pause").classList.toggle("on", F.paused);
+  const nr = document.getElementById("newround");
+  nr.classList.toggle("ready", !!F.ready);
+  nr.textContent = F.ready ? "new round (new models ready)" : "new round";
+  document.getElementById("view").classList.toggle("on", wholeMap);
+  document.getElementById("info").textContent =
+    `${F.ckpt || "waiting for a checkpoint"} · round ${F.round}, ${Math.floor(F.round_s / 60)}:${String(F.round_s % 60).padStart(2, "0")} ` +
+    `· ${F.rate}× real time`;
+}
+
+// learning curve: newest net vs fixed past checkpoints in shared sim arenas (sim.progress)
+async function progress() {
+  try {
+    const rows = await (await fetch("/progress", {cache: "no-store"})).json();
+    const pc = document.getElementById("pc"), c = pc.getContext("2d");
+    const W = pc.width = pc.clientWidth * dpr(), H = pc.height = pc.clientHeight * dpr();
+    c.clearRect(0, 0, W, H);
+    if (rows.length) {
+      const refs = Object.keys(rows[0]).filter(k => !["it", "time", "latest"].includes(k));
+      const series = [["latest", "#2f7de1"], ...refs.map((r, i) => [r, ["#999", "#c77"][i % 2]])];
+      const vals = rows.flatMap(r => series.map(([k]) => r[k] ? r[k].avg_mass : 0));
+      const lo = 0, hi = Math.max(...vals) * 1.1 || 1;
+      const x = i => 8 * dpr() + (W - 16 * dpr()) * (rows.length < 2 ? 0.5 : i / (rows.length - 1));
+      const y = v => H - 6 * dpr() - (H - 12 * dpr()) * (v - lo) / (hi - lo);
+      for (const [k, col] of series) {
+        c.strokeStyle = col; c.lineWidth = (k === "latest" ? 2.5 : 1.2) * dpr(); c.beginPath();
+        rows.forEach((r, i) => { if (r[k]) (i ? c.lineTo : c.moveTo).call(c, x(i), y(r[k].avg_mass)); });
+        c.stroke();
+      }
+      const last = rows[rows.length - 1];
+      document.getElementById("progcap").innerHTML =
+        `Avg mass in shared arenas — <b style="color:#2f7de1">net at each iteration</b> vs fixed refs (${refs.join(", ")}). ` +
+        `Last: it ${last.it}: ${Math.round(last.latest.avg_mass)} mass, ${last.latest.deaths.toFixed(2)} deaths, ${last.latest.kills.toFixed(2)} kills`;
+    }
+  } catch (e) {}
+  setTimeout(progress, 20000);
+}
+progress();
+
+let lastBoard = 0;
+async function poll() {
+  try {
+    F = await (await fetch("/frame", {cache: "no-store"})).json();
+    if (performance.now() - lastBoard > 300) { board(); lastBoard = performance.now(); }
+  } catch (e) {}
+  setTimeout(poll, 33);
+}
+poll(); draw();
+</script>
+</body>
+</html>

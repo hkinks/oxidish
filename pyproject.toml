@@ -1,0 +1,22 @@
+[project]
+name = "agario-bot"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "cma>=4.5.0",
+    "httpx>=0.28.1",
+    "numpy>=2.2.6",
+    "playwright>=1.63.0",
+    "python-dotenv>=1.2.4",
+    "tensorboard>=2.21.0",
+    "torch>=2.11.0",
+    "websockets>=16.1.1",
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }

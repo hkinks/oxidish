@@ -1,0 +1,136 @@
+# Training Plan — local, faster-than-real-time, evolution + RL, Jev on top
+
+Goal: train agar.io bots fully locally by running many bots against each other faster than real time. Improve them by tournament-driven evolution, then by RL self-play. Keep Jev (or local Kev) as an optional strategic layer, and measure whether it helps.
+
+## Findings that shape this
+
+- The browser bot is limited to real time: one window per bot, a 60 ms mouse cadence and a 40 ms server tick. Fine for watching, useless for training.
+- MultiOgar's physics is a **fixed 40 ms step**: `GameServer.timerLoop` (src/GameServer.js:505) sleeps until the next step, then calls `mainLoop`. Patching out the sleep gives **faster-than-real-time** play with identical physics, limited only by CPU.
+- Hosted Jev takes 220–410 ms and is billed per call. It **cannot sit inside a training loop** (millions of steps). During training the strategic layer must be either absent, simulated, or a local model (Kev-4B on the RTX 5090, ~20 ms).
+- First A/B (2026-10-03, about 4 min, same server): pellet route planner reached mass 159 with 0 deaths; the old potential field reached 114 with 2 deaths. One sample only, so it's not significant yet. The tournament harness below exists to make comparisons like this rigorous.
+
+## Phase 1: Headless arena (foundation): DONE 2026-10-03
+
+What exists:
+- `arena/server/arena.js` launches the vendored server and patches it at runtime (vendor files untouched). It adds CLI config, a seeded `Math.random`, and lockstep stepping: agents send 0xC8 to register, the server sends 0xC9 <tick> after every `--sync` ticks, and agents ack with the same 0xC9 packet once they've acted. It also turns off the IP limit, coordinate scrambling, wall-clock timeouts and the "minion" check, which flags non-browser clients.
+- `arena/client.py` is a headless protocol-6 client. It keeps a cell table from UpdateNodes deltas and tracks per-agent stats: avg mass (mass-time integral / ticks), peak mass, deaths, kills.
+- `arena/policies.py` holds the policies (`route`, `field`). They reuse `bot/steer.py` + `bot/farm.py`, with `bot/modes.py` standing in for Jev (rule-based flee/hunt/farm).
+- `arena/match.py` runs one match (`--watch` opens a spectator window, `--max-tps 50` = 2x realtime). `arena/tournament.py` runs N seeded matches in parallel, one server per match on a free port, and reports a 95% CI over matches.
+
+Measured:
+- **Deterministic**: the same seed gives identical results, so variants can be compared on identical matches.
+- Speed: one match with 8 agents runs at 7.6x realtime (the Python policies are the bottleneck). 6 workers give **28x realtime aggregate** (48 game-min in 103 s).
+- First tournament, route:4 vs field:4, 24 matches × 2 game-min: avg mass **50.4 ± 6.2 vs 50.3 ± 4.3**, which is **no significant difference**. The earlier single-run "route wins" was noise. Field peaks and kills slightly higher, within the CIs.
+
+Original plan for this phase:
+
+- `arena/` Python client that speaks the MultiOgar WebSocket protocol directly, with no browser. Packets are the ones the client uses: 0x00 play, 0x10 mouse, 0x11 split, plus parsing of 0x10 node updates and 0x11/0x12/0x14.
+- Server patch `--fast`: no sleep in `timerLoop`, configurable map size, food and bot counts, plus a seed for reproducibility.
+- Run N servers (one per CPU core; the 5800X has 8 cores, so about 6–7 arenas) × M bots each.
+- Spectate: one browser window on any arena with the client's spectate mode, so you can watch matches live.
+- Metrics per bot per match: peak mass, mass-time integral, survival time, kills, deaths.
+
+## Phase 2: Tournament + evolution of the hand-written bot (quick win)
+
+- Expose every magic number as a genome: steering weights, danger radius margin, `SPLIT_RANGE`, `EAT_RATIO` safety margin, route `CANDIDATES`/`DEPTH`/`SWITCH_MARGIN`, split policy thresholds. About 15–25 floats.
+- Population of about 32 genomes. Each generation is a round-robin or Swiss tournament across arenas, with fitness = mean mass-time integral, plus TrueSkill/Elo for head-to-head ranking.
+- Optimizer: CMA-ES, or a simple GA (tournament selection, Gaussian mutation, elitism). Keep a hall of fame of past champions in every arena so bots don't just overfit to the current population.
+- Should beat the hand-tuned bot within hours of compute.
+
+## Phase 3: Neural policy + RL self-play
+
+- Observation: egocentric grid around the own cell (e.g. 64×64). Channels: food, own cells, other players as signed log mass ratio, viruses, ejected mass, borders. Plus scalars: own mass, cell count, merge timers.
+- Action: direction (16–32 discrete headings or continuous), split yes/no, eject yes/no. Decided every 2 server ticks.
+- Algorithm: PPO (CleanRL/PufferLib style), with the CNN policy on the 5090.
+- Self-play **league**: the current policy, frozen snapshots, evolved Phase-2 bots and MultiOgar's built-in bots as opponents. Population-based training mutates hyperparameters and copies winners, which is the "tournament + evolution" idea applied to RL.
+- Throughput option: if the Node server becomes the bottleneck, port the core rules (movement speed vs size, eat ratio, split/merge, viruses) into a vectorized NumPy/JAX simulator for bulk training. Then validate and fine-tune on real MultiOgar. Decide based on measured steps/s from Phase 1.
+- Bootstrap: behaviour cloning from the Phase-2 champion first, so PPO doesn't start from random wandering.
+
+## Phase 4: Jev / Kev on top
+
+- The policy takes a **mode input** (farm / hunt target / flee / hide) as extra observation channels. During training the mode is set by a cheap heuristic or randomized, so the policy learns to follow it.
+- At play time the strategic layer picks the mode: Jev hosted, Kev-4B local, or the heuristic. Same `/v1/systemone` interface, switched by base URL.
+- Also use it for rare, high-stakes calls (split-attack go/no-go, when to hide), at most a few per second.
+- **Measure it**: tournament runs with the strategic layer on vs off, same policy. Keep the layer only if it wins. Expectation: once a trained policy handles reflexes, an LLM layer adds little. That's still worth testing, and it's cheap with local Kev.
+
+## Order and rough effort
+
+| Phase | Effort | Output |
+|---|---|---|
+| 1 Headless arena + fast server + spectate | 1–2 days | N parallel matches, metrics, watchable |
+| 2 Evolution of hand-written bot | 1 day + compute | Tuned champion, ranked leaderboard |
+| 3 RL league (PPO + self-play) | 1–2 weeks | Neural bot that beats the champion |
+| 4 Strategic layer A/B | 1–2 days | Evidence on whether Jev/Kev helps |
+
+## Status 2026-10-03 (late): saturation and RL
+
+**Evolution:** r1 → r2 → r3 (league) → r4 (league + virus-skill genes). r4 ran 8 generations
+with no significant improvement over its start (r3 champion_008), so the parameter space is
+**saturated**. Virus shooting/hiding genes stayed off (evolution found no benefit).
+
+**Fresh-seed tournament (24 matches, 4 game-min, seeds 31000+):** every champion from r1g7 onward
+sits within ~0.3 log-mass (4.93–5.26), with overlapping CIs. Best: **r2g9 (5.26)**, which beats the
+"latest" r3g8 (5.06) in 67% of matches. Baselines: route 3.86, field 4.24.
+Lesson: promotions decided on the *same* 18 validation seeds every generation suffer from the
+winner's curse; later "improvements" were partly seed luck. Fix for future runs: fresh
+validation seeds per duel, plus a final fresh-seed tournament before declaring a champion.
+
+**RL:** BC from the champion (67% move accuracy) ≈ champion level. Unanchored PPO (p1–p3)
+degraded play: noisy per-step reward, policy entropy drift. What worked (p4): telescoped
+reward (Δ log-mass, death = −log-mass), separate critic, critic warm-up, 24.5k-sample batches,
+lr 5e-5, and a KL anchor to the BC policy. p4 reaches champion level (best checkpoint
+it36: +0.01 vs champion on 6 matches; 4.86 in the 24-match tournament) but has not surpassed
+the evolved champions. Split/W are explored only above mass 200 (cheap exploration floor).
+
+## Final result (2026-10-03, 23:15)
+
+40-match fresh-seed confirmation (seeds 41000+, 4 game-min):
+
+| bot | log mass | beats r1g7 | beats nn36 | deaths/match |
+|---|---|---|---|---|
+| champ = r3 champion_008 (= r4 final) | 5.04 ± 0.09 | 82% | 75% | 0.92 |
+| r2g9 | 5.06 ± 0.10 | 78% | 75% | 0.93 |
+| r1g7 | 4.66 ± 0.12 | – | 52% | 1.80 |
+| nn36 (PPO p4 it36) | 4.63 ± 0.15 | 48% | – | 2.59 |
+
+champ and r2g9 are statistically tied (45/55) and clearly beat all other bots (and the
+baselines ~90%). No method improved on them: r4 (8 generations incl. virus skills) and
+PPO p4 (~120 iterations past its best checkpoint) both plateaued. **Final champion:
+runs/final_champion.json** (r3 champion_008). PPO state kept at runs/rl/p4_final.pt
+(resume: `python -m rl.ppo --run p5 --init runs/rl/p4_final.pt --anchor runs/rl/bc.pt ...`).
+
+## 2026-10-04: QD search and guided NN g6-g8 (plateau)
+
+- **QD (arena/qd.py, run q1):** MAP-Elites over playstyles. It found 14/27 niches, among them virus shooters, self-feeders and double-splitters. None of 8 champion duels (12 matches each, fresh seeds) beat runs/final_champion.json. It saturated at round 29.
+- **Guided NN:**
+  - g6: lr 3e-4. It peaked around iteration 54, then drifted down.
+  - g7: lr 1e-4, anchored to g6 ckpt54.
+  - g8: from g7 ckpt57, with `--strong --opp-every 1` (only the champion and its hunter as opponents, deciding every step). Its training score was flat from iteration 50.
+  - Large fresh-seed 3-way tests: g5 ckpt90, g6 ckpt54, g7 ckpt30/57 and g8 ckpt48/99 all tie the champion (44-58% win). Single 24-36-match "wins" did not replicate.
+- **Final field test (36 matches; runs/rl/final_nn.pt = g8 ckpt48):**
+
+  | Bot | log-mass |
+  |---|---|
+  | nn | 5.44 ± 0.15 |
+  | champ | 5.51 ± 0.16 |
+  | r2g9 | 5.58 ± 0.26 |
+  | r1g7 | 5.13 |
+  | nn36 | 4.84 |
+  | route | 4.25 |
+  | field | 4.51 |
+
+  The NN ties the top rule-based bots (44-50%) and beats everything else (64-89%).
+- **Why it caps:** the guided net executes the champion's suggestion about 97% of the time. PPO only learned small deviations: fewer deaths, no extra mass. Beating the champion needs a policy that acts on its own more, for example a lower follow prior or penalty, a population/self-play league, or much more experience (a vectorised simulator).
+
+## 2026-10-04 (later): real-server fixes, then the switch to the simulator
+
+- **Virus steering (bot/steer.py, gene `virus_detour`):**
+  - The champion used to freeze when food pulled it toward a virus it would pop on. It was stuck 25% of the time, 24% of it at a virus (`arena/stuck.py`).
+  - It now steers around the nearest blocking virus, on the near side. That cut stuck time to 2.6%.
+  - In 36 matches the new champion beat the old one 69% and nnbest 69% (avg mass 306 vs 231 vs 264). It is the default now.
+- **Big-cell hunting (gene `big_hunt`):** grow hunt range and freeze the prey floor above 1500 mass. It **lost** to plain farming 33-67 in 24 long 2x-food matches, so it is off by default.
+- **g9-g11** (follow cost, tactics guide, virus reward, league):
+  - The follow rate stayed at 97-98% and the net stopped changing.
+  - g10/g11 were stopped. Their last checkpoints are runs/rl/g10/, runs/rl/g11/.
+- **Switch to the GPU simulator:** pure self-play run s1, then evolution e1. See [sim-training.md](sim-training.md).
+- **The real server is shut down for now.** To bring the showcase back, see [showcase.md](showcase.md).

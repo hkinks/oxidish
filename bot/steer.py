@@ -1,0 +1,154 @@
+"""Per-tick steering by potential field. Pure arithmetic; the mode comes from Jev
+(browser bot) or bot/modes.py (arena). All tunables live in bot/params.py."""
+
+import math
+from dataclasses import dataclass
+
+from .farm import FoodRouter
+from .game import Cell, Snapshot
+from .params import DEFAULT, Params
+
+EAT_RATIO = 1.3          # mass ratio needed to eat a cell (MultiOgar game rule)
+SPLIT_KILL_RATIO = 2.6   # a cell this much heavier can split onto us
+SPLIT_RANGE = DEFAULT.split_range  # kept for the Jev strategist's state description
+AIM_DISTANCE = 600       # how far ahead of the cell the mouse is placed
+
+MODES = ("farm", "hunt", "flee", "hide")
+
+
+@dataclass
+class Plan:
+    mode: str = "farm"
+    target_id: int | None = None
+    split_ok: bool = False
+
+
+def classify(s: Snapshot) -> tuple[list[Cell], list[Cell], list[Cell], list[Cell]]:
+    """Split other cells into (food, prey, threats, viruses) relative to our main cell."""
+    me = s.main
+    food, prey, threats, viruses = [], [], [], []
+    for c in s.others:
+        if c.kind in ("food", "ejected"):
+            if c.kind == "food" or c.mass * EAT_RATIO < me.mass:
+                food.append(c)
+        elif c.kind == "virus":
+            viruses.append(c)
+        elif me.mass > c.mass * EAT_RATIO:
+            prey.append(c)
+        elif c.mass > me.mass * EAT_RATIO:
+            threats.append(c)
+    return food, prey, threats, viruses
+
+
+def danger_radius(threat: Cell, me: Cell, p: Params = DEFAULT) -> float:
+    reach = threat.size + me.size
+    if threat.mass > me.mass * SPLIT_KILL_RATIO:
+        reach += p.split_range
+    return reach + p.danger_margin
+
+
+def steer(s: Snapshot, plan: Plan, router: FoodRouter | None = None,
+          p: Params = DEFAULT) -> tuple[float, float, bool]:
+    """Return world aim point and whether to split this tick.
+
+    With a router, food is approached along a planned pellet route; without one,
+    every pellet pulls (the original potential-field behaviour).
+    """
+    me = s.main
+    food, prey, threats, viruses = classify(s)
+    w_food, w_prey, w_threat = {"farm": (1, p.farm_prey, p.farm_threat),
+                                "hunt": (p.hunt_food, 1, p.hunt_threat),
+                                "flee": (0.2, 0, p.flee_threat),
+                                "hide": (0.2, 0, p.flee_threat * 0.75)}[plan.mode]
+    fx = fy = 0.0
+
+    def pull(c: Cell, weight: float) -> None:
+        nonlocal fx, fy
+        dx, dy = c.x - me.x, c.y - me.y
+        d = max(math.hypot(dx, dy), 1)
+        fx += weight * dx / d
+        fy += weight * dy / d
+
+    if router is None:
+        for c in food:
+            pull(c, w_food * 40 / (me.dist(c) + 40))
+    else:
+        poppable = [v for v in viruses if me.mass > v.mass * EAT_RATIO and p.virus_detour > 0.5]
+        # Unsafe pellets: in a threat's reach, or only reachable by touching a virus we'd pop on.
+        unsafe = lambda c: (any(t.dist(c) < danger_radius(t, me, p) for t in threats)
+                            or any(v.dist(c) < v.size + me.size for v in poppable))
+        wx, wy = router.next_waypoint(s, food, unsafe, p.switch_margin)
+        pull(Cell(-1, wx, wy, 0, "waypoint", ""), w_food * p.food_pull)
+    def ahead(c: Cell) -> Cell:
+        """Where `c` will be: lead its motion, more for far targets (0 = no lead)."""
+        if not p.lead:
+            return c
+        k = p.lead * min(1.0, me.dist(c) / 600)
+        return Cell(c.id, c.x + c.vx * k, c.y + c.vy * k, c.size, c.kind, c.name)
+
+    for c in prey:
+        bonus = p.target_bonus if c.id == plan.target_id else 1
+        pull(ahead(c), w_prey * bonus * c.mass / (me.dist(c) + 50))
+    for c in threats:
+        d = me.dist(c) - c.size - me.size
+        r = danger_radius(c, me, p)
+        if d < r:
+            pull(c, -w_threat * p.threat_force * (r - d) / r)
+    poppers = []  # viruses we'd pop on: steered around below, not pushed against
+    for v in viruses:
+        if me.mass > v.mass * EAT_RATIO:
+            if p.virus_detour > 0.5:
+                poppers.append(v)
+            else:  # old behaviour (kept for comparisons): push straight away
+                d = me.dist(v) - v.size - me.size
+                if d < p.virus_avoid:
+                    pull(v, -20 * (p.virus_avoid - d) / p.virus_avoid)
+        elif plan.mode == "hide":
+            pull(v, 8)
+
+    b = s.border  # push back from map edges
+    margin = me.size + p.border_margin
+    for edge, push in ((me.x - b["left"], (1, 0)), (b["right"] - me.x, (-1, 0)),
+                       (me.y - b["top"], (0, 1)), (b["bottom"] - me.y, (0, -1))):
+        if edge < margin:
+            fx += push[0] * 10 * (margin - edge) / margin
+            fy += push[1] * 10 * (margin - edge) / margin
+
+    norm = math.hypot(fx, fy)
+    if norm < 1e-6:
+        fx, fy, norm = 1.0, 0.0, 1.0  # nothing visible: wander
+    ux, uy = fx / norm, fy / norm
+    # Viruses as obstacles: if the nearest one we'd pop on lies across our path, head
+    # for the point beside it on the side we were already leaning to. Pushing straight
+    # away from it (as before) balanced against the food pull and froze the cell.
+    blocking = []
+    for v in poppers:
+        vx, vy = v.x - me.x, v.y - me.y
+        t = vx * ux + vy * uy                        # distance ahead along our path
+        clear = v.size + me.size + p.virus_avoid * 0.2
+        h = vx * uy - vy * ux                        # signed sideways offset of the virus
+        if 0 < t < clear + p.virus_avoid + 200 and abs(h) < clear:
+            blocking.append((t, v, h, clear))
+    if blocking:
+        _, v, h, clear = min(blocking, key=lambda b: b[0])
+        # h > 0: virus right of our path -> pass it on the left (and vice versa), the
+        # smaller turn. (-uy, ux) is our left.
+        side = 1.0 if h > 0 else -1.0
+        px, py = -uy * side, ux * side
+        tx, ty = v.x + px * clear * 1.15, v.y + py * clear * 1.15
+        dx, dy = tx - me.x, ty - me.y
+        dn = math.hypot(dx, dy) or 1.0
+        ux, uy = dx / dn, dy / dn
+    aim = (me.x + ux * AIM_DISTANCE, me.y + uy * AIM_DISTANCE)
+
+    split = False
+    if plan.split_ok and plan.mode == "hunt" and len(s.mine) <= round(p.split_max_cells):
+        target = next((c for c in prey if c.id == plan.target_id), None)
+        target = ahead(target) if target else None
+        if (target and me.mass / 2 > target.mass * EAT_RATIO
+                and me.dist(target) - me.size < p.split_range * p.split_reach
+                and not any(me.dist(t) < danger_radius(t, me, p) + p.split_range
+                            for t in threats)):
+            aim = (target.x, target.y)
+            split = True
+    return aim[0], aim[1], split
