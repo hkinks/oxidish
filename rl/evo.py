@@ -33,7 +33,7 @@ from sim.tourney import farm as farm_test, run as tourney
 DEFAULT_ARCH = {"width": 256, "convs": [[32, 1], [64, 2], [64, 2]], "pool": 1, "in_mask": None,
                 "s_mask": None, "shared": False}
 DEFAULT_HP = {"lr": 1e-4, "ent": 0.001, "gamma": 0.998, "explore": 0.02, "kill_reward": [0.5, 1.0],
-              "virus_reward": [0.5, 0.5, 1.0], "explore_reward": 0.02, "epochs": 3, "farm_frac": 0.15}
+              "virus_reward": [0.5, 0.5, 1.0], "explore_reward": 0.02, "epochs": 3, "farm_frac": 0.15, "hunt_frac": 0.15}
 CH_MINE = 2   # our own cells: always visible to the net
 
 
@@ -82,7 +82,7 @@ def mutate(genome: dict, rng: random.Random, arch_p: float = 0.35) -> tuple[dict
                 arch["shared"] = not arch["shared"]
                 notes.append(f"shared {arch['shared']}")
         else:
-            kind = rng.choice(["lr", "ent", "gamma", "explore", "kill", "virus", "explore_reward", "epochs", "farm"])
+            kind = rng.choice(["lr", "ent", "gamma", "explore", "kill", "virus", "explore_reward", "epochs", "farm", "hunt", "hunt"])
             if kind == "lr":
                 hp["lr"] = min(5e-4, max(2e-5, hp["lr"] * rng.choice([0.5, 0.7, 1.4, 2])))
                 notes.append(f"lr {hp['lr']:.1e}")
@@ -108,6 +108,9 @@ def mutate(genome: dict, rng: random.Random, arch_p: float = 0.35) -> tuple[dict
             elif kind == "explore_reward":
                 hp["explore_reward"] = rng.choice([0.0, 0.01, 0.02, 0.05])
                 notes.append(f"explore reward {hp['explore_reward']}")
+            elif kind == "hunt":
+                hp["hunt_frac"] = rng.choice([x for x in (0.0, 0.1, 0.2, 0.3) if x != hp.get("hunt_frac", 0.15)])
+                notes.append(f"hunt drills {hp['hunt_frac']:.0%} of arenas")
             elif kind == "farm":
                 hp["farm_frac"] = rng.choice([x for x in (0.0, 0.1, 0.2, 0.3) if x != hp.get("farm_frac", 0.15)])
                 notes.append(f"farm drills {hp['farm_frac']:.0%} of arenas")
@@ -124,14 +127,15 @@ def train_cmd(m: dict, name: str, args) -> list[str]:
            "--start-it", str(m["it"]), "--max-minutes", str(args.minutes),
            "--b", str(args.b), "--p", str(args.p), "--steps", "32", "--mb", str(args.mb),
            "--vram-gb", str(args.vram_gb), "--episode-steps", "20000", "--save-every", "20",
-           "--vf-warmup", "0", "--league-frac", "0.4", "--bot-frac", "0.1",
+           "--vf-warmup", "0", "--league-frac", "0.3", "--bot-frac", "0.1",
            "--hof", str(ROOT / "runs" / "rl" / name / "hof"),
            "--lr", str(hp["lr"]), "--ent", str(hp["ent"]), "--gamma", str(hp["gamma"]),
            "--explore", str(hp["explore"]), "--epochs", str(hp["epochs"]),
            "--kill-reward", ",".join(map(str, hp["kill_reward"])),
            "--virus-reward", ",".join(map(str, hp["virus_reward"])),
            "--explore-reward", str(hp["explore_reward"]), "--seed", str(m["seed"]),
-           "--farm-frac", str(hp.get("farm_frac", DEFAULT_HP["farm_frac"]))]
+           "--farm-frac", str(hp.get("farm_frac", DEFAULT_HP["farm_frac"])),
+           "--hunt-frac", str(hp.get("hunt_frac", DEFAULT_HP["hunt_frac"]))]
     return cmd
 
 

@@ -95,6 +95,10 @@ def main() -> None:
     p.add_argument("--farm-frac", type=float, default=0.0,
                    help="arenas with only --farm-players learners and nothing else: a clean farming signal")
     p.add_argument("--farm-players", type=int, default=3)
+    p.add_argument("--hunt-frac", type=float, default=0.0,
+                   help="hunting drills: arenas where --hunt-players learners start big (400-2000 mass) among "
+                        "small scripted bots (20-200): splitting onto prey pays off right away")
+    p.add_argument("--hunt-players", type=int, default=4)
     p.add_argument("--bot-frac", type=float, default=0.1, help="arenas where half the slots are scripted bots")
     p.add_argument("--league-every", type=int, default=25)
     p.add_argument("--league-size", type=int, default=8, help="snapshots kept in memory")
@@ -173,6 +177,13 @@ def main() -> None:
     if n_farm:
         env.active[:n_farm, args.farm_players:] = False
         role[:n_farm, args.farm_players:] = 3          # inactive: no actions, no samples
+    n_hunt = round(B * args.hunt_frac)              # hunt arenas: right after the farm arenas
+    if n_hunt:
+        h = slice(n_farm, n_farm + n_hunt)
+        role[h, args.hunt_players:] = 2
+        env.spawn_mass[h, :args.hunt_players] = torch.tensor([400.0, 2000.0], device=dev)
+        env.spawn_mass[h, args.hunt_players:] = torch.tensor([20.0, 200.0], device=dev)
+    assert n_farm + n_hunt + n_league + n_bot <= B, "drill + league + bot arenas exceed --b"
     flat = role.reshape(-1)
     learn_idx = (flat == 0).nonzero()[:, 0]
     league_arenas = list(range(B - n_league - n_bot, B - n_bot))

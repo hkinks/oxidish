@@ -72,6 +72,9 @@ class SimEnv:
         self.prev_kstat = torch.zeros(2, B, NL, device=d)
         # inactive slots never (re)spawn: e.g. farming drills, arenas with only a few players
         self.active = torch.ones(B, P, dtype=torch.bool, device=d)
+        # per-slot spawn mass range (lo, hi; log-uniform), 0 = the default/curriculum: e.g. hunting
+        # drills where learners start big among small prey
+        self.spawn_mass = torch.zeros(B, P, 2, device=d)
         self.l_kills = torch.zeros(B, NL, device=d)
 
     def set_tracked(self, mask: torch.Tensor):
@@ -92,6 +95,16 @@ class SimEnv:
     def _drop_inactive(self):
         if not bool(self.active.all()):
             self.w.calive.masked_fill_(~self.active.repeat_interleave(self.w.K, dim=1), False)
+        if bool((self.spawn_mass[..., 0] > 0).any()):   # fresh arenas: drill sizes from the start
+            set_ = self.spawn_mass[..., 0] > 0
+            r2 = self._drill_size() ** 2
+            v = self.w.cr2.view(self.B, self.P, self.w.K)
+            v[..., 0] = torch.where(set_ & (v[..., 0] > 0), r2, v[..., 0])
+
+    def _drill_size(self) -> torch.Tensor:
+        lo, hi = self.spawn_mass[..., 0].clamp(min=1), self.spawn_mass[..., 1].clamp(min=1)
+        u = torch.rand(self.B, self.P, generator=self.gen, device=self.dev)
+        return torch.floor(torch.sqrt(100 * torch.exp(lo.log() + (hi.log() - lo.log()) * u)))
 
     def reset(self):
         self.w.reset()
@@ -167,6 +180,9 @@ class SimEnv:
             big = torch.rand(B, NL, generator=self.gen, device=dev) < self.curriculum_p
             mass = torch.exp(math.log(lo) + (math.log(hi) - math.log(lo)) * torch.rand(B, NL, generator=self.gen, device=dev))
             size[:, :NL] = torch.where(big, torch.floor(torch.sqrt(100 * mass)), size[:, :NL])
+        drill = self.spawn_mass[..., 0] > 0
+        if bool(drill.any()):
+            size = torch.where(drill, self._drill_size(), size)
         w.step(mouse, split, eject, was_alive, respawn=~was_alive & self.active, spawn_size=size)
 
         # ---- reward before any episode reset
