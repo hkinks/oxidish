@@ -33,3 +33,8 @@ uv run python -m bot.main
 - Measure: survival time and peak mass per life. Compare against a no-Jev baseline (fixed rules) to see whether Jev adds anything.
 - Kev-4B locally (~20 ms) would allow decisions at 5–10 Hz, and maybe a direction choice per tick.
 - Merge awareness after splitting, using W (eject) to feed or bait, and teaming against the server bots.
+- **On the shelf: a screen-only, human-like bot.** It would see only pixels, as a player does, instead of the client hook or server state.
+  - **Detection:** a fine-tuned YOLO11/YOLOv8 nano (~1-3 ms per frame on the RTX 5090) finds cells, food, viruses and ejected mass. Plain OpenCV colour/circle detection is the cheap baseline.
+  - **Training data:** labels come free by rendering frames from the simulator or the real server, which know every object's exact position and size.
+  - **Pairing with Jev:** detections become JSON state for the trained net and for Jev's judgments (Jev takes text/JSON, not images; check the TypeSafe docs).
+  - **Where:** servers that allow bots only. The official agar.io servers ban them.
