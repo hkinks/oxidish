@@ -99,6 +99,11 @@ def main() -> None:
                    help="hunting drills: arenas where --hunt-players learners start big (400-2000 mass) among "
                         "small scripted bots (20-200): splitting onto prey pays off right away")
     p.add_argument("--hunt-players", type=int, default=4)
+    p.add_argument("--flee-frac", type=float, default=0.0,
+                   help="escape drills: arenas where --flee-players learners (100-600 mass) share the map with "
+                        "--flee-hunters big scripted bots (1500-6000) that chase them; nothing else")
+    p.add_argument("--flee-players", type=int, default=6)
+    p.add_argument("--flee-hunters", type=int, default=8)
     p.add_argument("--bot-frac", type=float, default=0.1, help="arenas where half the slots are scripted bots")
     p.add_argument("--league-every", type=int, default=25)
     p.add_argument("--league-size", type=int, default=8, help="snapshots kept in memory")
@@ -176,8 +181,8 @@ def main() -> None:
                  action_bonus=tuple(float(x) for x in args.action_bonus.split(",")))
     # ---- slot roles: 0 learner (current policy), 1 league snapshot, 2 scripted bot
     n_league, n_bot = round(B * args.league_frac), round(B * args.bot_frac)
-    n_farm, n_hunt = round(B * args.farm_frac), round(B * args.hunt_frac)
-    n_league = max(0, min(n_league, B - n_farm - n_hunt - n_bot))   # drills come first
+    n_farm, n_hunt, n_flee = round(B * args.farm_frac), round(B * args.hunt_frac), round(B * args.flee_frac)
+    n_league = max(0, min(n_league, B - n_farm - n_hunt - n_flee - n_bot))   # drills come first
     role = torch.zeros(B, P, dtype=torch.long, device=dev)
     half = P - P // 2
     role[B - n_league - n_bot:B - n_bot, half:] = 1
@@ -190,7 +195,15 @@ def main() -> None:
         role[h, args.hunt_players:] = 2
         env.spawn_mass[h, :args.hunt_players] = torch.tensor([400.0, 2000.0], device=dev)
         env.spawn_mass[h, args.hunt_players:] = torch.tensor([20.0, 200.0], device=dev)
-    assert n_farm + n_hunt + n_league + n_bot <= B, "drill + league + bot arenas exceed --b"
+    if n_flee:                                      # escape arenas: after the hunt arenas
+        fl = slice(n_farm + n_hunt, n_farm + n_hunt + n_flee)
+        k, hn = args.flee_players, args.flee_hunters
+        role[fl, k:k + hn] = 2
+        role[fl, k + hn:] = 3
+        env.active[fl, k + hn:] = False
+        env.spawn_mass[fl, :k] = torch.tensor([100.0, 600.0], device=dev)
+        env.spawn_mass[fl, k:k + hn] = torch.tensor([1500.0, 6000.0], device=dev)
+    assert n_farm + n_hunt + n_flee + n_league + n_bot <= B, "drill + league + bot arenas exceed --b"
     flat = role.reshape(-1)
     learn_idx = (flat == 0).nonzero()[:, 0]
     league_arenas = list(range(B - n_league - n_bot, B - n_bot))

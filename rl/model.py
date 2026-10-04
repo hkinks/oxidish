@@ -91,7 +91,7 @@ class Policy(nn.Module):
     # trying them where they can matter (small cells can't afford random ejects).
     # 0 at evaluation time.
     binary_eps: float = 0.0
-    EXPLORE_MIN_LOG_MASS = math.log(200) / 8  # scal[0] = log(total mass) / 8
+    EXPLORE_MIN_LOG_MASS = math.log(70) / 8   # scal[0] = log(total mass) / 8; splits need a 35-mass piece
 
     def dists(self, grid, scal, amp: bool = False):
         """amp: run the network in bfloat16 (2-3x faster training on the GPU); the
