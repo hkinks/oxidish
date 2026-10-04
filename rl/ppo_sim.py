@@ -32,7 +32,6 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from torch.distributions import Categorical
 from torch.utils.tensorboard import SummaryWriter
 
 from sim.bots import scripted_actions
@@ -229,11 +228,6 @@ def main() -> None:
         if args.max_minutes and time.time() - t_start > args.max_minutes * 60:
             it -= 1
             break
-        paused = 0.0
-        while (out / "PAUSE").exists():          # sim.watch "turbo": give the viewer the whole GPU
-            time.sleep(0.5)
-            paused += 0.5
-        t_start += paused                         # paused time doesn't count against --max-minutes
         t0 = time.time()
         G = torch.empty((T, N, *gdim), dtype=torch.float16, device=dev)
         Sc = torch.empty((T, N, S_IN), device=dev)

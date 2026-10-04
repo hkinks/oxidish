@@ -16,7 +16,6 @@ from .bots import scripted_actions
 from .env import SimEnv
 from bot.game import Cell, Snapshot
 from rl.guided import GuidedEncoder
-from rl import guided as GD
 
 def snapshot(w, b, p):
     K = w.K

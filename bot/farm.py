@@ -13,7 +13,6 @@ centroid between clusters and dither when two clusters compete. Instead:
    of the map.
 """
 
-import math
 import time
 
 import numpy as np

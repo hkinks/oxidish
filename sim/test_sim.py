@@ -333,7 +333,7 @@ def test_random_world_invariants(graphs):
 
 def test_obs_matches_python_encoder():
     try:
-        from rl.guided import GuidedEncoder
+        pass
     except Exception as ex:  # pragma: no cover
         print("   (skipped: cannot import rl.guided:", ex, ")")
         return

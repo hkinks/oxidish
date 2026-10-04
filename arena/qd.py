@@ -206,7 +206,7 @@ class QD:
         for idx, sw in enumerate(SWITCHES, start=1):
             if idx < len(seeds):
                 seeds[idx][KEYS.index(sw)] = 0.75
-        stale, best_fit, rounds_since_champ = 0, -1e9, 0
+        stale, best_fit = 0, -1e9
         for rnd in range(self.first_round, a.max_rounds + 1):
             t0 = time.monotonic()
             if rnd == 1 and not self.archive.cells:

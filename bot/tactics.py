@@ -11,7 +11,7 @@ Both are gated by evolvable genes (`*_enable` > 0.5) so evolution decides if the
 
 import math
 
-from .game import Cell, Snapshot
+from .game import Snapshot
 from .params import Params
 from .steer import EAT_RATIO, Plan, classify, danger_radius
 

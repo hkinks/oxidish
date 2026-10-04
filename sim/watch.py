@@ -1,14 +1,15 @@
-"""Watch a sim-trained net play in the GPU simulator, live in the browser, at any speed.
+"""Watch sim-trained nets play, live in the browser.
 
-    uv run python -m sim.watch --run s1 [--port 8096] [--bots 4] [--arenas 4]
+    uv run python -m sim.watch --run e1        # an rl.evo population: every member + the newest hall of fame
+    uv run python -m sim.watch --run s1        # a plain rl.ppo_sim run: its latest net + 3 past snapshots
 
-Runs its own small simulator (`--arenas` arenas of 16 players) next to training: the first slots
-play the run's latest checkpoint (reloaded whenever training saves a new one), the last
-`--bots` slots are the scripted sim bot. The page at http://127.0.0.1:<port>/ draws the
-arenas side by side (click one to zoom in) and sets the speed (1x = real time, 80 ms per step;
-"max" = as fast as the GPU goes). While training runs, a step costs ~45 ms whatever the number of
-arenas (small GPU batches wait behind training's), so max is ~1.7x per arena: more arenas is the
-cheap way to see more play.
+Runs its own simulator arena next to training (it is not a replay of training games), at real
+time: 80 ms per step. Faster is not available while training runs. Each step is ~100 small GPU
+jobs that wait behind training's, ~45 ms whatever the arena size. The last `--bots` slots are the
+scripted sim bot. When newer models exist (an evolution generation finished, or a plain run saved
+a checkpoint) the page's "new round" button lights up; pressing it loads them and restarts the
+arena with everyone at mass 10. With no page open for 5 s the arena stops, so training gets
+the GPU.
 """
 
 import argparse
@@ -31,35 +32,28 @@ STEP_S = 0.08                      # one env step = 2 server ticks of 40 ms
 
 
 class Watcher:
-    def __init__(self, run: str, bots: int, vram_gb: float, arenas: int, players: int, past: int):
+    def __init__(self, run: str, players: int, bots: int, past: int, vram_gb: float):
         total = torch.cuda.get_device_properties(0).total_memory
         torch.cuda.set_per_process_memory_fraction(min(1.0, vram_gb * 2 ** 30 / total))
         self.dir = ROOT / "runs" / "rl" / run
-        self.env = SimEnv(B=arenas, P=players, episode_steps=10 ** 9, curriculum_p=0.0)
-        self.bots = bots
-        # slots: [latest net | past league snapshots (`past` slots, 3 snapshots) | scripted bots]
-        self.past = past
-        self.groups, self.names, self.ver, self.ready = [], [], None, False
-        self.speed = 1.0           # x real time; 0 = max
-        self.paused = False
-        self.model, self.ckpt = None, ""
+        self.env = SimEnv(B=1, P=players, episode_steps=10 ** 9, curriculum_p=0.0)
+        self.bots, self.past = bots, past
+        self.groups, self.names, self.ver, self.ready, self.title = [], [], None, False, ""
+        self.paused, self.new_round = False, False
+        self.round, self.round_step, self.rate = 0, 0, 0.0
+        self.last_view = 0.0       # time of the last /frame request
         self.frame = "{}"
         self.lock = threading.Lock()
-        self.steps = 0
-        self.rate = 0.0
-        self.new_round = False     # restart the arena(s): on every new checkpoint and on the page's button
-        self.round, self.round_step = 0, 0
-        self.last_view = 0.0       # last /frame request: no open page -> the sim idles (training gets the GPU)
+
+    @property
+    def evo(self) -> bool:
+        return (self.dir / "evo.json").exists()
 
     def lineup(self) -> list[tuple[str, Path]]:
-        """(name, checkpoint) per model group. An evolution run (evo.json): every current member
-        plus the newest hall-of-fame entry. A plain run: its latest net, then past league
-        snapshots (the oldest, a middle one and the newest but one)."""
-        evo = self.dir / "evo.json"
-        if evo.exists():
-            members = json.loads(evo.read_text())["members"]
+        """(name, checkpoint) per model."""
+        if self.evo:
             out = []
-            for m in members:
+            for m in json.loads((self.dir / "evo.json").read_text())["members"]:
                 ck = self.dir / m["id"] / "latest.pt"
                 out.append((m["id"], ck if ck.exists() else Path(m["ckpt"])))
             hof = sorted((self.dir / "hof").glob("*.pt"))
@@ -71,40 +65,37 @@ class Watcher:
             return []
         out = [(f"{self.dir.name} now", ck)]
         snaps = sorted((self.dir / "league").glob("it*.pt"))
-        if snaps and self.past:
+        if snaps and self.past:      # the oldest, a middle one and the newest but one
             for f in sorted({snaps[0], snaps[len(snaps) // 2], snaps[max(0, len(snaps) - 2)]}):
                 out.append((f"{self.dir.name} it{int(f.stem[2:])}", f))
         return out
 
     def version(self) -> tuple:
-        """What counts as "new models available": for an evolution run a finished generation, for a
-        plain run a new checkpoint."""
-        evo = self.dir / "evo.json"
-        if evo.exists():
-            return ("gen", json.loads(evo.read_text())["gen"])
+        """Evolution: the generation; plain run: the latest checkpoint's time."""
+        if self.evo:
+            return ("gen", json.loads((self.dir / "evo.json").read_text())["gen"])
         ck = self.dir / "latest.pt"
         return ("ckpt", ck.stat().st_mtime if ck.exists() else 0)
 
-    def maybe_reload(self, force: bool = False) -> None:
-        """Models change only at the start of a round: a newer version just lights up the page's
-        "new round" button (self.ready), unless nothing is loaded yet or `force` (the button)."""
-        ver = self.version()
-        if self.groups and not force:
-            self.ready = ver != self.ver
-            return
+    def check(self) -> None:
+        """Note newer models (lights the button); load models if none are loaded yet."""
+        if self.groups:
+            self.ready = self.version() != self.ver
+        else:
+            self.load()
+
+    def load(self) -> None:
         lu = [(n, p) for n, p in self.lineup() if p.exists()]
         if not lu:
             return
-        self.ver, self.ready = ver, False
-        P, nb = self.env.P, self.bots
-        n_play = P - nb
-        evo = (self.dir / "evo.json").exists()
-        if evo:                                    # equal shares
-            shares = [n_play // len(lu) + (1 if i < n_play % len(lu) else 0) for i in range(len(lu))]
-        else:                                      # latest net gets everything but `past` slots
+        self.ver, self.ready = self.version(), False
+        n_play = self.env.P - self.bots
+        if self.evo:                                   # equal shares
+            shares = [n_play // len(lu) + (i < n_play % len(lu)) for i in range(len(lu))]
+        else:                                          # the latest net gets all but `past` slots
             k = len(lu) - 1
             past = self.past if k else 0
-            shares = [n_play - past] + [past // k + (1 if i < past % k else 0) for i in range(k)]
+            shares = [n_play - past] + [past // k + (i < past % k) for i in range(k)]
         self.groups, self.names, lo = [], [], 0
         for (name, path), n in zip(lu, shares):
             m = from_checkpoint(str(path), "cuda").eval()
@@ -112,112 +103,120 @@ class Watcher:
             self.groups.append((m, lo, lo + n))
             self.names += [name] * n
             lo += n
-        self.names += ["bot"] * nb
-        it = torch.load(lu[0][1], map_location="cpu", weights_only=False).get("it", "?")
-        self.ckpt = f"{self.dir.name} generation {ver[1]}: {len(lu)} models" if evo else f"{self.dir.name} it {it}"
-        self.model = self.groups[0][0]
+        self.names += ["bot"] * self.bots
+        if self.evo:
+            self.title = f"{self.dir.name} generation {self.ver[1]}: {len(lu)} models"
+        else:
+            it = torch.load(lu[0][1], map_location="cpu", weights_only=False).get("it", "?")
+            self.title = f"{self.dir.name} it {it}"
         self.new_round = True
 
     def snapshot(self) -> str:
-        # One GPU->CPU copy for everything: every separate .cpu() is a sync that waits for a GPU
-        # time slice behind training, and dozens of them per frame made the viewer crawl.
-        w = self.env.w
+        # One GPU->CPU copy for everything: each separate .cpu() is a sync that waits for a GPU
+        # time slice behind training.
+        w, K = self.env.w, self.env.w.K
         parts = [w.calive, w.cx, w.cy, w.cr2, w.falive, w.fx, w.fy, w.ealive, w.ex, w.ey,
                  w.valive, w.vx, w.vy, w.vr2]
-        flat = torch.cat([t.float().reshape(-1) for t in parts]).cpu()
-        out, i = [], 0
+        flat = torch.cat([t[0].float().reshape(-1) for t in parts]).cpu()
+        host, i = [], 0
         for t in parts:
-            out.append(flat[i:i + t.numel()].view(t.shape))
-            i += t.numel()
-        self._host = out
+            host.append(flat[i:i + t[0].numel()])
+            i += t[0].numel()
+        cal, cx, cy, cr2, fal, fx, fy, eal, ex, ey, val, vx, vy, vr2 = host
+        al, fa, ea, va = cal > 0, fal > 0, eal > 0, val > 0
+        r = cr2.sqrt()
+        mass = torch.zeros(self.env.P).index_add_(0, torch.arange(len(cr2)) // K, cr2 / 100 * al)
+        xy = lambda x, y, m: torch.stack([x[m], y[m]], 1).round().int().reshape(-1).tolist()
         return json.dumps({
-            "map": w.map, "ckpt": self.ckpt, "speed": self.speed, "rate": round(self.rate, 1),
-            "step": self.steps, "bots": self.bots, "paused": self.paused, "names": self.names,
-            "round": self.round, "ready": self.ready, "round_s": round(self.round_step * STEP_S),
-            "food_r": FOOD_R2 ** 0.5, "eject_r": EJECT_R2 ** 0.5,
-            "arenas": [self.arena(b) for b in range(self.env.B)],
+            "map": w.map, "title": self.title, "rate": round(self.rate, 1), "paused": self.paused,
+            "names": self.names, "bots": self.bots, "round": self.round, "ready": self.ready,
+            "round_s": round(self.round_step * STEP_S), "food_r": FOOD_R2 ** 0.5, "eject_r": EJECT_R2 ** 0.5,
+            "cells": [[round(float(cx[j])), round(float(cy[j])), round(float(r[j]), 1), j // K]
+                      for j in al.nonzero()[:, 0].tolist()],
+            "food": xy(fx, fy, fa), "eject": xy(ex, ey, ea),
+            "virus": [[round(float(a)), round(float(b)), round(float(c), 1)]
+                      for a, b, c in zip(vx[va], vy[va], vr2[va].sqrt())],
+            "mass": [round(float(m)) for m in mass],
         }, separators=(",", ":"))
 
-    def arena(self, b: int) -> dict:
-        P, K = self.env.P, self.env.w.K
-        cal, cx, cy, cr2, fal, fx, fy, eal, ex, ey, val, vx, vy, vr2 = (t[b] for t in self._host)
-        al = cal > 0
-        r = cr2.sqrt()
-        cells = [[round(float(cx[i])), round(float(cy[i])), round(float(r[i]), 1), i // K]
-                 for i in al.nonzero()[:, 0].tolist()]
-        fa, ea, va = fal > 0, eal > 0, val > 0
-        mass = torch.zeros(P)
-        mass.index_add_(0, torch.arange(P * K) // K, cr2 / 100 * al)
-        xy = lambda x, y, m: torch.stack([x[m], y[m]], 1).round().int().reshape(-1).tolist()
-        return {
-            "cells": cells, "food": xy(fx, fy, fa), "eject": xy(ex, ey, ea),
-            "virus": [[round(float(a)), round(float(b_)), round(float(c), 1)]
-                      for a, b_, c in zip(vx[va], vy[va], vr2[va].sqrt())],
-            "mass": [round(float(m)) for m in mass],
-        }
+    def actions(self, g: torch.Tensor, s: torch.Tensor) -> torch.Tensor:
+        P = self.env.P
+        a = torch.zeros(P, 3, dtype=torch.long, device=g.device)
+        for m, lo, hi in self.groups:
+            a[lo:hi] = m.act(g[lo:hi], s[lo:hi], amp=True)[0]
+        if self.bots:
+            a[P - self.bots:] = scripted_actions(self.env.w, self.env.bot_split_prob)[0, P - self.bots:]
+        return a
 
     def loop(self) -> None:
         g, s, _, _, _ = self.env.reset()
-        P, nb = self.env.P, self.bots
-        last_reload, t_rate, n_rate, last_snap = 0.0, time.time(), 0, 0.0
+        last_check, t_rate, n_rate, last_snap = 0.0, time.time(), 0, 0.0
         while True:
-            now = time.time()
-            if now - last_reload > 5:
-                self.maybe_reload()
-                last_reload = now
-            if time.time() - self.last_view > 5:
+            if time.time() - last_check > 5:
+                self.check()
+                last_check = time.time()
+            if time.time() - self.last_view > 5 or not self.groups:   # nobody watching
                 time.sleep(0.2)
                 continue
             if self.new_round:
-                if self.groups and self.ready:     # the button: pick up the newest models first
-                    self.maybe_reload(force=True)
+                if self.ready:
+                    self.load()
                 g, s, _, _, _ = self.env.reset()
                 self.new_round = False
                 self.round += 1
                 self.round_step = 0
-            if self.paused or self.model is None:
+            if self.paused:
                 time.sleep(0.05)
-                with self.lock:
-                    self.frame = self.snapshot()
-                continue
-            t0 = time.time()
-            with torch.no_grad():
-                a = torch.zeros(self.env.B, P, 3, dtype=torch.long, device=g.device)
-                gv, sv = g.view(self.env.B, P, *g.shape[1:]), s.view(self.env.B, P, -1)
-                for m, lo, hi in self.groups:
-                    a[:, lo:hi] = m.act(gv[:, lo:hi].reshape(-1, *g.shape[1:]),
-                                        sv[:, lo:hi].reshape(-1, s.shape[-1]), amp=True)[0].view(self.env.B, hi - lo, 3)
-                a = a.reshape(-1, 3)
-                if nb:
-                    a = a.view(self.env.B, P, 3)
-                    a[:, P - nb:] = scripted_actions(self.env.w, self.env.bot_split_prob)[:, P - nb:]
-                    a = a.reshape(-1, 3)
-            g, s, _, _, _ = self.env.step(a)
-            self.steps += 1
-            self.round_step += 1
-            n_rate += 1
-            if time.time() - t_rate > 1:
-                self.rate, n_rate, t_rate = n_rate * STEP_S / (time.time() - t_rate), 0, time.time()
-            if time.time() - last_snap > 1 / 15:   # ~15 frames/s is plenty: don't sync the GPU every step
-                last_snap = time.time()
                 frame = self.snapshot()
+            else:
+                t0 = time.time()
+                with torch.no_grad():
+                    g, s, _, _, _ = self.env.step(self.actions(g, s))
+                self.round_step += 1
+                n_rate += 1
+                if time.time() - t_rate > 1:
+                    self.rate, n_rate, t_rate = n_rate * STEP_S / (time.time() - t_rate), 0, time.time()
+                frame = None
+                if time.time() - last_snap > 1 / 15:     # ~15 frames/s: don't sync the GPU every step
+                    last_snap = time.time()
+                    frame = self.snapshot()
+                time.sleep(max(0.0, STEP_S - (time.time() - t0)))
+            if frame:
                 with self.lock:
                     self.frame = frame
-            if self.speed > 0:
-                time.sleep(max(0.0, STEP_S / self.speed - (time.time() - t0)))
+
+    def progress(self) -> list[dict]:
+        """Chart rows {x, label, series: {name: avg mass}}: per generation for an evolution run
+        (its best member, the median member, the hall-of-fame yardstick), per evaluated
+        checkpoint for a plain run (sim.progress: the newest net vs fixed references)."""
+        if self.evo:
+            rows = []
+            for e in json.loads((self.dir / "evo.json").read_text())["log"]:
+                res = e["results"]
+                mem = sorted(v["avg_mass"] for k, v in res.items() if k != "hof_last")
+                series = {"best": mem[-1], "median": mem[len(mem) // 2]}
+                if "hof_last" in res:
+                    series["hall of fame"] = res["hof_last"]["avg_mass"]
+                rows.append({"x": e["gen"], "label": f"generation {e['gen']}", "series": series})
+            return rows
+        f = self.dir / "progress.json"
+        if not f.exists():
+            return []
+        return [{"x": r["it"], "label": f"it {r['it']}",
+                 "series": {k: v["avg_mass"] for k, v in r.items() if isinstance(v, dict)}}
+                for r in json.loads(f.read_text())]
 
 
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--run", default="s1", help="a ppo_sim run, or an rl.evo population (e.g. e1)")
+    p.add_argument("--run", default="e1", help="an rl.evo population (e.g. e1) or a ppo_sim run (e.g. s1)")
     p.add_argument("--port", type=int, default=8096)
-    p.add_argument("--bots", type=int, default=4, help="slots played by the scripted sim bot")
-    p.add_argument("--arenas", type=int, default=1)
-    p.add_argument("--players", type=int, default=24, help="per arena (training uses 24)")
-    p.add_argument("--past", type=int, default=6, help="slots played by past league snapshots")
+    p.add_argument("--players", type=int, default=50, help="training arenas have 50")
+    p.add_argument("--bots", type=int, default=6, help="slots played by the scripted sim bot")
+    p.add_argument("--past", type=int, default=12, help="plain runs: slots played by past snapshots")
     p.add_argument("--vram-gb", type=float, default=2.0)
     args = p.parse_args()
-    wt = Watcher(args.run, args.bots, args.vram_gb, args.arenas, args.players, args.past)
+    wt = Watcher(args.run, args.players, args.bots, args.past, args.vram_gb)
 
     class H(BaseHTTPRequestHandler):
         def log_message(self, *a):
@@ -237,27 +236,12 @@ def main() -> None:
                     body = wt.frame.encode()
                 self.send(body, "application/json")
             elif self.path.startswith("/progress"):
-                f = wt.dir / "progress.json"
-                self.send(f.read_bytes() if f.exists() else b"[]", "application/json")
+                self.send(json.dumps(wt.progress()).encode(), "application/json")
             elif self.path.startswith("/newround"):
                 wt.new_round = True
                 self.send(b"ok", "text/plain")
-            elif self.path.startswith("/turbo"):
-                # pause this run's training (rl.ppo_sim waits while PAUSE exists) and run flat out
-                flag = wt.dir / "PAUSE"
-                if flag.exists():
-                    flag.unlink()
-                    wt.speed = 1.0
-                else:
-                    flag.touch()
-                    wt.speed = 0.0
-                self.send(b"ok", "text/plain")
-            elif self.path.startswith("/speed"):
-                v = self.path.split("=", 1)[-1]
-                if v == "pause":
-                    wt.paused = not wt.paused
-                else:
-                    wt.speed = float(v)
+            elif self.path.startswith("/pause"):
+                wt.paused = not wt.paused
                 self.send(b"ok", "text/plain")
             else:
                 self.send(PAGE.read_bytes(), "text/html; charset=utf-8")
