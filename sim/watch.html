@@ -24,16 +24,18 @@
   #top button.on { background: #2f7de1; color: #fff; border-color: #2f7de1; }
   #top button.ready { background: #19a979; color: #fff; border-color: #19a979; }
   #info { color: var(--muted); font-size: 12px; width: 100%; text-align: center; }
-  #prog { top: 12px; left: 12px; width: 300px; max-width: calc(100vw - 48px); }
+  #prog { width: 300px; }
   #prog canvas { width: 100%; height: 120px; display: block; }
   #progcap { font-size: 12px; color: var(--muted); }
-  #models { top: 196px; left: 12px; min-width: 220px; }
+  #left { position: fixed; top: 12px; left: 12px; display: flex; flex-direction: column; gap: 10px; max-width: calc(100vw - 48px); }
+  #left .panel { position: static; }
+  #models { min-width: 220px; }
   #models table { border-collapse: collapse; font-size: 13px; }
   #models th { color: var(--muted); font-weight: 600; font-size: 12px; text-align: right; padding: 2px 8px; }
   #models th:first-child, #models td:first-child { text-align: left; padding-left: 0; }
   #models td { text-align: right; padding: 3px 8px; font-variant-numeric: tabular-nums; border-top: 1px solid var(--grid); }
   #board { top: 12px; right: 12px; min-width: 210px; max-height: calc(100vh - 110px); overflow-y: auto; }
-  #board.hide { display: none; }
+  .panel.hide { display: none; }
   #rows > div { display: flex; justify-content: space-between; gap: 12px; cursor: pointer; padding: 1px 4px;
                 border-radius: 4px; font-size: 13px; }
   #rows > div.sel { background: rgba(47,125,225,.18); }
@@ -45,11 +47,15 @@
   <button id="newround" title="load the newest models and restart: everyone starts from scratch">new round</button>
   <button id="pause">pause</button>
   <button id="view" class="on">whole map</button>
-  <button id="list" class="on">players</button>
+  <button data-panel="prog" class="on">progress</button>
+  <button data-panel="models" class="on">models</button>
+  <button data-panel="board" class="on">players</button>
   <span id="info"></span>
 </div>
-<div id="prog" class="panel"><h3>Progress</h3><div id="progcap">waiting for the first evaluation</div><canvas id="pc"></canvas></div>
-<div id="models" class="panel"><h3>Models in this arena</h3><div id="mrows"></div></div>
+<div id="left">
+  <div id="prog" class="panel"><h3>Progress</h3><div id="progcap">waiting for the first evaluation</div><canvas id="pc"></canvas></div>
+  <div id="models" class="panel"><h3>Models in this arena</h3><div id="mrows"></div></div>
+</div>
 <div id="board" class="panel"><h3 id="title">Players</h3><div id="rows"></div></div>
 <script>
 const cv = document.getElementById("c"), ctx = cv.getContext("2d");
@@ -77,7 +83,18 @@ const name = i => `${modelOf(i)} #${i}`;
 $("newround").onclick = () => fetch("/newround");
 $("pause").onclick = () => fetch("/pause");
 $("view").onclick = () => setFollow(-1);
-$("list").onclick = () => { $("board").classList.toggle("hide"); $("list").classList.toggle("on"); };
+// panel toggles, remembered per browser
+const hidden = (() => { try { return JSON.parse(localStorage.getItem("watch.hidden")) || []; } catch (e) { return []; } })();
+document.querySelectorAll("[data-panel]").forEach(b => {
+  const p = $(b.dataset.panel);
+  const set = h => { p.classList.toggle("hide", h); b.classList.toggle("on", !h); };
+  set(hidden.includes(b.dataset.panel));
+  b.onclick = () => {
+    set(!p.classList.contains("hide"));
+    const now = [...document.querySelectorAll("[data-panel]")].filter(x => $(x.dataset.panel).classList.contains("hide")).map(x => x.dataset.panel);
+    try { localStorage.setItem("watch.hidden", JSON.stringify(now)); } catch (e) {}
+  };
+});
 // clicks are handled on the container: the rows are re-rendered every 300 ms and a listener on a
 // row could vanish between mouse-down and mouse-up
 $("rows").addEventListener("click", e => {
