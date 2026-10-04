@@ -28,9 +28,9 @@ class NNPolicy:
             self.encoder = GuidedEncoder(self.model.guide)
         else:
             from .guided import C as GUIDED_C
-            if self.model.config.get("c") == GUIDED_C:  # sim-trained: guided layout, no champion
+            if self.model.config.get("c", 0) >= GUIDED_C:  # sim-trained: guided layout (+ sim channels), no champion
                 from .nohint import NoHintEncoder
-                self.encoder = NoHintEncoder()
+                self.encoder = NoHintEncoder(self.model.config["c"])
 
     def reset(self) -> None:
         if self.encoder:
