@@ -36,6 +36,7 @@ def run(nets: dict[str, str], B: int = 16, P: int = 50, steps: int = 3000, bots:
     g, s, _, _, _ = env.reset()
     mass_sum = torch.zeros(B, P, device=dev)
     deaths = torch.zeros(B, P, device=dev)
+    splits = torch.zeros(B, P, device=dev)
     flat_owner = owner.reshape(-1)
     idx = [(flat_owner == k).nonzero()[:, 0] for k in range(M)]
     for _ in range(steps):
@@ -44,6 +45,7 @@ def run(nets: dict[str, str], B: int = 16, P: int = 50, steps: int = 3000, bots:
             a[ix] = m.act(g[ix], s[ix], amp=True)[0]
         if bots:
             a.view(B, P, 3)[:, n_play:] = scripted_actions(env.w, env.bot_split_prob)[:, n_play:]
+        splits += ((a[:, 1] > 0) & env.prev_alive.reshape(-1)).view(B, P).float()
         g, s, _, d, _ = env.step(a)
         mass_sum += env.prev_mass
         deaths += d.view(B, P).float()
@@ -57,7 +59,8 @@ def run(nets: dict[str, str], B: int = 16, P: int = 50, steps: int = 3000, bots:
         ci = 1.96 * lm.std().item() / math.sqrt(B) if B > 1 else float("nan")
         out[name] = {"log_mass": lm.mean().item(), "ci": ci, "avg_mass": avg.mean().item(),
                      "deaths": ((deaths * sel).sum(1) / n_slots).mean().item(),
-                     "kills": ((kills * sel).sum(1) / n_slots).mean().item()}
+                     "kills": ((kills * sel).sum(1) / n_slots).mean().item(),
+                     "splits_per_min": ((splits * sel).sum(1) / n_slots).mean().item() / (steps * 0.08 / 60)}
     return out
 
 
@@ -94,9 +97,9 @@ def main() -> None:
     torch.cuda.set_per_process_memory_fraction(min(1.0, args.vram_gb * 2 ** 30 / total))
     nets = dict(x.split("=", 1) for x in args.nets)
     res = run(nets, args.b, args.p, args.steps, args.bots, args.seed)
-    print(f"{'net':<16} {'log_mass':>14} {'avg_mass':>9} {'deaths':>7} {'kills':>6}")
+    print(f"{'net':<16} {'log_mass':>14} {'avg_mass':>9} {'deaths':>7} {'kills':>6} {'splits/min':>10}")
     for name, r in sorted(res.items(), key=lambda kv: -kv[1]["log_mass"]):
-        print(f"{name:<16} {r['log_mass']:7.3f} +-{r['ci']:5.3f} {r['avg_mass']:9.0f} {r['deaths']:7.2f} {r['kills']:6.2f}")
+        print(f"{name:<16} {r['log_mass']:7.3f} +-{r['ci']:5.3f} {r['avg_mass']:9.0f} {r['deaths']:7.2f} {r['kills']:6.2f} {r['splits_per_min']:10.2f}")
     if args.json:
         with open(args.json, "w") as f:
             json.dump(res, f, indent=2)

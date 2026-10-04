@@ -41,6 +41,7 @@ class Watcher:
         self.groups, self.names, self.ver, self.ready, self.title = [], [], None, False, ""
         self.paused, self.new_round = False, False
         self.round, self.round_step, self.rate = 0, 0, 0.0
+        self.splits = torch.zeros(players)   # splits per slot this round
         self.last_view = 0.0       # time of the last /frame request
         self.frame = "{}"
         self.lock = threading.Lock()
@@ -137,6 +138,7 @@ class Watcher:
             "virus": [[round(float(a)), round(float(b)), round(float(c), 1)]
                       for a, b, c in zip(vx[va], vy[va], vr2[va].sqrt())],
             "mass": [round(float(m)) for m in mass],
+            "splits": [round(float(x) * 4) for x in self.splits],     # estimated from every 4th step
         }, separators=(",", ":"))
 
     def actions(self, g: torch.Tensor, s: torch.Tensor) -> torch.Tensor:
@@ -147,6 +149,9 @@ class Watcher:
         if self.bots:
             a[P - self.bots:] = scripted_actions(self.env.w, self.env.bot_split_prob)[0, P - self.bots:]
         return a
+
+    def count_splits(self, a: torch.Tensor) -> None:
+        self.splits += ((a[:, 1] > 0) & self.env.prev_alive.reshape(-1)).float().cpu()
 
     def loop(self) -> None:
         g, s, _, _, _ = self.env.reset()
@@ -163,6 +168,7 @@ class Watcher:
                     self.load()
                 g, s, _, _, _ = self.env.reset()
                 self.new_round = False
+                self.splits.zero_()
                 self.round += 1
                 self.round_step = 0
             if self.paused:
@@ -171,7 +177,10 @@ class Watcher:
             else:
                 t0 = time.time()
                 with torch.no_grad():
-                    g, s, _, _, _ = self.env.step(self.actions(g, s))
+                    a = self.actions(g, s)
+                    if self.round_step % 4 == 0:      # sampled (a GPU sync each time): splits are rare, x4
+                        self.count_splits(a)
+                    g, s, _, _, _ = self.env.step(a)
                 self.round_step += 1
                 n_rate += 1
                 if time.time() - t_rate > 1:

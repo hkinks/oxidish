@@ -214,7 +214,7 @@ def main() -> None:
         print(f"--- generation {gen} results", flush=True)
         for name, r in sorted(res.items(), key=lambda kv: -kv[1]["log_mass"]):
             print(f"  {name:<9} log_mass {r['log_mass']:.3f} +-{r['ci']:.3f}  mass {r['avg_mass']:.0f}  "
-                  f"deaths {r['deaths']:.2f}  kills {r['kills']:.2f}", flush=True)
+                  f"deaths {r['deaths']:.2f}  kills {r['kills']:.2f}  splits/min {r.get('splits_per_min', 0):.2f}", flush=True)
         farm = farm_test({k: v for k, v in snaps.items() if k != "hof_last"})
         long = tourney({k: v for k, v in snaps.items() if k != "hof_last"}, B=4, P=args.p,
                        steps=args.long_steps, seed=9000 + gen)

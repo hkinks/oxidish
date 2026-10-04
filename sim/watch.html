@@ -135,12 +135,13 @@ function panels() {
     `<div data-i="${i}" class="${i === follow ? "sel" : ""}"><span>${r + 1}. <span class="sw" style="background:${colorOf(i)}"></span>${name(i)}</span><b>${m}</b></div>`).join("");
   const agg = {};
   F.mass.forEach((m, i) => {
-    const a = agg[modelOf(i)] || (agg[modelOf(i)] = {n: 0, mass: 0, best: 0, i});
-    a.n++; a.mass += m; a.best = Math.max(a.best, m);
+    const a = agg[modelOf(i)] || (agg[modelOf(i)] = {n: 0, mass: 0, best: 0, splits: 0, i});
+    a.n++; a.mass += m; a.best = Math.max(a.best, m); a.splits += (F.splits || [])[i] || 0;
   });
-  $("mrows").innerHTML = `<div style="color:var(--muted)"><span>model (players)</span><span>avg · best mass</span></div>` +
+  const mins = Math.max(F.round_s / 60, 1 / 60);
+  $("mrows").innerHTML = `<div style="color:var(--muted)"><span>model (players)</span><span>avg · best mass · splits/min</span></div>` +
     Object.entries(agg).sort((a, b) => b[1].mass / b[1].n - a[1].mass / a[1].n).map(([k, a]) =>
-      `<div><span><span class="sw" style="background:${colorOf(a.i)}"></span>${k} (${a.n})</span><span>${Math.round(a.mass / a.n)} · ${a.best}</span></div>`).join("");
+      `<div><span><span class="sw" style="background:${colorOf(a.i)}"></span>${k} (${a.n})</span><span>${Math.round(a.mass / a.n)} · ${a.best} · ${(a.splits / a.n / mins).toFixed(2)}</span></div>`).join("");
   $("pause").classList.toggle("on", F.paused);
   $("newround").classList.toggle("ready", !!F.ready);
   $("newround").textContent = F.ready ? "new round (new models ready)" : "new round";
