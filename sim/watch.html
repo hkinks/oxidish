@@ -54,7 +54,7 @@
 </div>
 <div id="left">
   <div id="prog" class="panel"><h3>Progress</h3><div id="progcap">waiting for the first evaluation</div><canvas id="pc"></canvas></div>
-  <div id="models" class="panel"><h3>Models in this arena</h3><div id="mrows"></div></div>
+  <div id="models" class="panel"><h3>Models in this arena (this round; rates per player)</h3><div id="mrows"></div></div>
 </div>
 <div id="board" class="panel"><h3 id="title">Players</h3><div id="rows"></div></div>
 <script>
@@ -155,14 +155,16 @@ function panels() {
     `<div data-i="${i}" class="${i === follow ? "sel" : ""}"><span>${r + 1}. <span class="sw" style="background:${colorOf(i)}"></span>${name(i)}</span><b>${m}</b></div>`).join("");
   const agg = {};
   F.mass.forEach((m, i) => {
-    const a = agg[modelOf(i)] || (agg[modelOf(i)] = {n: 0, alive: 0, mass: 0, best: 0, splits: 0, i});
+    const a = agg[modelOf(i)] || (agg[modelOf(i)] = {n: 0, alive: 0, mass: 0, best: 0, splits: 0, ejects: 0, deaths: 0, i});
     a.n++; a.alive += m > 0; a.mass += m; a.best = Math.max(a.best, m); a.splits += (F.splits || [])[i] || 0;
+    a.ejects += (F.ejects || [])[i] || 0; a.deaths += (F.deaths || [])[i] || 0;
   });
   const mins = Math.max(F.round_s / 60, 1 / 60);
-  $("mrows").innerHTML = `<table><tr><th>model</th><th>players</th><th>alive</th><th>avg mass</th><th>best</th><th>splits/min</th></tr>` +
+  $("mrows").innerHTML = `<table><tr><th>model</th><th>players</th><th>alive</th><th>avg mass</th><th>best</th><th>splits/min</th><th>W/min</th><th>deaths</th></tr>` +
     Object.entries(agg).sort((a, b) => b[1].mass / b[1].n - a[1].mass / a[1].n).map(([k, a]) =>
       `<tr><td><span class="sw" style="background:${colorOf(a.i)}"></span>${k}</td><td>${a.n}</td><td>${a.alive}</td>` +
-      `<td><b>${Math.round(a.mass / a.n)}</b></td><td>${a.best}</td><td>${(a.splits / a.n / mins).toFixed(2)}</td></tr>`).join("") +
+      `<td><b>${Math.round(a.mass / a.n)}</b></td><td>${a.best}</td><td>${(a.splits / a.n / mins).toFixed(2)}</td>` +
+      `<td>${(a.ejects / a.n / mins).toFixed(2)}</td><td>${a.deaths}</td></tr>`).join("") +
     `</table>`;
   $("pause").classList.toggle("on", F.paused);
   $("newround").classList.toggle("ready", !!F.ready);

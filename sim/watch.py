@@ -41,7 +41,8 @@ class Watcher:
         self.groups, self.names, self.ver, self.ready, self.title = [], [], None, False, ""
         self.paused, self.new_round = False, False
         self.round, self.round_step, self.rate = 0, 0, 0.0
-        self.splits = torch.zeros(players)   # splits per slot this round
+        # per slot this round, kept on the GPU (no sync per step): splits, ejects (W), deaths
+        self.counts = torch.zeros(3, players, device="cuda")
         self.last_view = 0.0       # time of the last /frame request
         self.frame = "{}"
         self.lock = threading.Lock()
@@ -117,13 +118,14 @@ class Watcher:
         # time slice behind training.
         w, K = self.env.w, self.env.w.K
         parts = [w.calive, w.cx, w.cy, w.cr2, w.falive, w.fx, w.fy, w.ealive, w.ex, w.ey,
-                 w.valive, w.vx, w.vy, w.vr2]
+                 w.valive, w.vx, w.vy, w.vr2, self.counts[None]]
         flat = torch.cat([t[0].float().reshape(-1) for t in parts]).cpu()
         host, i = [], 0
         for t in parts:
             host.append(flat[i:i + t[0].numel()])
             i += t[0].numel()
-        cal, cx, cy, cr2, fal, fx, fy, eal, ex, ey, val, vx, vy, vr2 = host
+        cal, cx, cy, cr2, fal, fx, fy, eal, ex, ey, val, vx, vy, vr2, counts = host
+        counts = counts.view(3, -1)
         al, fa, ea, va = cal > 0, fal > 0, eal > 0, val > 0
         r = cr2.sqrt()
         mass = torch.zeros(self.env.P).index_add_(0, torch.arange(len(cr2)) // K, cr2 / 100 * al)
@@ -138,7 +140,8 @@ class Watcher:
             "virus": [[round(float(a)), round(float(b)), round(float(c), 1)]
                       for a, b, c in zip(vx[va], vy[va], vr2[va].sqrt())],
             "mass": [round(float(m)) for m in mass],
-            "splits": [round(float(x) * 4) for x in self.splits],     # estimated from every 4th step
+            "splits": counts[0].int().tolist(), "ejects": counts[1].int().tolist(),
+            "deaths": counts[2].int().tolist(),
         }, separators=(",", ":"))
 
     def actions(self, g: torch.Tensor, s: torch.Tensor) -> torch.Tensor:
@@ -150,8 +153,11 @@ class Watcher:
             a[P - self.bots:] = scripted_actions(self.env.w, self.env.bot_split_prob)[0, P - self.bots:]
         return a
 
-    def count_splits(self, a: torch.Tensor) -> None:
-        self.splits += ((a[:, 1] > 0) & self.env.prev_alive.reshape(-1)).float().cpu()
+    def count(self, a: torch.Tensor, died: torch.Tensor) -> None:
+        alive = self.env.prev_alive.reshape(-1)
+        self.counts[0] += ((a[:, 1] > 0) & alive).float()
+        self.counts[1] += ((a[:, 2] > 0) & alive).float()
+        self.counts[2] += died.float()
 
     def loop(self) -> None:
         g, s, _, _, _ = self.env.reset()
@@ -168,7 +174,7 @@ class Watcher:
                     self.load()
                 g, s, _, _, _ = self.env.reset()
                 self.new_round = False
-                self.splits.zero_()
+                self.counts.zero_()
                 self.round += 1
                 self.round_step = 0
             if self.paused:
@@ -178,9 +184,8 @@ class Watcher:
                 t0 = time.time()
                 with torch.no_grad():
                     a = self.actions(g, s)
-                    if self.round_step % 4 == 0:      # sampled (a GPU sync each time): splits are rare, x4
-                        self.count_splits(a)
-                    g, s, _, _, _ = self.env.step(a)
+                    g, s, _, d, _ = self.env.step(a)
+                    self.count(a, d)
                 self.round_step += 1
                 n_rate += 1
                 if time.time() - t_rate > 1:
