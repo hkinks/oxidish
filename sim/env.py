@@ -22,7 +22,7 @@ import numpy as np
 import torch
 
 from .bots import scripted_actions
-from .engine import START_R2, World
+from .engine import MIN_SPLIT_R2, START_R2, World
 from .obs import Encoder
 
 DIRS = 16
@@ -43,7 +43,8 @@ class SimEnv:
                  curriculum_mass: tuple = CURRICULUM_MASS, max_eject: int = 256,
                  bot_split_prob: float = 0.5, obs_dtype: torch.dtype = torch.float32,
                  virus_reward: tuple = (0.0, 0.0, 0.0), explore_reward: float = 0.0,
-                 kill_reward: tuple = (0.0, 0.0)):
+                 kill_reward: tuple = (0.0, 0.0), growth: dict | None = None,
+                 action_bonus: tuple = (0.0, 0.0)):
         self.w = World(B, P, device, map_size, food_mult, max_eject, seed)
         self.B, self.P = B, P
         self.NL = P if n_learn is None else n_learn
@@ -56,6 +57,14 @@ class SimEnv:
         self.virus_reward = virus_reward
         self.explore_reward = explore_reward
         self.kill_reward = kill_reward   # per enemy cell eaten, per 200 enemy mass eaten
+        # growth reward (instead of linear mass): log-mass change, minus a "par" growth rate while
+        # above par_mass. Farming at a steady absolute pace earns less and less in log terms as the
+        # cell grows, and falls below par: only accelerating growth (eating players) keeps paying.
+        # dict(par_doubling_min=4.0, par_mass=500.0, death=1.0); None = linear mass reward.
+        self.growth = growth
+        if growth:
+            self.par_step = math.log(2) / (growth.get("par_doubling_min", 4.0) * 60 / 0.08)
+        self.action_bonus = action_bonus  # per split, per eject (W) that the game carries out
         self.n_agents = B * self.NL
         self.py_steps = 0
         self.gen = self.w.gen
@@ -173,6 +182,10 @@ class SimEnv:
             mouse[:, NL:, 1] = cy + torch.sin(ang) * far
             split[:, NL:] = ba[..., 1] > 0
         was_alive = w.alive_players()
+        if self.action_bonus[0] or self.action_bonus[1]:   # what the game will carry out: split needs a
+            r2v = w.cr2.view(B, P, w.K)                       # piece >= 35 mass and a free cell slot
+            can = (r2v.amax(-1) >= MIN_SPLIT_R2) & (w.calive.view(B, P, w.K).sum(-1) < w.K)
+            self._acted = torch.stack([split & can & was_alive, eject & can & was_alive])[:, :, :NL].float()
         # respawn size: learners sometimes start big (curriculum), everyone else at the default
         size = torch.full((B, P), math.sqrt(START_R2), device=dev)
         if self.curriculum_p > 0:
@@ -190,9 +203,17 @@ class SimEnv:
         mass_now = (fs * fs / 100).view(B, P, w.K).sum(-1)[:, :NL]
         alive_now = w.alive_players()[:, :NL]
         pa, pm = self.prev_alive, self.prev_mass
-        rew = torch.where(alive_now & pa, (mass_now - pm) * REWARD_SCALE, torch.zeros_like(mass_now))
         died = pa & ~alive_now
-        rew = torch.where(died, -pm * REWARD_SCALE, rew)
+        if self.growth:
+            lg = lambda m: torch.log(m.clamp(min=SPAWN_MASS))
+            par = self.par_step * (mass_now > self.growth.get("par_mass", 500.0)).float()
+            rew = torch.where(alive_now & pa, lg(mass_now) - lg(pm) - par, torch.zeros_like(mass_now))
+            rew = torch.where(died, -(lg(pm) - math.log(SPAWN_MASS)) - self.growth.get("death", 1.0), rew)
+        else:
+            rew = torch.where(alive_now & pa, (mass_now - pm) * REWARD_SCALE, torch.zeros_like(mass_now))
+            rew = torch.where(died, -pm * REWARD_SCALE, rew)
+        if self.action_bonus[0] or self.action_bonus[1]:
+            rew = rew + self.action_bonus[0] * self._acted[0] + self.action_bonus[1] * self._acted[1]
         done = died.clone()
         live = alive_now | pa
         # virus shots / pops of this step

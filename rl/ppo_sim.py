@@ -126,6 +126,10 @@ def main() -> None:
                    "in_mask, s_mask, shared); differs from --init's -> fresh net distilled from it")
     p.add_argument("--distill-iters", type=int, default=30, help="iterations of imitating --init when --arch differs")
     p.add_argument("--hof", help="directory of checkpoints that always stay in the league (e.g. past evolution winners)")
+    p.add_argument("--growth", help="growth reward instead of linear mass: 'par_doubling_min,par_mass,death' "
+                   "e.g. 4,500,1 = log-mass change, minus par (doubling every 4 min) above 500 mass, death costs "
+                   "its log-mass gain + 1")
+    p.add_argument("--action-bonus", default="0,0", help="reward per split, per eject (W) the game carries out")
     p.add_argument("--kill-reward", default="0,0", help="per enemy cell eaten, per 200 enemy mass eaten")
     p.add_argument("--save-every", type=int, default=10)
     p.add_argument("--seed", type=int, default=7)
@@ -166,7 +170,10 @@ def main() -> None:
     env = SimEnv(B=B, P=P, seed=args.seed, episode_steps=args.episode_steps, curriculum_p=args.curriculum_p,
                  obs_dtype=torch.float16, virus_reward=tuple(float(x) for x in args.virus_reward.split(",")),
                  explore_reward=args.explore_reward,
-                 kill_reward=tuple(float(x) for x in args.kill_reward.split(",")))
+                 kill_reward=tuple(float(x) for x in args.kill_reward.split(",")),
+                 growth=(dict(zip(("par_doubling_min", "par_mass", "death"), map(float, args.growth.split(","))))
+                         if args.growth else None),
+                 action_bonus=tuple(float(x) for x in args.action_bonus.split(",")))
     # ---- slot roles: 0 learner (current policy), 1 league snapshot, 2 scripted bot
     n_league, n_bot = round(B * args.league_frac), round(B * args.bot_frac)
     n_farm, n_hunt = round(B * args.farm_frac), round(B * args.hunt_frac)
