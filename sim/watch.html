@@ -28,7 +28,10 @@
   #prog canvas { width: 100%; height: 120px; display: block; }
   #progcap { font-size: 12px; color: var(--muted); }
   #models { top: 196px; left: 12px; min-width: 220px; }
-  #models div { display: flex; justify-content: space-between; gap: 14px; font-size: 13px; }
+  #models table { border-collapse: collapse; font-size: 13px; }
+  #models th { color: var(--muted); font-weight: 600; font-size: 12px; text-align: right; padding: 2px 8px; }
+  #models th:first-child, #models td:first-child { text-align: left; padding-left: 0; }
+  #models td { text-align: right; padding: 3px 8px; font-variant-numeric: tabular-nums; border-top: 1px solid var(--grid); }
   #board { top: 12px; right: 12px; min-width: 210px; max-height: calc(100vh - 110px); overflow-y: auto; }
   #board.hide { display: none; }
   #rows > div { display: flex; justify-content: space-between; gap: 12px; cursor: pointer; padding: 1px 4px;
@@ -135,13 +138,15 @@ function panels() {
     `<div data-i="${i}" class="${i === follow ? "sel" : ""}"><span>${r + 1}. <span class="sw" style="background:${colorOf(i)}"></span>${name(i)}</span><b>${m}</b></div>`).join("");
   const agg = {};
   F.mass.forEach((m, i) => {
-    const a = agg[modelOf(i)] || (agg[modelOf(i)] = {n: 0, mass: 0, best: 0, splits: 0, i});
-    a.n++; a.mass += m; a.best = Math.max(a.best, m); a.splits += (F.splits || [])[i] || 0;
+    const a = agg[modelOf(i)] || (agg[modelOf(i)] = {n: 0, alive: 0, mass: 0, best: 0, splits: 0, i});
+    a.n++; a.alive += m > 0; a.mass += m; a.best = Math.max(a.best, m); a.splits += (F.splits || [])[i] || 0;
   });
   const mins = Math.max(F.round_s / 60, 1 / 60);
-  $("mrows").innerHTML = `<div style="color:var(--muted)"><span>model (players)</span><span>avg · best mass · splits/min</span></div>` +
+  $("mrows").innerHTML = `<table><tr><th>model</th><th>players</th><th>alive</th><th>avg mass</th><th>best</th><th>splits/min</th></tr>` +
     Object.entries(agg).sort((a, b) => b[1].mass / b[1].n - a[1].mass / a[1].n).map(([k, a]) =>
-      `<div><span><span class="sw" style="background:${colorOf(a.i)}"></span>${k} (${a.n})</span><span>${Math.round(a.mass / a.n)} · ${a.best} · ${(a.splits / a.n / mins).toFixed(2)}</span></div>`).join("");
+      `<tr><td><span class="sw" style="background:${colorOf(a.i)}"></span>${k}</td><td>${a.n}</td><td>${a.alive}</td>` +
+      `<td><b>${Math.round(a.mass / a.n)}</b></td><td>${a.best}</td><td>${(a.splits / a.n / mins).toFixed(2)}</td></tr>`).join("") +
+    `</table>`;
   $("pause").classList.toggle("on", F.paused);
   $("newround").classList.toggle("ready", !!F.ready);
   $("newround").textContent = F.ready ? "new round (new models ready)" : "new round";
