@@ -255,9 +255,7 @@ def main() -> None:
         # first generation imitating its parent and catching up, so it gets one generation of grace.
         n_keep = max(1, len(ranked) // 2)
         grace = [m for m in ranked if m.get("new_arch_gen") == gen]
-        rest = [m for m in ranked if m not in grace]
-        n_out = len(ranked) - n_keep
-        losers = rest[len(rest) - n_out:] if n_out <= len(rest) else rest
+        losers = [m for m in ranked[n_keep:] if m not in grace]      # only the bottom half can go
         survivors, children = [m for m in ranked if m not in losers], []
         for m in grace:
             print(f"  {m['id']} (new architecture) protected this generation", flush=True)
