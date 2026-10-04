@@ -58,7 +58,7 @@ There is deliberately no reward for splitting itself. Splitting is rewarded only
 uv run python -m rl.ppo_sim --run s1 --init runs/rl/s1/ckpt_00320.pt --start-it 320 ...
 ```
 
-This resumes with the run's saved league snapshots. `--arch JSON` builds a different architecture. If `--init`'s architecture differs, the new net first imitates it for `--distill-iters` iterations: our own states, KL to its action distributions. `--max-minutes` sets a wall-time budget, and the final checkpoint is always saved. A `PAUSE` file in the run directory pauses training.
+This resumes with the run's saved league snapshots. `--arch JSON` builds a different architecture. If `--init`'s architecture differs, the new net first imitates it for `--distill-iters` iterations: our own states, KL to its action distributions. `--max-minutes` sets a wall-time budget, and the final checkpoint is always saved.
 
 ## The s1 run (2026-10-04)
 
@@ -122,13 +122,13 @@ TensorBoard shows each member as `e1/m<k>`.
   ```
 
   It opens on http://127.0.0.1:8096.
-  - **What it runs:** its own live sim arena (not a replay of training games).
+  - **What it runs:** its own live sim arena of 50 players (not a replay of training games).
     - Evolution runs: every current member plus the newest hall-of-fame net, in equal shares.
     - Plain runs: the latest net plus 3 past snapshots.
     - Either way, 6 scripted bots join.
-  - **Rounds:** a new round (everyone at mass 10) starts with every new checkpoint, or with the "new round" button.
-  - **Panels:** cells are coloured by model. The Models panel shows avg/best mass per model, the player list is ranked by mass (click to follow), and the learning curve comes from `progress.json`.
-  - **Speed:** it runs at about real time while training uses the GPU. A step costs ~45 ms of waiting behind training's kernels whatever the arena size, so it can't go meaningfully faster. It stops simulating when no page has been open for 5 s.
+  - **Rounds:** models change only between rounds. When a generation finishes (or a plain run saves a checkpoint), the "new round" button turns green. Pressing it loads the new models and restarts with everyone at mass 10.
+  - **Panels:** cells are coloured by model. The Models panel shows avg/best mass per model, and the player list is ranked by mass (click to follow, again to stop). The progress chart shows the best/median member and the hall of fame per generation, or `progress.json` for plain runs.
+  - **Speed:** it runs at real time. Faster isn't possible while training holds the GPU: a step costs ~45 ms of waiting behind training's kernels whatever the arena size. It stops simulating when no page has been open for 5 s.
 - **TensorBoard** (`logs/tb`, http://127.0.0.1:6006):
   - training runs: `play/*` (life stats, kills, virus shots/pops) and `train/*`;
   - `<run>-eval` from sim.progress: `models/avg_mass|deaths|kills` per model, and `eval/margin_vs_best_ref`.
