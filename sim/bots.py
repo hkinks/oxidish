@@ -8,7 +8,7 @@ import math
 
 import torch
 
-from .engine import World
+from .engine import EJECT_R2, SPLIT_SPEED, World
 
 THREAT_RATIO, PREY_RATIO = 1.3, 1.3
 SPLIT_KILL = 2.6
@@ -93,3 +93,120 @@ def farmer_actions(env) -> torch.Tensor:
     move = (torch.round(ang / (2 * math.pi) * 16).long() % 16).reshape(-1)
     z = torch.zeros_like(move)
     return torch.stack([move, z, z], -1)
+
+
+# ---- MultiOgar's own bot (vendor/MultiOgar/src/ai/BotPlayer.js), vectorised -------------------------
+MO_VIEW_X, MO_VIEW_Y, MO_MIN_SCALE = 960.0, 540.0, 0.15     # serverViewBaseX/Y / 2, serverMinScale
+MO_PURSUIT, MO_COOLDOWN = 20, 15                            # targetPursuit / splitCooldown (ticks, merge on)
+
+
+class MultiOgarBots:
+    """The real server's built-in bot, per player slot of a World: from its largest cell, a potential
+    field over everything in its view box (pellets +1, ejected +2, smaller players +size/log(n), bigger
+    ones -log(ratio) over the surface distance, same-size ones -ratio, viruses -1 while it can pop on
+    them), and a deterministic split-kill: when not cooling down and under 6 cells, it splits on the
+    biggest player cell it out-sizes by 1.69x (radius), that is over 0.4x its radius and within split
+    reach, then chases that cell for 20 ticks (15-tick cooldown). These bots split-kill the sim nets'
+    small split pieces on the real server; scripted_actions only splits at random on the nearest prey.
+
+    Timers count down by the world ticks since the previous call (2 per env step; 4 when a policy
+    decides every 2 steps). Returns [B,P,3] like scripted_actions."""
+
+    def __init__(self, w: World):
+        self.w = w
+        self.cooldown = torch.zeros(w.B, w.P, device=w.dev)
+        self.pursuit = torch.zeros(w.B, w.P, device=w.dev)
+        self.target = torch.full((w.B, w.P), -1, dtype=torch.long, device=w.dev)   # cell index in [0, C)
+        self.target_id = torch.full((w.B, w.P), -1, dtype=torch.long, device=w.dev)
+        self.last_t = None
+
+    @torch.no_grad()
+    def __call__(self) -> torch.Tensor:
+        w = self.w
+        ticks = 2 if self.last_t is None else max(w.t - self.last_t, 1)
+        self.last_t = w.t
+        B, P, K, C = w.B, w.P, w.K, w.C
+        dev = w.dev
+        al = w.calive.view(B, C)
+        size = (w.cr2.view(B, C) * al).sqrt()
+        sv = size.view(B, P, K)
+        n_cells = al.view(B, P, K).sum(-1)
+        alive = n_cells > 0
+        big, bi = sv.max(-1)                                          # largest cell (the bot steers it)
+        ci = bi + torch.arange(P, device=dev)[None, :] * K
+        bx, by = w.cx.view(B, C).gather(1, ci), w.cy.view(B, C).gather(1, ci)
+        # view box: centre = mean cell position, scale from the summed radius
+        nc = n_cells.clamp(min=1)
+        mx = (w.cx.view(B, P, K) * al.view(B, P, K)).sum(-1) / nc
+        my = (w.cy.view(B, P, K) * al.view(B, P, K)).sum(-1) / nc
+        scale = torch.clamp(64.0 / sv.sum(-1).clamp(min=1.0), max=1.0).pow(0.4).clamp(min=MO_MIN_SCALE)
+        hx, hy = (MO_VIEW_X / scale)[..., None], (MO_VIEW_Y / scale)[..., None]
+
+        def seen(px, py, ps, ok):                                    # [B,M] -> [B,P,M]
+            return (((px[:, None, :] - mx[..., None]).abs() <= hx + ps[:, None, :])
+                    & ((py[:, None, :] - my[..., None]).abs() <= hy + ps[:, None, :]) & ok[:, None, :])
+
+        def field(px, py, ps, infl, vis):
+            """Sum of unit vectors (from our largest cell) * infl / dist; negative infl uses the surface distance."""
+            dx, dy = px[:, None, :] - bx[..., None], py[:, None, :] - by[..., None]
+            d = (dx * dx + dy * dy).sqrt()
+            dist = torch.where(infl < 0, d - big[..., None] - ps[:, None, :], d).clamp(min=1.0)
+            f = torch.where(vis, infl / dist, torch.zeros_like(dist)) / d.clamp(min=1e-3)
+            return (f * dx).sum(-1), (f * dy).sum(-1), d
+
+        owner = torch.arange(C, device=dev) // K
+        other = owner[None, None, :] != torch.arange(P, device=dev)[None, :, None]
+        vis_c = seen(w.cx.view(B, C), w.cy.view(B, C), size, al) & other
+        fs = torch.full_like(w.fx, 10.0)
+        vis_f = seen(w.fx, w.fy, fs, w.falive)
+        vs = w.vr2.sqrt()
+        vis_v = seen(w.vx, w.vy, vs, w.valive)
+        es = torch.full_like(w.ex, math.sqrt(EJECT_R2))
+        vis_e = seen(w.ex, w.ey, es, w.ealive)
+        n_view = (vis_c.sum(-1) + vis_f.sum(-1) + vis_v.sum(-1) + vis_e.sum(-1)).float().clamp(min=2.0)
+
+        cell, chk = big[..., None], size[:, None, :].expand(B, P, C)
+        infl_c = torch.where(cell > chk * 1.3, chk / n_view.log()[..., None],
+                             torch.where(chk > cell * 1.3, -(chk / cell.clamp(min=1.0)).log(),
+                                         -chk / cell.clamp(min=1.0)))
+        rx, ry, dc = field(w.cx.view(B, C), w.cy.view(B, C), size, infl_c, vis_c)
+        fx_, fy_, _ = field(w.fx, w.fy, fs, torch.ones_like(vis_f, dtype=torch.float), vis_f)
+        full = (n_cells >= K)[..., None]
+        infl_v = torch.where(cell > vs[:, None, :] * 1.3, torch.where(full, 2.0, -1.0), 0.0).expand(B, P, w.V)
+        vx_, vy_, _ = field(w.vx, w.vy, vs, infl_v, vis_v)
+        infl_e = torch.where(cell > es[:, None, :] * 1.3, 2.0, 0.0).expand(B, P, w.E)
+        ex_, ey_, _ = field(w.ex, w.ey, es, infl_e, vis_e)
+        dirx, diry = rx + fx_ + vx_ + ex_, ry + fy_ + vy_ + ey_
+
+        # an ongoing pursuit (from an earlier split) overrides everything, as in BotPlayer.decide
+        cid = w.cid.view(B, C)
+        t = self.target.clamp(min=0)
+        chase = ((self.target >= 0) & al.gather(1, t) & (cid.gather(1, t) == self.target_id)
+                 & (self.pursuit > 0) & alive)
+        self.cooldown = (self.cooldown - ticks).clamp(min=0)
+
+        # split-kill: the biggest qualifying prey cell
+        can = (1.5 * n_cells < 9) & (self.cooldown <= 0) & alive & ~chase
+        reach = torch.clamp(big / 1.4142 * 4.5, min=1.3 * SPLIT_SPEED)[..., None]
+        prey_ok = (vis_c & (cell / 1.3 > 1.3 * chk) & (cell * 0.4 < chk) & (dc.clamp(min=1.0) <= reach)
+                   & can[..., None])
+        psize, pi = torch.where(prey_ok, chk, torch.full_like(chk, -1.0)).max(-1)
+        split = psize > 0
+
+        tx, ty = w.cx.view(B, C).gather(1, t) - bx, w.cy.view(B, C).gather(1, t) - by
+        dirx, diry = torch.where(chase, tx, dirx), torch.where(chase, ty, diry)
+        self.pursuit = torch.where(chase, self.pursuit - ticks, torch.zeros_like(self.pursuit))
+        self.target = torch.where(chase, self.target, torch.full_like(self.target, -1))
+        # a new split: chase that cell from now on
+        px, py = w.cx.view(B, C).gather(1, pi) - bx, w.cy.view(B, C).gather(1, pi) - by
+        dirx, diry = torch.where(split, px, dirx), torch.where(split, py, diry)
+        self.target = torch.where(split, pi, self.target)
+        self.target_id = torch.where(split, cid.gather(1, pi), self.target_id)
+        self.pursuit = torch.where(split, torch.full_like(self.pursuit, MO_PURSUIT), self.pursuit)
+        self.cooldown = torch.where(split, torch.full_like(self.cooldown, MO_COOLDOWN), self.cooldown)
+
+        ang = torch.atan2(diry, dirx)
+        move = torch.round(ang / (2 * math.pi) * 16).long() % 16
+        still = (dirx.abs() + diry.abs()) < 1e-9
+        move = torch.where(alive & ~still, move, torch.full_like(move, 16))
+        return torch.stack([move, split.long(), torch.zeros_like(move)], -1)

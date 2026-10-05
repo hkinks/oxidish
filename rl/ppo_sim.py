@@ -575,7 +575,7 @@ def collect(env: SimEnv, learners: list[Learner], obs, T: int, skip: int):
         for L in learners:
             L.act(t, g, s, v, acts)
         if len(bot_idx):
-            acts[bot_idx] = scripted_actions(env.w, env.bot_split_prob).reshape(-1, 3)[bot_idx]
+            acts[bot_idx] = env.bot_actions().reshape(-1, 3)[bot_idx]
         R = torch.zeros(A, device=dev)
         D = torch.zeros(A, dtype=torch.bool, device=dev)
         Tr = torch.zeros(A, dtype=torch.bool, device=dev)

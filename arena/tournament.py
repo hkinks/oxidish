@@ -8,10 +8,12 @@ give the same results, so variants can be compared on identical matches.
 
 import argparse
 import asyncio
+import json
 import math
 import statistics
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from pathlib import Path
 
 from .match import free_port, parse_lineup, run_match, start_server
 
@@ -29,7 +31,45 @@ def _play(index: int, specs: list[str], ticks: int, bots: int, map_size: int,
         server.terminate()
     return [{"policy": s.name.rsplit("-", 1)[0], "seed": seed, "avg_mass": s.avg_mass,
              "log_mass": math.log(max(s.avg_mass, 1.0)),
-             "peak_mass": s.peak_mass, "deaths": s.deaths, "kills": s.kills} for s in stats]
+             "peak_mass": s.peak_mass, "deaths": s.deaths, "kills": s.kills, "losses": s.losses}
+            for s in stats]
+
+
+def play_many(specs: list[str], matches: int, workers: int = 8, ticks: int = 6000, bots: int = 8,
+              map_size: int = 7000, sync: int = 2, seed_base: int = 1, food_mult: float = 2.0) -> list[dict]:
+    """`matches` seeded matches of the lineup `specs` in parallel; one row per agent per match."""
+    rows: list[dict] = []
+    with ProcessPoolExecutor(workers) as pool:
+        futures = [pool.submit(_play, i, specs, ticks, bots, map_size, sync, seed_base, food_mult)
+                   for i in range(matches)]
+        for fut in as_completed(futures):
+            try:
+                rows += fut.result()
+            except Exception as e:     # one broken match must not sink the whole evaluation
+                print(f"  match failed: {e!r}", flush=True)
+    return rows
+
+
+def print_losses(rows: list[dict]) -> None:
+    """Where each policy's mass went: eaten by whom, and how often a split was involved."""
+    names = {r["policy"] for r in rows}
+    group = lambda by: by.rsplit("-", 1)[0] if by.rsplit("-", 1)[0] in names else (
+        by if by in ("virus", "unseen", "ejected") else "server bot")
+    print("\nmass lost to (share of each policy's eaten mass); split-kill = killer had 2+ cells,"
+          " while split = we had 2+ cells")
+    for policy in sorted(names):
+        ls = [l for r in rows if r["policy"] == policy for l in r["losses"]]
+        total = sum(l["mass"] for l in ls)
+        if not total:
+            continue
+        by: dict[str, float] = {}
+        for l in ls:
+            by[group(l["by"])] = by.get(group(l["by"]), 0.0) + l["mass"]
+        split_kill = sum(l["mass"] for l in ls if l["killer_cells"] > 1) / total
+        while_split = sum(l["mass"] for l in ls if l["my_cells"] > 1) / total
+        top = ", ".join(f"{k} {v / total:.0%}" for k, v in sorted(by.items(), key=lambda kv: -kv[1])[:6])
+        print(f"  {policy:<10} {len(ls):5d} cells, {total:9.0f} mass | split-kill {split_kill:4.0%}"
+              f" | while split {while_split:4.0%} | {top}")
 
 
 def _ci95(values: list[float]) -> tuple[float, float]:
@@ -50,6 +90,7 @@ def main() -> None:
     p.add_argument("--sync", type=int, default=2)
     p.add_argument("--food-mult", type=float, default=1.0, help="2 = the showcase's food")
     p.add_argument("--seed-base", type=int, default=1, help="use fresh seeds for unbiased checks")
+    p.add_argument("--out", help="also write every agent's per-match stats (incl. losses) to this JSON")
     args = p.parse_args()
 
     started = time.monotonic()
@@ -90,6 +131,9 @@ def main() -> None:
                 seeds = team[a].keys() & team[b].keys()
                 row.append(f"{sum(team[a][s] > team[b][s] for s in seeds) / len(seeds):>10.0%}")
             print(f"{a:<10}" + "".join(row))
+    print_losses(rows)
+    if args.out:
+        Path(args.out).write_text(json.dumps(rows))
     game_min = args.matches * args.ticks * 0.04 / 60
     print(f"\n{args.matches} matches, {game_min:.0f} game-min in {wall:.0f}s wall "
           f"= {game_min * 60 / wall:.0f}x realtime aggregate (+-: 95% CI over matches)")

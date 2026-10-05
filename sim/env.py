@@ -26,7 +26,7 @@ import math
 import numpy as np
 import torch
 
-from .bots import scripted_actions
+from .bots import MultiOgarBots, scripted_actions
 from .engine import MIN_SPLIT_R2, START_R2, World
 from .entities import EntityEncoder
 from .obs import Encoder
@@ -47,7 +47,7 @@ class SimEnv:
                  seed: int = 0, map_size: float = 7000.0, food_mult: float = 2.0,
                  episode_steps: int = 1500, curriculum_p: float = CURRICULUM_P,
                  curriculum_mass: tuple = CURRICULUM_MASS, max_eject: int = 256,
-                 bot_split_prob: float = 0.5, obs_dtype: torch.dtype = torch.float32,
+                 bot_split_prob: float = 0.5, bot_kind: str = "scripted", obs_dtype: torch.dtype = torch.float32,
                  virus_reward: tuple = (0.0, 0.0, 0.0), explore_reward: float = 0.0,
                  kill_reward: tuple = (0.0, 0.0), growth: dict | None = None,
                  action_bonus: tuple = (0.0, 0.0), skip: int = 1, max_player_mass: float = 100_000.0,
@@ -68,6 +68,10 @@ class SimEnv:
         self.max_player_mass = max_player_mass
         self.curriculum_p, self.curriculum_mass = curriculum_p, curriculum_mass
         self.bot_split_prob = bot_split_prob
+        # scripted bots: sim.bots.scripted_actions, or "multiogar": the real server's own bot (MultiOgarBots)
+        self.bot_kind = bot_kind
+        self._mo_bots = MultiOgarBots(self.w) if bot_kind == "multiogar" else None
+        self._bot_acts, self._bot_t = None, -1
         self.obs_dtype = obs_dtype   # float16 halves the (large) grid tensor
         d = self.w.dev
         # per-arena reward weights, [.., B, 1] (set_reward)
@@ -241,6 +245,15 @@ class SimEnv:
         ty = cy + torch.where(stay, torch.zeros_like(cy), uy * ext)
         return torch.stack([tx, ty], -1)
 
+    def bot_actions(self) -> torch.Tensor:
+        """[B,P,3] actions of the scripted bots for every slot (computed once per world tick: the
+        MultiOgar bots keep timers, so several callers in one step share one decision)."""
+        if self._bot_t != self.w.t or self._bot_acts is None:
+            self._bot_acts = (self._mo_bots() if self._mo_bots is not None
+                              else scripted_actions(self.w, self.bot_split_prob))
+            self._bot_t = self.w.t
+        return self._bot_acts
+
     def pop_stats(self, arenas=slice(None)) -> dict:
         """Per-life statistics of the lives finished in `arenas` since the last call (one host sync)."""
         t = torch.cat([self._tot[:, arenas].sum(1), self._pmax[arenas].max()[None]]).tolist()  # t[9] kills, t[10] peak max
@@ -277,7 +290,7 @@ class SimEnv:
         split[:, :NL] = actions[:, 1].view(B, NL) > 0
         eject[:, :NL] = actions[:, 2].view(B, NL) > 0
         if NL < P:  # scripted bots aim at a far point along their heading
-            ba = scripted_actions(w, self.bot_split_prob)[:, NL:]
+            ba = self.bot_actions()[:, NL:]
             cx = (w.cx * w.cr2).view(B, P, w.K).sum(-1)[:, NL:] / (w.cr2 * w.calive).view(B, P, w.K).sum(-1)[:, NL:].clamp(min=1)
             cy = (w.cy * w.cr2).view(B, P, w.K).sum(-1)[:, NL:] / (w.cr2 * w.calive).view(B, P, w.K).sum(-1)[:, NL:].clamp(min=1)
             ang = 2 * math.pi * ba[..., 0].clamp(max=DIRS).float() / DIRS

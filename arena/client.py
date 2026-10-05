@@ -40,6 +40,8 @@ class AgentStats:
     lives: int = 0
     ticks: int = 0
     counters: dict = field(default_factory=dict)  # policy skill usage (ejects, shots, ...)
+    # one entry per cell of ours eaten by another player: who ate it and in what situation
+    losses: list = field(default_factory=list)
 
     @property
     def avg_mass(self) -> float:
@@ -84,6 +86,8 @@ class AgentClient:
             if (killer in st.mine and victim is not None and victim.kind == "player"
                     and killed not in st.mine):
                 self.stats.kills += 1
+            if killed in st.mine and killer not in st.mine and victim is not None:
+                self._record_loss(st.cells.get(killer), victim)
             st.cells.pop(killed, None)
             st.mine.discard(killed)
         while True:
@@ -114,6 +118,19 @@ class AgentClient:
             i += 4
             st.cells.pop(cid, None)
             st.mine.discard(cid)
+
+    def _record_loss(self, killer: Cell | None, victim: Cell) -> None:
+        """Who ate one of our cells: killer name and size, and whether either side was split."""
+        st = self._st
+        name = killer.name if killer is not None else ""
+        kind = killer.kind if killer is not None else "unseen"
+        mine = [c for c in st.cells.values() if c.id in st.mine]
+        theirs = [c for c in st.cells.values() if name and c.name == name and c.id not in st.mine]
+        self.stats.losses.append({
+            "by": name or kind, "kind": kind, "mass": victim.mass,
+            "killer_mass": killer.mass if killer is not None else 0.0,
+            "killer_cells": len(theirs), "killer_total": sum(c.mass for c in theirs),
+            "my_cells": len(mine), "my_total": sum(c.mass for c in mine), "tick": self.stats.ticks})
 
     def _on_step(self, tick: int) -> list[bytes]:
         """Advance stats and return the packets to send for this step."""

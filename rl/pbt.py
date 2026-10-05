@@ -80,6 +80,21 @@ GENERAL_HP = dict(farm_frac=0.3, hunt_frac=0.35, flee_frac=0.35, giant_frac=0.0,
                   # imitation of recorded human play (rl/human_data.py), fading 0.5 -> 0.05 over 300 iterations
                   human_data=str(ROOT / "runs" / "human" / "dataset.pt"), human_lambda=0.5, human_iters=300,
                   human_min=0.05, human_batch=512, human_rare_weight=20.0)
+# --objective ffa: the real server's game - free-for-all arenas with MultiOgar's own bots (sim.bots.
+# MultiOgarBots: they split-kill small pieces, which is how the sim nets die on the real server) and
+# league nets (own snapshots + the --hof-extra populations), plus some solo farming / hunting / escaping
+# drills against forgetting; no split bonus, no imitation; kickstarting (--teachers) fades as in general.
+# fitness = a real MultiOgar tournament every round (fresh seeds): members vs champ / r2g9 and the
+# server's bots, scored as log-mass margin over the rule-based champions in the same matches
+FFA_HP = dict(bot_frac=0.4, league_frac=0.25, farm_frac=0.1, hunt_frac=0.1, flee_frac=0.15, giant_frac=0.0,
+              farm_players=2, farm_spawn=[10.0, 3000.0], hunt_players=3, hunt_spawn=[300.0, 3000.0],
+              prey_spawn=[20.0, 300.0], prey_nets=0.5, prey_net_spawn=[300.0, 5000.0], flee_players=10,
+              flee_hunters=6, flee_spawn=[10.0, 3000.0], flee_hunter_spawn=[1500.0, 6000.0], flee_hunter_nets=0.5,
+              league_models=4, death_scale=1.0, kill_reward=[0.0, 0.0], virus_reward=[0.0, 0.0, 0.0],
+              growth=None, action_bonus=[0.0, 0.0], adv_per_type=True, kick_lambda=1.0, kick_iters=300,
+              kick_min=0.1, split_explore_min_mass=150.0)
+FFA_HP_KINDS = ["lr", "ent", "gamma", "explore", "explore", "epochs", "lam", "lam", "split_min"]
+FFA_REFS = ["champ=runs/final_champion.json:2", "r2g9=runs/r2/champion_009.json:2"]   # the rule-based yardsticks
 GENERAL_REFS = {"farm10": 288.0, "farm1000": 889.0, "hunt": 1000.0, "evade": 494.0}   # the specialists' scores
 LAYOUT_KEYS = ("farm_frac", "hunt_frac", "flee_frac", "giant_frac", "league_frac", "bot_frac", "kill_reward",
                "virus_reward", "growth", "action_bonus", "hunt_players", "hunt_spawn", "prey_spawn", "prey_nets",
@@ -119,6 +134,9 @@ def eval_job(path: str) -> None:
                       "kills": hb[k]["kills_per_min"], "splits_per_min": hb[k]["splits_per_min"], **sc}
         Path(job["out"]).write_text(json.dumps({"results": res, "farm": {}, "long": {}}, indent=1))
         return
+    if job.get("objective") == "ffa":
+        Path(job["out"]).write_text(json.dumps(ffa_eval(nets, job), indent=1))
+        return
     if job.get("objective") == "evade":
         ev = evade_batch(nets, B=32)
         small = farm_batch(nets, B=64, free=True)
@@ -154,6 +172,37 @@ def eval_job(path: str) -> None:
     Path(job["out"]).write_text(json.dumps(out, indent=1))
 
 
+def ffa_eval(nets: dict, job: dict) -> dict:
+    """Real-server fitness: `job["matches"]` MultiOgar matches (2x food, 8 server bots, fresh seeds) of
+    every net (2 copies; hof_last 1) with champ and r2g9. Fitness = the net's mean log mass minus the mean
+    of champ's and r2g9's in the same matches (paired by seed), so > 0 means it beats the rule bots."""
+    import statistics
+    from arena.tournament import play_many
+    specs = [f"{k}={v}:{1 if k == 'hof_last' else 2}" for k, v in nets.items()] + FFA_REFS
+    rows = play_many(specs, job.get("matches", 24), workers=job.get("workers", 8), seed_base=job["seed"])
+    by: dict[str, dict[int, list[float]]] = {}
+    dead: dict[str, list[float]] = {}
+    for r in rows:
+        by.setdefault(r["policy"], {}).setdefault(r["seed"], []).append(r["log_mass"])
+        dead.setdefault(r["policy"], []).append(r["deaths"])
+    mean = {k: {s: statistics.fmean(v) for s, v in d.items()} for k, d in by.items()}
+    ref = {s: statistics.fmean(mean[n][s] for n in ("champ", "r2g9") if s in mean.get(n, {}))
+           for s in set().union(*(mean.get(n, {}).keys() for n in ("champ", "r2g9")))}
+    res = {}
+    for k in list(nets) + ["champ", "r2g9"]:
+        seeds = [s for s in mean.get(k, {}) if s in ref]
+        if not seeds:
+            res[k] = {"log_mass": -9.0, "ci": 0.0, "avg_mass": 0.0, "deaths": 0.0, "kills": 0.0, "wins": 0.0}
+            continue
+        margin = [mean[k][s] - ref[s] for s in seeds]
+        res[k] = {"log_mass": statistics.fmean(margin),
+                  "ci": 1.96 * statistics.stdev(margin) / math.sqrt(len(margin)) if len(margin) > 1 else 0.0,
+                  "avg_mass": statistics.fmean(math.exp(mean[k][s]) for s in seeds),
+                  "deaths": statistics.fmean(dead[k]), "kills": 0.0,
+                  "wins": sum(m > 0 for m in margin) / len(margin), "matches": len(seeds)}
+    return {"results": res, "farm": {}, "long": {}, "rows": rows}
+
+
 class Population:
     def __init__(self, args):
         self.args = args
@@ -170,7 +219,8 @@ class Population:
                           curriculum_mass=tuple(float(x) for x in args.curriculum_mass.split(",")),
                           obs="both" if len(kinds) > 1 else kinds.pop(),
                           arena_steps=args.arena_steps,
-                          obs_dtype=torch.float16, skip=args.skip)
+                          obs_dtype=torch.float16, skip=args.skip,
+                          bot_kind=args.bot_kind or ("multiogar" if args.objective == "ffa" else "scripted"))
         self.hof_files = [f for d in [self.root / "hof", *map(Path, args.hof_extra)] for f in sorted(d.glob("*.pt"))]
         self.hof = [frozen(from_checkpoint(str(f), self.dev)) for f in self.hof_files]
         # hunt / evade: the league slots (prey nets, hunter nets) are played by the --hof-extra populations'
@@ -207,7 +257,7 @@ class Population:
                 raise SystemExit("--seed or --from-evo is required for a new population")
             base = {"arch": json.loads(a.arch) if a.arch else DEFAULT_ARCH, "hp": DEFAULT_HP}
             members = []
-            kinds = {"farm": FARM_HP_KINDS, "hunt": HUNT_HP_KINDS, "evade": HUNT_HP_KINDS, "general": HUNT_HP_KINDS}.get(a.objective, HP_KINDS)
+            kinds = {"farm": FARM_HP_KINDS, "hunt": HUNT_HP_KINDS, "evade": HUNT_HP_KINDS, "general": HUNT_HP_KINDS, "ffa": FFA_HP_KINDS}.get(a.objective, HP_KINDS)
             for k in range(a.pop):
                 g, note = (copy.deepcopy(base), "seed") if k == 0 else mutate(base, self.rng, hp_kinds=kinds)
                 members.append({"id": f"m{k}", "genome": g, "ckpt": a.seed, "it": 0, "seed": 100 + k,
@@ -227,7 +277,7 @@ class Population:
     def make_learner(self, m: dict, k: int) -> Learner:
         """Learner for member `m` owning arenas [k*b, (k+1)*b) of the shared env; its genome supplies hyper-parameters."""
         a = self.args
-        farm = {"farm": FARM_HP, "hunt": HUNT_HP, "evade": EVADE_HP, "general": GENERAL_HP}.get(a.objective, {})
+        farm = {"farm": FARM_HP, "hunt": HUNT_HP, "evade": EVADE_HP, "general": GENERAL_HP, "ffa": FFA_HP}.get(a.objective, {})
         # farming defaults sit below the genome (its genes may override them: lambda, split exploration,
         # start sizes, epochs), the arena layout of the farm objective above it
         hp = {**DEFAULT_HP, "lam": 0.95, **farm, **m["genome"]["hp"], **FIXED_HP, "mb": a.mb}
@@ -243,7 +293,7 @@ class Population:
         else:
             teacher = frozen(parent)
         logf = open(ROOT / "logs" / f"pbt-{a.name}-{m['id']}.txt", "a", encoding="utf-8")
-        opp = self.opp if a.objective in ("hunt", "evade", "general") and self.opp else self.hof
+        opp = self.opp if a.objective in ("hunt", "evade", "general", "ffa") and self.opp else self.hof
         L = Learner(f"{a.name}/{m['id']}", model, self.env, k * a.b, a.b, hp, self.root / m["id"], hof=opp,
                     teacher=teacher, distill_iters=30 if teacher is not None else 0, start_it=m["it"], log=logf,
                     skip=a.skip)
@@ -267,7 +317,7 @@ class Population:
         self.eval_nets = nets
         job = {"nets": nets, "eval_b": a.eval_b, "p": a.p, "steps": a.eval_steps, "seed": 7000 + rnd,
                "long_steps": a.long_steps, "out": str(self.root / "eval" / f"g{rnd:03d}.json"), "vram_gb": 5.0,
-               "objective": a.objective,
+               "objective": a.objective, "matches": a.eval_matches,
                # hunting test: half the prey = the first --hof-extra population's newest nets (the evaders)
                "prey_nets": [str(f) for f in sorted(Path(a.hof_extra[0]).glob("*.pt"))[-3:]]
                if a.objective in ("hunt", "general") and a.hof_extra else None}
@@ -328,13 +378,18 @@ class Population:
         log(f"--- round {rnd} results" + {"farm": " (fitness: free farming, 2 min alone, split / eject allowed)",
                                            "hunt": " (fitness: hunting test, 1000 mass among 15 prey - half scripted, half the evaders' newest nets - 2 min)",
                                            "evade": " (fitness: survival first - deaths/min among 7 big hunters; mass under threat and farming alone secondary)",
-                                           "general": " (fitness: farm 10 / farm 1000 / hunt / evade vs the specialists: 288 / +889 / +1000 / 494)"
+                                           "general": " (fitness: farm 10 / farm 1000 / hunt / evade vs the specialists: 288 / +889 / +1000 / 494)",
+                                           "ffa": " (fitness: real MultiOgar matches, log-mass margin over champ / r2g9 in the same matches)"
                                            }.get(self.args.objective, ""))
         for name, r in sorted(res.items(), key=lambda kv: -kv[1]["log_mass"]):
             if self.args.objective == "general":
                 log(f"  {name:<9} fitness {r['log_mass']:+.3f}  farm 10->{r['farm10']:.0f} 1000:{r['farm1000']:+.0f}  "
                     f"hunt {r['hunt']:+.0f} ({r['kills']:.1f} kills/min, {r['splits_per_min']:.2f} splits/min)  "
                     f"evade {r['evade']:.0f} ({r['deaths']:.2f} deaths/min)")
+                continue
+            if self.args.objective == "ffa":
+                log(f"  {name:<9} margin {r['log_mass']:+.3f} +-{r['ci']:.3f}  beats the rule bots in {r.get('wins', 0):.0%} "
+                    f"of {r.get('matches', 0)} matches  avg mass {r['avg_mass']:.0f}  deaths/match {r['deaths']:.2f}")
                 continue
             if self.args.objective == "evade":
                 log(f"  {name:<9} fitness {r['log_mass']:+.3f}  under threat: mass {r['avg_mass']:.0f} "
@@ -402,7 +457,7 @@ class Population:
         """Swap `dead` for a mutated child of `par`: new learner, its arenas restarted."""
         members = self.state["members"]
         g, note = mutate(par["genome"], self.rng,
-                         hp_kinds={"farm": FARM_HP_KINDS, "hunt": HUNT_HP_KINDS, "evade": HUNT_HP_KINDS, "general": HUNT_HP_KINDS}.get(self.args.objective, HP_KINDS))
+                         hp_kinds={"farm": FARM_HP_KINDS, "hunt": HUNT_HP_KINDS, "evade": HUNT_HP_KINDS, "general": HUNT_HP_KINDS, "ffa": FFA_HP_KINDS}.get(self.args.objective, HP_KINDS))
         cid = f"m{self.state['next_id']}"
         self.state["next_id"] += 1
         same = g["arch"] == par["genome"]["arch"]
@@ -468,10 +523,13 @@ def main() -> None:
     p.add_argument("--arena-steps", type=int, default=0, help="per-arena restart clock in steps (staggered; 0: off)")
     p.add_argument("--arch", help="genome architecture of a new population (JSON), e.g. '{\"kind\": \"entity\"}'")
     p.add_argument("--teachers", nargs="*", default=[], help="kickstarting: kind=checkpoint (farm, hunt, flee)")
-    p.add_argument("--objective", choices=("arena", "farm", "hunt", "evade", "general"), default="arena",
+    p.add_argument("--objective", choices=("arena", "farm", "hunt", "evade", "general", "ffa"), default="arena",
                    help="farm: farming arenas only, mass reward, fitness = free farming check")
     p.add_argument("--rng", type=int, default=1)
     p.add_argument("--vram-gb", type=float, default=20.0)
+    p.add_argument("--bot-kind", choices=("scripted", "multiogar"),
+                   help="the sim's scripted bots (default: multiogar for --objective ffa, else scripted)")
+    p.add_argument("--eval-matches", type=int, default=24, help="ffa: real-server matches per evaluation")
     args = p.parse_args()
     if args.eval_job:
         return eval_job(args.eval_job)

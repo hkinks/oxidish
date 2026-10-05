@@ -331,3 +331,34 @@ Surveyed GoBigger (OpenDILab, ICLR 2023), AgarCL (arXiv 2505.18347), the RPG pap
   4. Reward randomization: per-agent random weights on kill bonus, loss penalty, split bonus and explore bonus (RPG). A no-loss-penalty variant pushes hunting.
   5. Fix farming by imitating the nearest-pellet routine first (behaviour cloning, then PPO, or a KL term).
   6. Steadier continued training: PPO clip 0.1, a KL stop, and a gate against the best old net.
+
+## 2026-10-05 (evening): real-server baseline, MultiOgar bots in the sim, the ffa population
+
+**Real-server baseline** (`arena.tournament`, 24 fresh-seed matches, 4 game-min, 2x food, 8 MultiOgar bots;
+`runs/bench/base_50000.json`, `logs/bench-base.txt`):
+
+| bot | avg mass | deaths/match | beats gen |
+|---|---|---|---|
+| r2g9 | 306 | 0.85 | 88% |
+| champ | 294 | 0.94 | 79% |
+| g4net | 264 | 1.21 | 79% |
+| nnbest | 227 | 1.29 | 79% |
+| evader (v1, sim-trained) | 202 | 2.67 | 67% |
+| gen (g1 round-2 best, sim-trained) | 162 | 5.15 | - |
+
+**Why the sim nets lose** (the tournament now records who eats each of our cells: `print_losses`):
+- gen and the evader lose 43% / 51% of their eaten mass to **MultiOgar's own bots**, the weakest players there; champ loses very little to them.
+- The eaten cells are small split pieces (~30 mass): 74% were eaten while we were split, and 85% by a split killer.
+- MultiOgar's bot (`vendor/MultiOgar/src/ai/BotPlayer.js`) split-kills deterministically: any cell it out-sizes 1.69x in radius (and over 0.4x its radius) within split reach, then chases it for 20 ticks.
+- The sim's scripted bot split at random on the nearest prey only. g1's layout had no free-for-all bot arenas at all (`bot_frac` 0), and the split "fun" bonus paid for splitting.
+
+**g1 round 3** (human imitation on, weight 0.5): every member fell from fitness ~-0.3 to ~-1.7, and hunting went negative. g1 was stopped.
+
+**Changes:**
+- `sim.bots.MultiOgarBots`: the real server's bot, vectorised; `SimEnv(bot_kind="multiogar")`, shared through `env.bot_actions()`.
+- `rl.pbt --objective ffa`:
+  - training: 40% free-for-all arenas (half learners, half MultiOgar bots), 25% league arenas, and farm/hunt/flee drills; no split bonus, no imitation; split exploration only from 150 mass; kickstarting from the specialists as in general.
+  - **fitness: a real MultiOgar tournament each round** (`ffa_eval`: 24 fresh-seed matches, members x2 with champ and r2g9), as the log-mass margin over the rule-based champions in the same matches. It runs on the CPU while training continues.
+- `arena.tournament`: `play_many`, `--out`, and the loss report.
+
+Run: see `ffa1` (pop 4, b 32, `--vram-gb 18`). Keep total GPU memory under ~26 GB: the 0x133 crash happened with VRAM nearly full.

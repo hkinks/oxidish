@@ -51,7 +51,7 @@ def run(nets: dict[str, str], B: int = 16, P: int = 50, steps: int = 3000, bots:
             else:                           # ... and holds its move; split / eject fire once
                 a[ix, 1:] = 0
         if bots:
-            a.view(B, P, 3)[:, n_play:] = scripted_actions(env.w, env.bot_split_prob)[:, n_play:]
+            a.view(B, P, 3)[:, n_play:] = env.bot_actions()[:, n_play:]
         splits += ((a[:, 1] > 0) & env.prev_alive.reshape(-1)).view(B, P).float()
         g, s, _, d, _ = env.step(a)
         mass_sum += env.prev_mass
@@ -168,7 +168,7 @@ def hunt_batch(nets: dict[str, str], B: int = 32, P: int = 16, steps: int = 1500
     a = torch.zeros(B * M * P, 3, dtype=torch.long, device=dev)
     splits = torch.zeros(M, device=dev)
     for step in range(steps):
-        a.view(B * M, P, 3)[:, 1:] = scripted_actions(env.w, env.bot_split_prob)[:, 1:]
+        a.view(B * M, P, 3)[:, 1:] = env.bot_actions()[:, 1:]
         for pm, ix in prey_groups:
             if step % pm.skip == 0:
                 pa = pm.act(obs_for(pm, env, g)[ix], s[ix], amp=True)[0]
@@ -217,7 +217,7 @@ def evade_batch(nets: dict[str, str], B: int = 32, P: int = 8, steps: int = 1500
     deaths = torch.zeros(M, device=dev)
     splits = torch.zeros(M, device=dev)
     for step in range(steps):
-        a.view(B * M, P, 3)[:, 1:] = scripted_actions(env.w, env.bot_split_prob)[:, 1:]
+        a.view(B * M, P, 3)[:, 1:] = env.bot_actions()[:, 1:]
         for k, m in enumerate(models):
             ix = me[k * B:(k + 1) * B]
             if step % m.skip == 0:

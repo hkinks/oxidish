@@ -172,7 +172,7 @@ class Watcher:
             else:                                 # ... holding the move; split / eject fire once
                 a[lo:hi, 1:] = 0
         if self.bots:
-            a[P - self.bots:] = scripted_actions(self.env.w, self.env.bot_split_prob)[0, P - self.bots:]
+            a[P - self.bots:] = self.env.bot_actions()[0, P - self.bots:]
         return a
 
     def count(self, a: torch.Tensor, died: torch.Tensor) -> None:
