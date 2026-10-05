@@ -134,3 +134,16 @@ runs/final_champion.json** (r3 champion_008). PPO state kept at runs/rl/p4_final
   - g10/g11 were stopped. Their last checkpoints are runs/rl/g10/, runs/rl/g11/.
 - **Switch to the GPU simulator:** pure self-play run s1, then evolution e1. See [sim-training.md](sim-training.md).
 - **The real server is shut down for now.** To bring the showcase back, see [showcase.md](showcase.md).
+
+## 2026-10-06 (night): rule bots in long games, split-safety genes
+
+- **Long games** (15 game-min, 12 fresh-seed matches; `runs/bench/long_72000.json`): champ, nnbest and r2g9 tie (log-mass 6.62-6.72, all 42-58% head to head), each dying ~4 times per 15 min, mostly to each other.
+  - About half of the big losses (chunks over 300 mass, while over 1000 total) happen while the loser is split.
+  - A quarter of champ's go to players smaller than it overall, i.e. they eat its pieces.
+  - Champ judges threats only relative to its largest cell.
+- **New genes** (off by default):
+  - `half_split_safety`: judge split safety against the post-split halves.
+  - `piece_threats`: push away from every piece's threats, by mass share.
+- **Result:** `half_split_safety` won 24 matches (+0.18, half the deaths) but **did not replicate** on 36 fresh seeds (5.38 vs champ 5.42). `piece_threats`: no effect.
+- **The 4-min format can't separate the top bots.** champ, r2g9, nnbest and hs all score 5.38-5.47 +-0.13.
+- **Showcase long run** (8.5 game-hours since the restart): nnbest 3223, champ 3131, r2g9 2174, g4net 1657, evader 1055, ffa (guarded net) 964. Humans average ~9-11k, mostly by dying 2-3x less often.

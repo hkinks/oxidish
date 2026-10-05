@@ -4,7 +4,7 @@ import math
 
 from .game import Snapshot
 from .params import DEFAULT, Params
-from .steer import EAT_RATIO, Plan, classify, danger_radius
+from .steer import EAT_RATIO, Plan, classify, danger_radius, half_of, split_threats
 
 
 def heuristic_plan(s: Snapshot, p: Params = DEFAULT) -> Plan:
@@ -23,6 +23,7 @@ def heuristic_plan(s: Snapshot, p: Params = DEFAULT) -> Plan:
     worth = [c for c in prey if gap(c) < rng and c.mass >= floor]
     if worth:
         target = max(worth, key=lambda c: c.mass / (max(gap(c), 0) + 100))
-        safe = not any(gap(t) < danger_radius(t, me, p) * p.split_safety for t in threats)
+        side = half_of(me) if p.half_split_safety > 0.5 else me
+        safe = not any(gap(t) < danger_radius(t, side, p) * p.split_safety for t in split_threats(s, me, p))
         return Plan("hunt", target.id, safe and me.mass / 2 > target.mass * EAT_RATIO)
     return Plan("farm")

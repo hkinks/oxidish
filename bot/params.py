@@ -53,6 +53,10 @@ class Params:
     # big cells: pellets stop paying (decay eats more than food brings), only eating players does
     big_hunt: float = 0.0            # off: lost 33-67% to plain farming in long 2x-food matches. >0.5: above big_mass, hunt range grows and the prey floor stops rising
     big_mass: float = 1500.0
+    # split pieces (from the long-game loss analysis: about half the big losses happen while split, and a
+    # quarter of champ's to players smaller than it overall, i.e. its pieces)
+    half_split_safety: float = 0.0   # >0.5: judge split safety against the halves we split into
+    piece_threats: float = 0.0       # >0.5: while split, every piece's threats push (by its mass share)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -79,6 +83,7 @@ BOUNDS = {
     "double_split_enable": (0, 1), "double_split_reach": (1.1, 2.5),
     "selffeed_enable": (0, 1), "selffeed_min_mass": (50, 3000), "selffeed_frac": (0.3, 0.95),
     "big_hunt": (0, 1), "big_mass": (300, 6000),
+    "half_split_safety": (0, 1), "piece_threats": (0, 1),
 }
 
 DEFAULT = Params()

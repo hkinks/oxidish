@@ -38,6 +38,19 @@ def classify(s: Snapshot) -> tuple[list[Cell], list[Cell], list[Cell], list[Cell
     return food, prey, threats, viruses
 
 
+def half_of(me: Cell) -> Cell:
+    """One of the two cells `me` would split into (half the mass, same place)."""
+    return Cell(me.id, me.x, me.y, me.size / math.sqrt(2), me.kind, me.name)
+
+
+def split_threats(s: Snapshot, me: Cell, p: Params) -> list[Cell]:
+    """Threats that count for a split decision: to `me`, or (half_split_safety) to the halves after it."""
+    if p.half_split_safety <= 0.5:
+        return classify(s)[2]
+    half, mine = half_of(me), {c.id for c in s.mine}
+    return [c for c in s.others if c.kind == "player" and c.id not in mine and c.mass > half.mass * EAT_RATIO]
+
+
 def danger_radius(threat: Cell, me: Cell, p: Params = DEFAULT) -> float:
     reach = threat.size + me.size
     if threat.mass > me.mass * SPLIT_KILL_RATIO:
@@ -92,6 +105,23 @@ def steer(s: Snapshot, plan: Plan, router: FoodRouter | None = None,
         r = danger_radius(c, me, p)
         if d < r:
             pull(c, -w_threat * p.threat_force * (r - d) / r)
+    if p.piece_threats > 0.5 and len(s.mine) > 1:   # our other pieces' threats, by their mass share
+        total = sum(q.mass for q in s.mine) or 1.0
+        mine = {q.id for q in s.mine}
+        for q in s.mine:
+            if q is me:
+                continue
+            for c in s.others:
+                if c.kind != "player" or c.id in mine or c.mass <= q.mass * EAT_RATIO:
+                    continue
+                d = q.dist(c) - c.size - q.size
+                r = danger_radius(c, q, p)
+                if d < r:
+                    dx, dy = q.x - c.x, q.y - c.y
+                    n = max(math.hypot(dx, dy), 1)
+                    w = w_threat * p.threat_force * (r - d) / r * q.mass / total
+                    fx += w * dx / n
+                    fy += w * dy / n
     poppers = []  # viruses we'd pop on: steered around below, not pushed against
     for v in viruses:
         if me.mass > v.mass * EAT_RATIO:
@@ -143,10 +173,11 @@ def steer(s: Snapshot, plan: Plan, router: FoodRouter | None = None,
     if plan.split_ok and plan.mode == "hunt" and len(s.mine) <= round(p.split_max_cells):
         target = next((c for c in prey if c.id == plan.target_id), None)
         target = ahead(target) if target else None
+        side = half_of(me) if p.half_split_safety > 0.5 else me
         if (target and me.mass / 2 > target.mass * EAT_RATIO
                 and me.dist(target) - me.size < p.split_range * p.split_reach
-                and not any(me.dist(t) < danger_radius(t, me, p) + p.split_range
-                            for t in threats)):
+                and not any(me.dist(t) < danger_radius(t, side, p) + p.split_range
+                            for t in split_threats(s, me, p))):
             aim = (target.x, target.y)
             split = True
     return aim[0], aim[1], split
