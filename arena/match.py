@@ -70,6 +70,10 @@ def parse_lineup(specs: list[str]) -> list[tuple[str, dict]]:
                 policy = {"kind": "jev", **json.loads(Path(path[4:]).read_text())}
             elif path.startswith("greedy:"):   # "nng=greedy:runs/rl/x.pt": always the most likely action
                 policy = {"kind": "nn", "ckpt": path[7:], "greedy": True}
+            elif path.startswith("guard:"):    # "nnv=guard:runs/rl/x.pt": the net plus the virus detour
+                policy = {"kind": "nn", "ckpt": path[6:], "guard": 1}
+            elif path.startswith("guard2:"):   # ... plus the champion's threat push
+                policy = {"kind": "nn", "ckpt": path[7:], "guard": 2}
             elif path.startswith("nosplit:"):  # "nns=nosplit:runs/rl/x.pt": the net with split / W masked off
                 policy = {"kind": "nn", "ckpt": path[8:], "nosplit": True}
             elif path.endswith(".pt"):  # neural network checkpoint

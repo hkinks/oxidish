@@ -118,5 +118,6 @@ def build(spec: dict):
         return JevPolicy(spec.get("params"), spec.get("farm", "route"))
     if spec.get("kind") == "nn":  # {"kind": "nn", "ckpt": "runs/rl/p1/latest.pt"}
         from rl.policy import NNPolicy
-        return NNPolicy(spec["ckpt"], spec.get("greedy"), nosplit=spec.get("nosplit", False))
+        return NNPolicy(spec["ckpt"], spec.get("greedy"), nosplit=spec.get("nosplit", False),
+                         guard=spec.get("guard", False))
     return HeuristicPolicy(spec.get("farm", "route"), spec.get("params"))

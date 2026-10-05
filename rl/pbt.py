@@ -84,8 +84,9 @@ GENERAL_HP = dict(farm_frac=0.3, hunt_frac=0.35, flee_frac=0.35, giant_frac=0.0,
 # MultiOgarBots: they split-kill small pieces, which is how the sim nets die on the real server) and
 # league nets (own snapshots + the --hof-extra populations), plus some solo farming / hunting / escaping
 # drills against forgetting; no split bonus, no imitation; kickstarting (--teachers) fades as in general.
-# fitness = a real MultiOgar tournament every round (fresh seeds): members vs champ / r2g9 and the
-# server's bots, scored as log-mass margin over the rule-based champions in the same matches
+# fitness = a real MultiOgar tournament every round (fresh seeds): members (with the play-time guards,
+# rl.policy.virus_guard / threat_guard) vs champ / r2g9 and the server's bots, scored as log-mass
+# margin over the rule-based champions in the same matches
 # no solo farming drills (and no farm teacher): there, eating viruses pays (fp2 found it), but in a real
 # game popping leaves pieces that the server's bots eat - the round-0 nets lost most mass that way
 FFA_HP = dict(bot_frac=0.5, league_frac=0.25, farm_frac=0.0, hunt_frac=0.1, flee_frac=0.15, giant_frac=0.0,
@@ -181,7 +182,8 @@ def ffa_eval(nets: dict, job: dict) -> dict:
     of champ's and r2g9's in the same matches (paired by seed), so > 0 means it beats the rule bots."""
     import statistics
     from arena.tournament import play_many
-    specs = [f"{k}={v}:{1 if k == 'hof_last' else 2}" for k, v in nets.items()] + FFA_REFS
+    # the nets play as deployed: with the virus detour and the champion's threat push (rl.policy guards)
+    specs = [f"{k}=guard2:{v}:{1 if k == 'hof_last' else 2}" for k, v in nets.items()] + FFA_REFS
     rows = play_many(specs, job.get("matches", 24), workers=job.get("workers", 8), seed_base=job["seed"])
     by: dict[str, dict[int, list[float]]] = {}
     dead: dict[str, list[float]] = {}

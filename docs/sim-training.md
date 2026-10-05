@@ -373,3 +373,16 @@ Run: see `ffa1` (pop 4, b 32, `--vram-gb 18`). Keep total GPU memory under ~26 G
 **ffa1 round 1:** the best member's margin went from -0.69 to -0.59, but pops stayed at ~1.2 per 4-min match (champ 0.2, r2g9 0.25). With MultiOgar bots, the sim reproduces the real numbers: m2 pops 0.46/min and dies 3.2x per 4 min in the sim, vs 0.3/min and 3.6x on the real server. So `sim.tourney.run(..., bot_kind="multiogar")` (now with `pops_per_min`) is a usable fast proxy.
 
 **Pop penalty:** `SimEnv.set_reward(pop_penalty=...)`. Each own virus pop costs `pop_penalty x our mass before it` in reward units (linear, /200), so the cost of the pieces arrives with the pop. ffa uses 0.5: a 400-mass cell that pops nets -0.5 instead of +0.5. Own pops are counted in `World.popped` (part of the CUDA-graph state).
+
+**Play-time guards** (`rl/policy.py`, lineup prefixes `guard:` and `guard2:`; real server, ffa1 round-1 m5, 24 matches each):
+
+| variant | log-mass | deaths/match | pops/match |
+|---|---|---|---|
+| net | 4.83 | 3.06 | 1.04 |
+| + virus guard (champion's detour) | 5.06 | 3.42 | 0.12 |
+| + threat guard (champion's danger radius push) | 5.07 (guard 4.87 in the same matches) | 1.19 | - |
+| champ | 5.56-5.61 | 0.69-0.94 | 0.38 |
+
+- With the virus guard on, most remaining deaths are cells under 30 mass, right after spawning, split-killed by MultiOgar bots (90 of 164). Champ has 9 such deaths.
+- The threat guard brings deaths close to champ's. The remaining gap is growth (avg 192 vs 314, peak 543 vs 863).
+- ffa's real-server evaluation now plays the members with both guards (`guard2:`), the way they will be deployed.
