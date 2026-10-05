@@ -71,6 +71,7 @@ class EntityPolicy(nn.Module):
         ptr = torch.einsum("nd,ntd->nt", self.query(h), self.key(tokens)) / math.sqrt(self.d)
         ptr = ptr.float().masked_fill(~valid, -1e9)
         moves = torch.cat([self.move(h).float(), ptr], -1)
+        self._move_ok = torch.cat([torch.ones_like(valid[:, :17]), valid], -1)
         hv, _, _ = self.critic(ent, scal)
         return [moves, self.split(h), self.eject(h)], self.value(hv).squeeze(-1)
 
@@ -84,7 +85,15 @@ class EntityPolicy(nn.Module):
             logits, value = [l.float() for l in logits], value.float()
         else:
             logits, value = self(ent.float(), scal.float())
-        out = [Categorical(logits=logits[0])]
+        if self.binary_eps > 0:
+            # exploration floor on the move too: binary_eps of the probability spread over the valid
+            # moves. Keeps trying alternatives, and bounds PPO's ratios: after imitation the move
+            # was ~deterministic (p = 1 - 2e-7) and one step could swing a probability by e^20.
+            ok = self._move_ok.float()
+            uni = ok / ok.sum(-1, keepdim=True)
+            out = [Categorical(probs=(1 - self.binary_eps) * logits[0].softmax(-1) + self.binary_eps * uni)]
+        else:
+            out = [Categorical(logits=logits[0])]
         eps = self.binary_eps * (scal[:, 0] >= self.EXPLORE_MIN_LOG_MASS).float().unsqueeze(-1)
         for l in logits[1:]:
             if self.binary_eps > 0:

@@ -396,7 +396,7 @@ class Learner:
         a_ = advf[ids]
         advn = torch.zeros_like(advf)
         advn[ids] = (a_ - a_.mean()) / (a_.std() + 1e-8)
-        stats = {"pg": [], "vf": [], "ent": [], "kl": [], "clip": []}
+        stats = {"pg": [], "vf": [], "ent": [], "kl": [], "clip": [], "maxlogr": []}
         nmb = max(n // mb, 1)
         distill = self.teacher is not None and it <= self.distill_until
         bc = it <= self.bc_until
@@ -414,7 +414,8 @@ class Learner:
                 dists, value = model.dists(gx, Sf[ix], amp=AMP)
                 logp, ent = model.logp_entropy(dists, Af[ix])
                 ent = ent.mean()
-                ratio = (logp - Lf[ix]).exp()
+                logr = (logp - Lf[ix]).clamp(-20.0, 20.0)   # bounded: an exp() overflow / log(0) poisons the step
+                ratio = logr.exp()
                 pg = -torch.min(ratio * advn[ix], ratio.clamp(1 - clip, 1 + clip) * advn[ix]).mean()
                 vf = 0.5 * (value - retf[ix]).pow(2).mean()
                 if bc:        # imitate the farmer's move only: split / eject are left to the reward to discover
@@ -436,7 +437,8 @@ class Learner:
                 self.opt.step()
                 with torch.no_grad():
                     stats["pg"].append(pg.detach()); stats["vf"].append(vf.detach()); stats["ent"].append(ent.detach())
-                    stats["kl"].append(((ratio - 1) - ratio.log()).mean())
+                    stats["kl"].append(((ratio - 1) - logr).mean())
+                    stats["maxlogr"].append(logr.abs().max())
                     stats["clip"].append(((ratio - 1).abs() > clip).float().mean())
             stats = {k_: [x.item() if torch.is_tensor(x) else x for x in v_] for k_, v_ in stats.items()}
         if distill and it == self.distill_until:
@@ -477,7 +479,7 @@ class Learner:
                    f"died {life['died_share']:.2f} kills {life['kills']:.2f} shots {life['shots']:.2f} pops {life['pops']:.2f} "
                    f"stuck {life['stuck_share']:.2f} split {scal['play/split_rate']:.3f} eject {scal['play/eject_rate']:.3f} "
                    f"ent {scal['train/entropy']:.2f} kl {scal['train/kl']:.4f} clip {scal['train/clip_frac']:.2f} "
-                   f"vf {scal['train/value_loss']:.4f} vram {torch.cuda.max_memory_allocated() / 2 ** 30:.1f}G")
+                   f"vf {scal['train/value_loss']:.4f} maxlogr {max(stats['maxlogr'], default=0):.1f} vram {torch.cuda.max_memory_allocated() / 2 ** 30:.1f}G")
 
 
 def collect(env: SimEnv, learners: list[Learner], obs, T: int, skip: int):

@@ -49,7 +49,17 @@ def mutate(genome: dict, rng: random.Random, arch_p: float = 0.35, hp_kinds=HP_K
     arch, hp = g["arch"], g["hp"]
     notes = []
     for _ in range(rng.choice([1, 1, 2])):
-        if rng.random() < arch_p:
+        if rng.random() < arch_p and arch.get("kind") == "entity":   # transformer genes
+            kind = rng.choice(["width", "d", "layers", "heads"])
+            cur = {"width": 256, "d": 128, "layers": 2, "heads": 4, **arch}
+            opts = {"width": (128, 192, 256, 384, 512), "d": (64, 128, 192, 256), "layers": (1, 2, 3, 4),
+                    "heads": (2, 4, 8)}[kind]
+            arch[kind] = rng.choice([x for x in opts if x != cur[kind]])
+            d, h = arch.get("d", 128), arch.get("heads", 4)
+            if d % h:                      # attention heads must divide the token width
+                arch["heads"] = max(x for x in (2, 4, 8) if d % x == 0 and x <= h)
+            notes.append(f"{kind} {arch[kind]}")
+        elif rng.random() < arch_p:
             kind = rng.choice(["width", "channels", "layer", "pool", "input", "shared"])
             if kind == "width":
                 arch["width"] = rng.choice([w for w in (128, 192, 256, 384, 512) if w != arch["width"]])

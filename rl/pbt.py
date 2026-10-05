@@ -65,10 +65,13 @@ def eval_job(path: str) -> None:
     nets = job["nets"]
     mem = {k: v for k, v in nets.items() if k != "hof_last"}
     if job.get("objective") == "farm":
-        free = farm(nets, B=32, free=True)
-        res = {k: {"log_mass": math.log(max(v, 1.0)), "ci": 0.0, "avg_mass": v, "deaths": 0.0, "kills": 0.0}
-               for k, v in free.items()}
-        Path(job["out"]).write_text(json.dumps({"results": res, "farm": farm(mem, B=32), "long": {}}, indent=1))
+        # fitness: both farming tests (split / eject allowed), each relative to its routine:
+        # from 10 mass (routines ~300) and the gain from 1000 mass (routine +374; split-farming +467)
+        small = farm(nets, B=64, free=True)
+        big = farm(nets, B=64, free=True, start=1000.0, gain=True)
+        res = {k: {"log_mass": math.log(max((small[k] / 300 + max(big[k], 1.0) / 374) / 2, 1e-3)), "ci": 0.0,
+                   "avg_mass": small[k], "gain_1000": big[k], "deaths": 0.0, "kills": 0.0} for k in nets}
+        Path(job["out"]).write_text(json.dumps({"results": res, "farm": small, "long": {}}, indent=1))
         return
     res = run(nets, B=job["eval_b"], P=job["p"], steps=job["steps"], seed=job["seed"])
     out = {"results": res, "farm": farm(mem)}
@@ -88,7 +91,10 @@ class Population:
         self.state = self.load_state()
         self.dev = "cuda"
         pop = len(self.state["members"])
+        kinds = {m["genome"]["arch"].get("kind", "grid") for m in self.state["members"]}
         self.env = SimEnv(B=pop * args.b, P=args.p, seed=args.rng, episode_steps=20000, curriculum_p=args.curriculum_p,
+                          curriculum_mass=tuple(float(x) for x in args.curriculum_mass.split(",")),
+                          obs="both" if len(kinds) > 1 or args.hof_extra else kinds.pop(),
                           obs_dtype=torch.float16, skip=args.skip)
         self.hof_files = [f for d in [self.root / "hof", *map(Path, args.hof_extra)] for f in sorted(d.glob("*.pt"))]
         self.hof = [frozen(from_checkpoint(str(f), self.dev)) for f in self.hof_files]
@@ -114,7 +120,7 @@ class Population:
         else:
             if not a.seed:
                 raise SystemExit("--seed or --from-evo is required for a new population")
-            base = {"arch": DEFAULT_ARCH, "hp": DEFAULT_HP}
+            base = {"arch": json.loads(a.arch) if a.arch else DEFAULT_ARCH, "hp": DEFAULT_HP}
             members = []
             kinds = FARM_HP_KINDS if a.objective == "farm" else HP_KINDS
             for k in range(a.pop):
@@ -197,10 +203,15 @@ class Population:
         log(f"--- round {rnd} results" + (" (fitness: free farming, 2 min alone, split / eject allowed)"
                                           if self.args.objective == "farm" else ""))
         for name, r in sorted(res.items(), key=lambda kv: -kv[1]["log_mass"]):
+            if "gain_1000" in r:
+                log(f"  {name:<9} fitness {r['log_mass']:+.3f}  from 10 -> {r['avg_mass']:.0f}  "
+                    f"from 1000: {r['gain_1000']:+.0f}  (routines ~300 / +374, split-farming +467)")
+                continue
             log(f"  {name:<9} log_mass {r['log_mass']:.3f} +-{r['ci']:.3f}  mass {r['avg_mass']:.0f}  "
                 f"deaths {r['deaths']:.2f}  kills {r['kills']:.2f}  splits/min {r.get('splits_per_min', 0):.2f}")
-        log("  farming alone, mass after 2 min (nearest-pellet routine ~320): " +
-            "  ".join(f"{k} {v:.0f}" for k, v in sorted(ev["farm"].items(), key=lambda kv: -kv[1])))
+        if self.args.objective != "farm":
+            log("  farming alone, mass after 2 min (routines ~300): " +
+                "  ".join(f"{k} {v:.0f}" for k, v in sorted(ev["farm"].items(), key=lambda kv: -kv[1])))
         if ev["long"]:
             log(f"  long game ({self.args.long_steps * 0.08 / 60:.0f} min from mass 10), avg mass: " +
                 "  ".join(f"{k} {v:.0f}" for k, v in sorted(ev["long"].items(), key=lambda kv: -kv[1])))
@@ -301,6 +312,8 @@ def main() -> None:
     p.add_argument("--hof-extra", nargs="*", default=[], help="more hall-of-fame dirs (league opponents only)")
     p.add_argument("--max-minutes", type=float, default=0)
     p.add_argument("--curriculum-p", type=float, default=0.15, help="share of learner respawns that start big (50-5000)")
+    p.add_argument("--curriculum-mass", default="50,5000", help="their start mass range (log-uniform)")
+    p.add_argument("--arch", help="genome architecture of a new population (JSON), e.g. '{\"kind\": \"entity\"}'")
     p.add_argument("--objective", choices=("arena", "farm"), default="arena",
                    help="farm: farming arenas only, mass reward, fitness = free farming check")
     p.add_argument("--rng", type=int, default=1)
