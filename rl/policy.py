@@ -20,7 +20,8 @@ torch.set_num_threads(1)  # many agents per process; keep each one light
 class NNPolicy:
     def __init__(self, ckpt: str, greedy: bool | None = None, nosplit: bool = False, guard: bool = False):
         self.nosplit = nosplit          # diagnostics: never split or eject (the net's move only)
-        self.guard = int(guard)         # 1: steer around viruses we'd pop on; 2: also keep out of threats' reach
+        self.guard = int(guard)         # 1: steer around viruses we'd pop on; 2: also keep out of threats' reach;
+                                        # 3: also the champion's split-kill
         self.model = load(ckpt, "cpu").eval()
         if self.model.config.get("kind") == "entity":   # sim-trained transformer over object tokens
             from .ppo_sim import from_checkpoint          # pads older nets' inputs to the current layout
@@ -57,6 +58,11 @@ class NNPolicy:
             x, y = threat_guard(s, x, y)
         if self.guard:
             x, y = virus_guard(s, x, y)
+        if self.guard >= 3 and not sp:
+            target = split_kill(s)
+            if target is not None:
+                x, y, sp = target.x, target.y, True
+                self.counters["splits"] += 1
         return x, y, sp, ej
 
     def _act(self, s: Snapshot):
@@ -148,3 +154,28 @@ def threat_guard(s: Snapshot, x: float, y: float) -> tuple[float, float]:
     un = math.hypot(ux, uy) or 1.0
     reach = max(n, 600.0)
     return me.x + ux / un * reach, me.y + uy / un * reach
+
+
+SPLIT_REACH = 0.474   # the champion's split_reach gene: split when prey is within split_range * this
+
+
+def split_kill(s: Snapshot):
+    """The champion's split-kill (bot/steer.py): with one cell, the biggest prey that half our mass can
+    eat and that is within reach, unless a threat could reach us after the split. Returns it or None."""
+    from bot.steer import EAT_RATIO, SPLIT_KILL_RATIO
+    if len(s.mine) != 1:
+        return None
+    me = s.mine[0]
+    best = None
+    for c in s.others:
+        if c.kind != "player":
+            continue
+        d = math.hypot(c.x - me.x, c.y - me.y)
+        if c.mass > me.mass * EAT_RATIO:            # a threat near the landing zone: no split at all
+            r = c.size + me.size + (SPLIT_RANGE if c.mass > me.mass * SPLIT_KILL_RATIO else 0.0) + DANGER_MARGIN
+            if d < r + SPLIT_RANGE:
+                return None
+        elif (me.mass / 2 > c.mass * EAT_RATIO and d - me.size < SPLIT_RANGE * SPLIT_REACH
+              and (best is None or c.mass > best.mass)):
+            best = c
+    return best

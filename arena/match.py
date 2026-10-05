@@ -74,6 +74,8 @@ def parse_lineup(specs: list[str]) -> list[tuple[str, dict]]:
                 policy = {"kind": "nn", "ckpt": path[6:], "guard": 1}
             elif path.startswith("guard2:"):   # ... plus the champion's threat push
                 policy = {"kind": "nn", "ckpt": path[7:], "guard": 2}
+            elif path.startswith("guard3:"):   # ... plus the champion's split-kill
+                policy = {"kind": "nn", "ckpt": path[7:], "guard": 3}
             elif path.startswith("nosplit:"):  # "nns=nosplit:runs/rl/x.pt": the net with split / W masked off
                 policy = {"kind": "nn", "ckpt": path[8:], "nosplit": True}
             elif path.endswith(".pt"):  # neural network checkpoint

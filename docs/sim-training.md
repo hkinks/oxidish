@@ -387,3 +387,7 @@ Run: see `ffa1` (pop 4, b 32, `--vram-gb 18`). Keep total GPU memory under ~26 G
 - The threat guard brings deaths close to champ's. The remaining gap is growth (avg 192 vs 314, peak 543 vs 863).
 - ffa's real-server evaluation now plays the members with both guards (`guard2:`), the way they will be deployed.
 - **Training under the guards:** `sim.bots.guard_mouse` is the same two guards vectorised. They give identical headings to `rl.policy`'s on 64 random scenes. ffa sets `guard=2`, so learners and league nets move under them, and the net learns what pays within them (growth, hunting).
+
+**The growth gap is farming without virus pops** (real server, alone, 2 game-min, 8 seeds, peak mass): net 258, + virus guard 187, + both guards 174, champ 240, farmM4 214. The nets farm partly by popping on viruses, which only pays when nobody can eat the pieces.
+
+**Imitating the champions failed** (`rl/champ_data.py`: 72k real-server frames of champ / r2g9 in the entity format; `rl/champ_bc.py`: move + split likelihood with a KL anchor). Held-out heading accuracy reached 90% (from 0%: the net moves by pointer only). On the real server it lost badly (log-mass 4.49 vs 5.18 for the net it started from; deaths 2.5 vs 1.2). The champion's precise steering squeezed into 16 headings, plus compounding errors, does not make a player.
