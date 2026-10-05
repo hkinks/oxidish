@@ -98,6 +98,8 @@ class SimEnv:
         # per-slot spawn mass range (lo, hi; log-uniform), 0 = the default/curriculum: e.g. hunting
         # drills where learners start big among small prey
         self.spawn_mass = torch.zeros(B, P, 2, device=d)
+        # arena kind (rl.ppo_sim.layout): 0 normal, 1 farm, 2 hunt, 3 flee, 4 giant - per-situation losses
+        self.arena_type = torch.zeros(B, dtype=torch.long, device=d)
         self.l_kills = torch.zeros(B, NL, device=d)
         self.whale_resets = 0
         # arena_steps > 0: every arena restarts on its own clock after this many steps; the clocks start

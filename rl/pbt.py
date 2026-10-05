@@ -42,7 +42,7 @@ import torch
 from rl.common import ROOT
 
 from rl.evo import DEFAULT_ARCH, DEFAULT_HP, FARM_HP_KINDS, HP_KINDS, HUNT_HP_KINDS, mutate
-from rl.ppo_sim import Learner, collect, from_checkpoint, frozen, new_model, setup_cuda
+from rl.ppo_sim import ARENA_NAMES, Learner, collect, from_checkpoint, frozen, new_model, setup_cuda
 from sim.env import SimEnv
 
 FIXED_HP = dict(league_frac=0.3, bot_frac=0.1, league_models=2, league_every=25, league_size=8,
@@ -64,9 +64,23 @@ EVADE_HP = dict(flee_frac=1.0, farm_frac=0.0, hunt_frac=0.0, giant_frac=0.0, lea
                 flee_hunter_nets=0.5, league_pool="hof", league_models=4,
                 death_scale=1.0, kill_reward=[0.0, 0.0], virus_reward=[0.0, 0.0, 0.0], growth=None,
                 action_bonus=[0.0, 0.0], eject_explore=False, split_explore_min_mass=300.0)
+# --objective general: one net for every situation, all of them in every batch (interleaved): solo
+# farming (2 per arena, 10-3000 mass), hunting (prey bots + prey nets), escaping (hunter bots + hunter nets);
+# full death penalty; per-situation advantage normalisation; kickstarting from the specialists (--teachers
+# farm=..,hunt=..,flee=..: a KL pull toward each situation's specialist, fading 1 -> 0.1 over 300 iterations);
+# fitness = all four tests relative to the specialists (farm from 10, farm from 1000, hunt, evade)
+GENERAL_HP = dict(farm_frac=0.3, hunt_frac=0.35, flee_frac=0.35, giant_frac=0.0, league_frac=0.0, bot_frac=0.0,
+                  farm_players=2, farm_spawn=[10.0, 3000.0], hunt_players=3, hunt_spawn=[300.0, 3000.0],
+                  prey_spawn=[20.0, 300.0], prey_nets=0.5, prey_net_spawn=[300.0, 5000.0], flee_players=10,
+                  flee_hunters=6, flee_spawn=[10.0, 3000.0], flee_hunter_spawn=[1500.0, 6000.0], flee_hunter_nets=0.5,
+                  league_pool="hof", league_models=4, death_scale=1.0, kill_reward=[0.0, 0.0],
+                  virus_reward=[0.0, 0.0, 0.0], growth=None, action_bonus=[0.0, 0.0], adv_per_type=True,
+                  kick_lambda=1.0, kick_iters=300, kick_min=0.1)
+GENERAL_REFS = {"farm10": 288.0, "farm1000": 889.0, "hunt": 1000.0, "evade": 494.0}   # the specialists' scores
 LAYOUT_KEYS = ("farm_frac", "hunt_frac", "flee_frac", "giant_frac", "league_frac", "bot_frac", "kill_reward",
                "virus_reward", "growth", "action_bonus", "hunt_players", "hunt_spawn", "prey_spawn", "prey_nets",
                "prey_net_spawn", "flee_players", "flee_hunters", "flee_spawn", "flee_hunter_spawn", "flee_hunter_nets",
+               "farm_players", "adv_per_type", "kick_lambda", "kick_iters", "kick_min",
                "league_pool", "death_scale")
 # --objective farm: farming arenas only (every slot a learner), mass is the only reward; fitness is
 # the free farming check (alone for 2 min, split / eject allowed: whatever farms fastest)
@@ -86,6 +100,20 @@ def eval_job(path: str) -> None:
     setup_cuda(job.get("vram_gb", 5.0))
     nets = job["nets"]
     mem = {k: v for k, v in nets.items() if k != "hof_last"}
+    if job.get("objective") == "general":
+        small = farm_batch(nets, B=64, free=True)
+        big = farm_batch(nets, B=64, free=True, start=1000.0, gain=True)
+        hb = hunt_batch(nets, B=32, prey_nets=job.get("prey_nets"))
+        ev = evade_batch(nets, B=32)
+        R = GENERAL_REFS
+        res = {}
+        for k in nets:
+            sc = {"farm10": small[k], "farm1000": big[k], "hunt": hb[k]["gain"], "evade": ev[k]["mass"]}
+            fit = sum(math.log(max(sc[t], 1.0) / R[t]) for t in R) / len(R)
+            res[k] = {"log_mass": fit, "ci": 0.0, "avg_mass": small[k], "deaths": ev[k]["deaths_per_min"],
+                      "kills": hb[k]["kills_per_min"], "splits_per_min": hb[k]["splits_per_min"], **sc}
+        Path(job["out"]).write_text(json.dumps({"results": res, "farm": {}, "long": {}}, indent=1))
+        return
     if job.get("objective") == "evade":
         ev = evade_batch(nets, B=32)
         small = farm_batch(nets, B=64, free=True)
@@ -139,6 +167,10 @@ class Population:
         self.hof = [frozen(from_checkpoint(str(f), self.dev)) for f in self.hof_files]
         # hunt / evade: the league slots (prey nets, hunter nets) are played by the --hof-extra populations'
         # halls of fame only, rescanned every round: an arms race with the other population
+        self.teachers = {}                     # --teachers: arena kind -> frozen specialist (kickstarting)
+        for spec in args.teachers:
+            kind, path = spec.split("=", 1)
+            self.teachers[ARENA_NAMES[kind]] = frozen(from_checkpoint(path, self.dev))
         self.opp_files: list[Path] = []
         self.opp: list = []
         self.refresh_opponents()
@@ -167,7 +199,7 @@ class Population:
                 raise SystemExit("--seed or --from-evo is required for a new population")
             base = {"arch": json.loads(a.arch) if a.arch else DEFAULT_ARCH, "hp": DEFAULT_HP}
             members = []
-            kinds = {"farm": FARM_HP_KINDS, "hunt": HUNT_HP_KINDS, "evade": HUNT_HP_KINDS}.get(a.objective, HP_KINDS)
+            kinds = {"farm": FARM_HP_KINDS, "hunt": HUNT_HP_KINDS, "evade": HUNT_HP_KINDS, "general": HUNT_HP_KINDS}.get(a.objective, HP_KINDS)
             for k in range(a.pop):
                 g, note = (copy.deepcopy(base), "seed") if k == 0 else mutate(base, self.rng, hp_kinds=kinds)
                 members.append({"id": f"m{k}", "genome": g, "ckpt": a.seed, "it": 0, "seed": 100 + k,
@@ -187,12 +219,12 @@ class Population:
     def make_learner(self, m: dict, k: int) -> Learner:
         """Learner for member `m` owning arenas [k*b, (k+1)*b) of the shared env; its genome supplies hyper-parameters."""
         a = self.args
-        farm = {"farm": FARM_HP, "hunt": HUNT_HP, "evade": EVADE_HP}.get(a.objective, {})
+        farm = {"farm": FARM_HP, "hunt": HUNT_HP, "evade": EVADE_HP, "general": GENERAL_HP}.get(a.objective, {})
         # farming defaults sit below the genome (its genes may override them: lambda, split exploration,
         # start sizes, epochs), the arena layout of the farm objective above it
         hp = {**DEFAULT_HP, "lam": 0.95, **farm, **m["genome"]["hp"], **FIXED_HP, "mb": a.mb}
         if farm:
-            hp.update({k: farm[k] for k in LAYOUT_KEYS if k in farm}, farm_players=a.p)
+            hp.update({"farm_players": a.p, **{k: farm[k] for k in LAYOUT_KEYS if k in farm}})
         model = new_model(**m["genome"]["arch"]).to(self.dev)
         parent = from_checkpoint(m["ckpt"], self.dev)
         teacher = None
@@ -201,10 +233,11 @@ class Population:
         else:
             teacher = frozen(parent)
         logf = open(ROOT / "logs" / f"pbt-{a.name}-{m['id']}.txt", "a", encoding="utf-8")
-        opp = self.opp if a.objective in ("hunt", "evade") and self.opp else self.hof
+        opp = self.opp if a.objective in ("hunt", "evade", "general") and self.opp else self.hof
         L = Learner(f"{a.name}/{m['id']}", model, self.env, k * a.b, a.b, hp, self.root / m["id"], hof=opp,
                     teacher=teacher, distill_iters=30 if teacher is not None else 0, start_it=m["it"], log=logf,
                     skip=a.skip)
+        L.kick = self.teachers
         L.print(f"--- {m['id']} in arenas {k * a.b}-{(k + 1) * a.b - 1}: {m['origin']}  genome {m['genome']}"
                 f"{'  (distilling a new architecture)' if teacher is not None else ''}")
         return L
@@ -227,7 +260,7 @@ class Population:
                "objective": a.objective,
                # hunting test: half the prey = the first --hof-extra population's newest nets (the evaders)
                "prey_nets": [str(f) for f in sorted(Path(a.hof_extra[0]).glob("*.pt"))[-3:]]
-               if a.objective == "hunt" and a.hof_extra else None}
+               if a.objective in ("hunt", "general") and a.hof_extra else None}
         jf = self.root / "eval" / f"g{rnd:03d}_job.json"
         jf.write_text(json.dumps(job))
         self.eval_out = Path(job["out"])
@@ -284,9 +317,15 @@ class Population:
         """The "--- round N results" block of the log (other tools grep its lines)."""
         log(f"--- round {rnd} results" + {"farm": " (fitness: free farming, 2 min alone, split / eject allowed)",
                                            "hunt": " (fitness: hunting test, 1000 mass among 15 prey - half scripted, half the evaders' newest nets - 2 min)",
-                                           "evade": " (fitness: 200 mass among 7 big hunters x farming alone, 2 min each)"
+                                           "evade": " (fitness: 200 mass among 7 big hunters x farming alone, 2 min each)",
+                                           "general": " (fitness: farm 10 / farm 1000 / hunt / evade vs the specialists: 288 / +889 / +1000 / 494)"
                                            }.get(self.args.objective, ""))
         for name, r in sorted(res.items(), key=lambda kv: -kv[1]["log_mass"]):
+            if self.args.objective == "general":
+                log(f"  {name:<9} fitness {r['log_mass']:+.3f}  farm 10->{r['farm10']:.0f} 1000:{r['farm1000']:+.0f}  "
+                    f"hunt {r['hunt']:+.0f} ({r['kills']:.1f} kills/min, {r['splits_per_min']:.2f} splits/min)  "
+                    f"evade {r['evade']:.0f} ({r['deaths']:.2f} deaths/min)")
+                continue
             if self.args.objective == "evade":
                 log(f"  {name:<9} fitness {r['log_mass']:+.3f}  under threat: mass {r['avg_mass']:.0f} "
                     f"deaths/min {r['deaths']:.2f}  farming alone from 10 -> {r['farm10']:.0f}")
@@ -352,7 +391,7 @@ class Population:
         """Swap `dead` for a mutated child of `par`: new learner, its arenas restarted."""
         members = self.state["members"]
         g, note = mutate(par["genome"], self.rng,
-                         hp_kinds={"farm": FARM_HP_KINDS, "hunt": HUNT_HP_KINDS, "evade": HUNT_HP_KINDS}.get(self.args.objective, HP_KINDS))
+                         hp_kinds={"farm": FARM_HP_KINDS, "hunt": HUNT_HP_KINDS, "evade": HUNT_HP_KINDS, "general": HUNT_HP_KINDS}.get(self.args.objective, HP_KINDS))
         cid = f"m{self.state['next_id']}"
         self.state["next_id"] += 1
         same = g["arch"] == par["genome"]["arch"]
@@ -417,7 +456,8 @@ def main() -> None:
     p.add_argument("--curriculum-mass", default="50,5000", help="their start mass range (log-uniform)")
     p.add_argument("--arena-steps", type=int, default=0, help="per-arena restart clock in steps (staggered; 0: off)")
     p.add_argument("--arch", help="genome architecture of a new population (JSON), e.g. '{\"kind\": \"entity\"}'")
-    p.add_argument("--objective", choices=("arena", "farm", "hunt", "evade"), default="arena",
+    p.add_argument("--teachers", nargs="*", default=[], help="kickstarting: kind=checkpoint (farm, hunt, flee)")
+    p.add_argument("--objective", choices=("arena", "farm", "hunt", "evade", "general"), default="arena",
                    help="farm: farming arenas only, mass reward, fitness = free farming check")
     p.add_argument("--rng", type=int, default=1)
     p.add_argument("--vram-gb", type=float, default=20.0)

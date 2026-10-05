@@ -49,6 +49,8 @@ C_IN, S_IN, G_IN = 15, 16, 48
 ARCH_KEYS = ("width", "convs", "pool", "in_mask", "s_mask", "shared", "coords")
 HEADS = (17, 2, 2)
 ROLE_LEARN, ROLE_LEAGUE, ROLE_BOT, ROLE_OFF = 0, 1, 2, 3
+ARENA_NORMAL, ARENA_FARM, ARENA_HUNT, ARENA_FLEE, ARENA_GIANT = range(5)
+ARENA_NAMES = {"normal": ARENA_NORMAL, "farm": ARENA_FARM, "hunt": ARENA_HUNT, "flee": ARENA_FLEE, "giant": ARENA_GIANT}
 
 
 ENTITY_KEYS = ("kind", "d", "layers", "heads", "width")
@@ -210,12 +212,17 @@ def layout(env: SimEnv, lo: int, nb: int, cfg: dict) -> torch.Tensor:
     n_league = max(0, min(n_league, nb - n_drill - n_bot))
     env.active[lo:lo + nb] = True
     env.spawn_mass[lo:lo + nb] = 0
+    env.arena_type[lo:lo + nb] = ARENA_NORMAL
     role = torch.zeros(nb, P, dtype=torch.long, device=dev)
     half = P - P // 2
     role[nb - n_league - n_bot:nb - n_bot, half:] = ROLE_LEAGUE
     role[nb - n_bot:, half:] = ROLE_BOT
     t = lambda a, b: torch.tensor([a, b], device=dev)
     a = 0
+    env.arena_type[lo + a:lo + a + n_farm] = ARENA_FARM
+    env.arena_type[lo + a + n_farm:lo + a + n_farm + n_hunt] = ARENA_HUNT
+    env.arena_type[lo + a + n_farm + n_hunt:lo + a + n_farm + n_hunt + n_flee] = ARENA_FLEE
+    env.arena_type[lo + a + n_farm + n_hunt + n_flee:lo + a + n_drill] = ARENA_GIANT
     for i in range(a, a + n_farm):
         env.active[lo + i, c["farm_players"]:] = False
         role[i, c["farm_players"]:] = ROLE_OFF
@@ -317,6 +324,9 @@ class Learner:
                 self.league_models.append(None)
         self.assign_league()
         self.tb = SummaryWriter(str(ROOT / "logs" / "tb" / name))
+        # per-situation: each learner slot's arena kind; kickstarting teachers {arena kind: frozen net}
+        self.ltype = env.arena_type[self.learn_idx // P]
+        self.kick = {}
         if not (self.out / "league" / "it00000.pt").exists():
             self.save(self.out / "league" / "it00000.pt")
         self.t_last = time.time()
@@ -423,6 +433,15 @@ class Learner:
         a_ = advf[ids]
         advn = torch.zeros_like(advf)
         advn[ids] = (a_ - a_.mean()) / (a_.std() + 1e-8)
+        Tyf = self.ltype.repeat(T)                            # sample t * N + n -> arena kind of slot n
+        if hp.get("adv_per_type"):   # normalise per situation: a pellet (~1e-3) vs a kill must not drown
+            for ty in Tyf[ids].unique().tolist():
+                sel = ids[Tyf[ids] == ty]
+                v_ = advf[sel]
+                advn[sel] = (v_ - v_.mean()) / (v_.std() + 1e-8)
+        # kickstarting: pull toward each situation's specialist, fading from kick_lambda to kick_min
+        prog = (it - self.start_it) / max(hp.get("kick_iters", 1), 1)
+        kick_w = max(hp.get("kick_min", 0.0), hp.get("kick_lambda", 0.0) * (1 - prog)) if self.kick else 0.0
         stats = {"pg": [], "vf": [], "ent": [], "kl": [], "clip": [], "maxlogr": []}
         nmb = max(n // mb, 1)
         distill = self.teacher is not None and it <= self.distill_until
@@ -463,6 +482,14 @@ class Learner:
                     loss = hp.get("vf", 0.5) * vf
                 else:
                     loss = pg + hp.get("vf", 0.5) * vf - hp.get("ent", 0.001) * ent
+                    if kick_w > 0:
+                        tyb = Tyf[ix]
+                        for ty, teacher in self.kick.items():
+                            w_ = (tyb == ty).float()
+                            with torch.no_grad():
+                                tdists, _ = teacher.dists(gx, Sf[ix], amp=AMP)
+                            kl_s = sum(torch.distributions.kl_divergence(td, sd_) for td, sd_ in zip(tdists, dists))
+                            loss = loss + kick_w * (kl_s * w_).sum() / len(ix)
                     if fade > 0:   # fading imitation of the move
                         loss = loss - fade * dists[0].log_prob(TAf[ix][:, 0]).mean()
                 self.opt.zero_grad(set_to_none=True)
