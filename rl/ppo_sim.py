@@ -86,7 +86,19 @@ def from_checkpoint(path: str, dev: str) -> Policy:
     src = load(path, dev)
     cfg = src.config
     if cfg.get("kind") == "entity":   # the token count may have grown (e.g. food-cluster tokens): weights are per token
-        from sim.entities import N_TOK
+        from sim.entities import FD, N_TOK
+        if cfg["fd"] < FD:            # new token features (e.g. the commitment flag): zero weights, same play
+            new = new_model(**arch_of(src)).to(dev)
+            sd = src.state_dict()
+            for k in ("enc.tok.weight", "critic.tok.weight"):
+                w = sd[k]
+                sd[k] = torch.cat([w, w.new_zeros(w.shape[0], FD - w.shape[1])], 1)
+            for k in ("enc.state.weight", "critic.state.weight"):   # scalars 8-10 (last decision) were
+                sd[k] = sd[k].clone()                              # always zero: untrained weights
+                sd[k][:, 8:11] = 0
+            new.load_state_dict(sd)
+            new.skip = getattr(src, "skip", 1)
+            src = new
         src.n_tok = N_TOK
         src.config.update(n_tok=N_TOK, heads_out=(17 + N_TOK, 2, 2))
         return src

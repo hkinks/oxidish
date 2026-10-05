@@ -153,6 +153,8 @@ class SimEnv:
     def _reset_enc(self, mask):
         if self.enc is not None:
             self.enc.reset_agents(mask)
+        if self.ent_enc is not None:
+            self.ent_enc.forget_agents(mask)
 
     def _drop_inactive(self, arenas: torch.Tensor | None = None):
         sel = torch.ones(self.B, 1, dtype=torch.bool, device=self.dev) if arenas is None else arenas[:, None]
@@ -221,6 +223,16 @@ class SimEnv:
             n = (dx * dx + dy * dy).sqrt().clamp(min=1e-3)
             ptr = move > DIRS
             ux, uy = torch.where(ptr, dx / n, ux), torch.where(ptr, dy / n, uy)
+        if self.ent_enc is not None:      # the last decision, for the next observation (commitment inputs)
+            e = self.ent_enc
+            key = torch.full_like(move, -1)
+            if self.tokpos is not None and e.keys is not None:
+                j = (move - DIRS - 1).clamp(min=0, max=e.keys.shape[2] - 1)
+                key = torch.where(move > DIRS, e.keys.gather(2, j[..., None])[..., 0], key)
+            e.target_key.copy_(key)
+            e.last_dir.copy_(torch.stack([torch.where(stay, torch.zeros_like(ux), ux),
+                                          torch.where(stay, torch.zeros_like(uy), uy)], -1))
+            e.last_stay.copy_(stay.float())
         tx = cx + torch.where(stay, torch.zeros_like(cx), ux * ext)
         ty = cy + torch.where(stay, torch.zeros_like(cy), uy * ext)
         return torch.stack([tx, ty], -1)

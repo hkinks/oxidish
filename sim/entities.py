@@ -13,14 +13,17 @@ token per region of the view (4 x 4): the food in it as one pellet-type token at
 mass with mass = its pellet count (so far-away clusters, invisible among the 32 nearest pellets, can
 be seen and pointed at: a split cell can be sent through a whole cluster).
 
-Token features (FD = 20):
+Token features (FD = 21):
   0 valid | 1-5 type: pellet, enemy cell, own cell, virus, ejected | 6, 7 relative x, y / 1000 |
   8 distance / 1000 (centre to centre) | 9, 10 velocity per step / 40 (from the last encode, same
   object id) | 11 log(1 + mass) / 8 | 12 log(mass / our largest cell) / 3 | 13 we can eat it
   (ours > it x 1.3) | 14 it can eat us | 15 a split of ours could eat it (ours > it x 2.6) |
   16 it could split onto us | 17 merge readiness (own cells) | 18 log(owner's total / ours) / 3
-  (enemy cells) | 19 virus fill (0 at 100 mass, 1 at 200: about to split off)
-Scalars: the grid encoder's 16 (8 base + 8 zero hints), so both nets read the same.
+  (enemy cells) | 19 virus fill (0 at 100 mass, 1 at 200: about to split off) | 20 this object was our
+  pointer target at the last decision (commitment: without it every decision started from scratch and
+  near-ties made cells dither in place)
+Scalars: the grid encoder's 16 (8 base + 8 hint slots, zero in the grid encoder); here hint slots 8-10
+carry the last decision: its direction (x, y; zero for stay) and whether it was "stay".
 No host syncs; static shapes (one CUDA graph when the world uses graphs).
 """
 
@@ -31,7 +34,7 @@ import torch
 from .engine import ES, MERGE_SIZE_COEF
 from .obs import EAT_RATIO, MIN_SCALE, S, SPLIT_KILL_RATIO, VEL_SCALE, VIEW_X, VIEW_Y, VIRUS_MAX, VIRUS_MIN
 
-FD = 20
+FD = 21
 T_FOOD, T_CELL, T_OWN, T_VIRUS, T_EJECT = range(5)
 K_FOOD, K_CELL, K_VIRUS, K_EJECT = 32, 32, 8, 8
 REGIONS = 4                                             # food clusters: the view split into 4 x 4 regions
@@ -54,16 +57,29 @@ class EntityEncoder:
         self.prev = {n: (torch.zeros(B, m, device=d), torch.zeros(B, m, device=d), torch.full((B, m), -1, dtype=torch.long, device=d))
                      for n, m in (("c", world.C), ("e", world.E), ("v", world.V))}
         self._g = None
+        # the last decision, written in place by the env before each encode (graph-safe buffers):
+        # pointer target's object key (-1: none) and the move direction (0, 0 = stay / none)
+        self.target_key = torch.full((B, self.NA), -1, dtype=torch.long, device=d)
+        self.last_dir = torch.zeros(B, self.NA, 2, device=d)
+        self.last_stay = torch.zeros(B, self.NA, device=d)
+        self.keys = None
         self._out = None
 
     def reset_agents(self, mask):
         pass   # no per-agent history (velocities are per object)
 
     def forget(self, arenas):
-        """Arenas restarted: their object ids start over, so drop the last positions (in place: the
-        CUDA graph keeps reading the same tensors)."""
+        """Arenas restarted: their object ids start over, so drop the last positions and decisions (in
+        place: the CUDA graph keeps reading the same tensors)."""
         for _, _, pid in self.prev.values():
             pid.masked_fill_(arenas[:, None], -1)
+        self.forget_agents(arenas[:, None].expand(self.w.B, self.NA))
+
+    def forget_agents(self, mask):
+        """[B,NA] agents (e.g. died) whose last decision no longer applies."""
+        self.target_key.masked_fill_(mask, -1)
+        self.last_dir.masked_fill_(mask[..., None], 0.0)
+        self.last_stay.masked_fill_(mask, 0.0)
 
     # ------------------------------------------------------------------
     def encode(self, dtype=torch.float32):
@@ -90,7 +106,8 @@ class EntityEncoder:
                     t.copy_(b)
             self._g.replay()
             out = self._out
-        ent, scal, cx, cy, ext, alive, tokpos, mass = out
+        ent, scal, cx, cy, ext, alive, tokpos, keys, mass = out
+        self.keys = keys.clone()
         return ent.to(dtype), scal.to(dtype), (cx.clone(), cy.clone(), ext.clone()), alive.clone(), tokpos.clone(), mass.clone()
 
     def _encode(self):
@@ -223,6 +240,10 @@ class EntityEncoder:
         f_reg = rows(T_FOOD, rok, rdx, rdy, (rdx * rdx + rdy * rdy).sqrt(), cnt, zr, zr, {})
 
         ent = torch.cat([f_own, f_cell, f_food, f_vir, f_ej, f_reg], 2)            # [B,NA,NT,FD]
+        # object keys per token (cells share the world cell index space): the pointer target tracking
+        keys = torch.cat([oidx, ci, fi + 1_000_000, vi + 2_000_000, ei + 3_000_000,
+                          (torch.arange(R * R, device=dev) + 4_000_000).expand(B, NA, R * R)], 2)
+        ent[..., 20] = ((keys == self.target_key[..., None]) & (ent[..., 0] > 0.5)).float()
         dxs = torch.cat([odx, cdx, fdx, vdx, edx, rdx], 2)
         dys = torch.cat([ody, cdy, fdy, vdy, edy, rdy], 2)
         tokpos = torch.stack([cx[..., None] + dxs, cy[..., None] + dys], -1)        # world positions
@@ -243,7 +264,9 @@ class EntityEncoder:
         scal[..., 5] = ext / 3000
         scal[..., 6] = (me_mass >= 36).float()
         scal[..., 7] = torch.log(me_mass) / 8
+        scal[..., 8:10] = self.last_dir
+        scal[..., 10] = self.last_stay
         scal = scal * alive[..., None]
         A = B * NA
-        return (ent.reshape(A, self.NT, FD), scal.reshape(A, S), cx, cy, ext, alive, tokpos,
+        return (ent.reshape(A, self.NT, FD), scal.reshape(A, S), cx, cy, ext, alive, tokpos, keys,
                 o_mass.sum(-1))
