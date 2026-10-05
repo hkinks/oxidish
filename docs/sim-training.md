@@ -369,3 +369,7 @@ Run: see `ffa1` (pop 4, b 32, `--vram-gb 18`). Keep total GPU memory under ~26 G
 - **Its losses are virus pops:** it loses 452 cells while holding 8+ cells, where champ loses 24. It pops 0.6x per 2 game-min; champ never does. The server's bots eat the pieces.
 - **Cause:** solo farm drills and the farm teacher (fp2) reward eating viruses, which is safe only when nobody can eat the pieces.
 - **Fix:** the ffa layout has no farm drills and no farm teacher (bot arenas 50%). The real-server matches now count own pops (`AgentStats.popped`), reported each round. A `greedy:` / `nosplit:` lineup prefix is available for diagnostics.
+
+**ffa1 round 1:** the best member's margin went from -0.69 to -0.59, but pops stayed at ~1.2 per 4-min match (champ 0.2, r2g9 0.25). With MultiOgar bots, the sim reproduces the real numbers: m2 pops 0.46/min and dies 3.2x per 4 min in the sim, vs 0.3/min and 3.6x on the real server. So `sim.tourney.run(..., bot_kind="multiogar")` (now with `pops_per_min`) is a usable fast proxy.
+
+**Pop penalty:** `SimEnv.set_reward(pop_penalty=...)`. Each own virus pop costs `pop_penalty x our mass before it` in reward units (linear, /200), so the cost of the pieces arrives with the pop. ffa uses 0.5: a 400-mass cell that pops nets -0.5 instead of +0.5. Own pops are counted in `World.popped` (part of the CUDA-graph state).

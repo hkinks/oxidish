@@ -94,7 +94,8 @@ FFA_HP = dict(bot_frac=0.5, league_frac=0.25, farm_frac=0.0, hunt_frac=0.1, flee
               flee_hunters=6, flee_spawn=[10.0, 3000.0], flee_hunter_spawn=[1500.0, 6000.0], flee_hunter_nets=0.5,
               league_models=4, death_scale=1.0, kill_reward=[0.0, 0.0], virus_reward=[0.0, 0.0, 0.0],
               growth=None, action_bonus=[0.0, 0.0], adv_per_type=True, kick_lambda=1.0, kick_iters=300,
-              kick_min=0.1, split_explore_min_mass=150.0)
+              kick_min=0.1, split_explore_min_mass=150.0,
+              pop_penalty=0.5)    # popping on a virus costs half our mass (the pieces the bots would eat)
 FFA_HP_KINDS = ["lr", "ent", "gamma", "explore", "explore", "epochs", "lam", "lam", "split_min"]
 FFA_REFS = ["champ=runs/final_champion.json:2", "r2g9=runs/r2/champion_009.json:2"]   # the rule-based yardsticks
 GENERAL_REFS = {"farm10": 288.0, "farm1000": 889.0, "hunt": 1000.0, "evade": 494.0}   # the specialists' scores

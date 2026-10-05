@@ -81,6 +81,7 @@ class SimEnv:
         self.r_bonus = torch.zeros(2, B, 1, device=d)
         self.r_growth = torch.zeros(B, 1, dtype=torch.bool, device=d)
         self.r_par = torch.zeros(3, B, 1, device=d)       # par step, par mass, death cost
+        self.r_pop = torch.zeros(B, 1, device=d)            # cost of popping on a virus, x our mass before it
         self.r_death = torch.ones(B, 1, device=d)          # scale of the (linear) death penalty: 0 = fearless
         self.set_reward(slice(None), virus_reward, explore_reward, kill_reward, growth, action_bonus)
         self.n_agents = B * self.NL
@@ -96,6 +97,7 @@ class SimEnv:
         self.seen = torch.zeros(B, NL, self.ng * self.ng, dtype=torch.bool, device=d)
         self._trail = torch.zeros(STUCK_WINDOW, B, NL, 2, device=d)
         self.prev_vstat = torch.zeros(3, B, NL, device=d)
+        self.prev_popped = torch.zeros(B, NL, device=d)
         self.prev_kstat = torch.zeros(2, B, NL, device=d)
         # inactive slots never (re)spawn: e.g. farming drills, arenas with only a few players
         self.active = torch.ones(B, P, dtype=torch.bool, device=d)
@@ -115,10 +117,12 @@ class SimEnv:
         self.trunc = torch.zeros(B * self.NL, dtype=torch.bool, device=self.w.dev)
 
     def set_reward(self, arenas, virus_reward=(0.0, 0.0, 0.0), explore_reward=0.0, kill_reward=(0.0, 0.0),
-                   growth: dict | None = None, action_bonus=(0.0, 0.0), death_scale: float = 1.0):
+                   growth: dict | None = None, action_bonus=(0.0, 0.0), death_scale: float = 1.0,
+                   pop_penalty: float = 0.0):
         """Reward weights for `arenas` (a slice over B): virus_reward (shot, pop, popmass),
         explore_reward per new map square, kill_reward (per enemy cell eaten, per 200 enemy mass
-        eaten), action_bonus (per split, per eject the game carries out).
+        eaten), action_bonus (per split, per eject the game carries out), pop_penalty (per own virus pop,
+        times our mass before it, in the linear reward's units: the pieces are what the bots eat).
         growth: log-mass change instead of linear mass, minus a "par" growth rate while above
         par_mass. Farming at a steady absolute pace earns less and less in log terms as the cell
         grows, and falls below par: only accelerating growth (eating players) keeps paying.
@@ -129,6 +133,7 @@ class SimEnv:
         self.r_explore[arenas] = float(explore_reward)
         self.r_bonus[:, arenas] = vec(action_bonus)
         self.r_death[arenas] = float(death_scale)
+        self.r_pop[arenas] = float(pop_penalty)
         self.r_growth[arenas] = bool(growth)
         if growth:
             par_step = math.log(2) / (growth.get("par_doubling_min", 4.0) * 60 / 0.08)
@@ -198,6 +203,7 @@ class SimEnv:
         self._clear_lives(m)
         self.prev_vstat.masked_fill_(m[None], 0)
         self.prev_kstat.masked_fill_(m[None], 0)
+        self.prev_popped.masked_fill_(m, 0)
         self.prev_alive, self.prev_mass = self._alive_mass()
 
     def reset(self):
@@ -341,6 +347,10 @@ class SimEnv:
         dk = torch.where(live[None], ks - self.prev_kstat, torch.zeros_like(ks))
         self.prev_kstat = ks
         rew = rew + self.r_kill[0] * dk[0] + self.r_kill[1] * dk[1] / 200
+        po = w.popped[:, :NL].clone()
+        dp = torch.where(live, po - self.prev_popped, torch.zeros_like(po)).clamp(min=0)
+        self.prev_popped = po
+        rew = rew - self.r_pop * dp * pm * REWARD_SCALE
         # main (largest) cell position: novelty grid and stuck detection
         r2 = w.cr2.view(B, P, w.K)[:, :NL]
         mi = r2.argmax(-1, keepdim=True)
@@ -384,6 +394,7 @@ class SimEnv:
             self._clear_lives(ones)
             self.prev_vstat.zero_()
             self.prev_kstat.zero_()
+            self.prev_popped.zero_()
         self.prev_alive, self.prev_mass = self._alive_mass()
         if self.max_player_mass and self.py_steps % 25 == 0:
             whale = (self.w.total_mass() > self.max_player_mass).any(1)            # [B]

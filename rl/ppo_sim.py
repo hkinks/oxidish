@@ -296,7 +296,7 @@ class Learner:
         self.opt = torch.optim.Adam(model.parameters(), lr=hp.get("lr", 1e-4), eps=1e-5, fused=True)
         env.set_reward(slice(lo, lo + nb), hp.get("virus_reward", (0, 0, 0)), hp.get("explore_reward", 0.0),
                        hp.get("kill_reward", (0, 0)), parse_growth(hp.get("growth")),
-                       hp.get("action_bonus", (0, 0)), hp.get("death_scale", 1.0))
+                       hp.get("action_bonus", (0, 0)), hp.get("death_scale", 1.0), hp.get("pop_penalty", 0.0))
         role = layout(env, lo, nb, hp)
         flat = role.reshape(-1)
         base = lo * P

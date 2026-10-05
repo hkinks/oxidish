@@ -22,7 +22,7 @@ from sim.env import SimEnv
 
 @torch.no_grad()
 def run(nets: dict[str, str], B: int = 16, P: int = 50, steps: int = 3000, bots: int = 5,
-        seed: int = 123, dev: str = "cuda") -> dict:
+        seed: int = 123, dev: str = "cuda", bot_kind: str = "scripted") -> dict:
     """Shared tournament: the nets (name -> checkpoint) and `bots` scripted bots per arena fill B arenas of P
     slots; returns per-net mass statistics (fitness = mean log of average mass)."""
     names = list(nets)
@@ -31,7 +31,7 @@ def run(nets: dict[str, str], B: int = 16, P: int = 50, steps: int = 3000, bots:
         m.binary_eps = 0.0
     kinds = {obs_kind(m) for m in models}
     env = SimEnv(B=B, P=P, seed=seed, episode_steps=10 ** 9, curriculum_p=0.0,
-                 obs="both" if len(kinds) > 1 else kinds.pop())
+                 obs="both" if len(kinds) > 1 else kinds.pop(), bot_kind=bot_kind)
     M, n_play = len(models), P - bots
     owner = torch.full((B, P), -1, dtype=torch.long, device=dev)        # net index per slot, -1 = bot
     for b in range(B):
@@ -57,6 +57,7 @@ def run(nets: dict[str, str], B: int = 16, P: int = 50, steps: int = 3000, bots:
         mass_sum += env.prev_mass
         deaths += d.view(B, P).float()
     kills = env.w.kstat[0, :, :P]
+    pops = env.w.popped[:, :P]
     out = {}
     for k, name in enumerate(names):
         sel = owner == k
@@ -67,7 +68,13 @@ def run(nets: dict[str, str], B: int = 16, P: int = 50, steps: int = 3000, bots:
         out[name] = {"log_mass": lm.mean().item(), "ci": ci, "avg_mass": avg.mean().item(),
                      "deaths": ((deaths * sel).sum(1) / n_slots).mean().item(),
                      "kills": ((kills * sel).sum(1) / n_slots).mean().item(),
-                     "splits_per_min": ((splits * sel).sum(1) / n_slots).mean().item() / (steps * 0.08 / 60)}
+                     "splits_per_min": ((splits * sel).sum(1) / n_slots).mean().item() / (steps * 0.08 / 60),
+                     "pops_per_min": ((pops * sel).sum(1) / n_slots).mean().item() / (steps * 0.08 / 60)}
+    if bots:
+        sel = owner < 0
+        out["bots"] = {"avg_mass": ((mass_sum * sel).sum(1) / sel.sum(1).clamp(min=1) / steps).mean().item(),
+                       "deaths": ((deaths * sel).sum(1) / sel.sum(1).clamp(min=1)).mean().item(),
+                       "pops_per_min": ((pops * sel).sum(1) / sel.sum(1).clamp(min=1)).mean().item() / (steps * 0.08 / 60)}
     return out
 
 

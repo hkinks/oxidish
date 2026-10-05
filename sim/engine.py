@@ -153,6 +153,7 @@ class World:
         self.vstat = torch.zeros(3, B, P + 1, device=d)
         # cumulative per-player kills: [enemy cells eaten, enemy mass eaten] (column P = trash)
         self.kstat = torch.zeros(2, B, P + 1, device=d)
+        self.popped = torch.zeros(B, P + 1, device=d)     # own virus pops per player (cumulative)
         self.use_graphs = (self.dev.type == "cuda") if use_graphs is None else use_graphs
         self._graphs = {}
         self._pool = None
@@ -203,6 +204,7 @@ class World:
         self.eown.masked_fill_(m1, -1)
         self.vstat.masked_fill_(m1[None], 0)
         self.kstat.masked_fill_(m1[None], 0)
+        self.popped.masked_fill_(m1, 0)
         if self.prefill:
             pos = self.lo + self.map * self._rand(B, self.F, 2)
             self.fx.copy_(torch.where(m1, pos[..., 0], self.fx))
@@ -508,6 +510,7 @@ class World:
         self.vstat[1].scatter_add_(1, pidx, pop_ok.float())
         self.vstat[2].scatter_add_(1, pidx, (R2.gather(1, ve) + vr2_eaten) / 100 * pop_ok.float())
         R2 = R2.scatter_add(1, ve, vr2_eaten)
+        self.popped.scatter_add_(1, torch.where(vhas & room, vown, torch.full_like(vown, P)), (vhas & room).float())
         popcell = torch.full((B, P + 1), -1, dtype=torch.long, device=dev)
         popcell.scatter_(1, torch.where(vhas, vown, torch.full_like(vown, P)), vflat)
         popcell = popcell[:, :P]
@@ -644,7 +647,7 @@ class World:
     # ------------------------------------------------------------------ tick / step
     _STATE = ("cx", "cy", "cr2", "cbd", "cbx", "cby", "cage", "cid", "calive", "mx", "my", "fx", "fy",
               "falive", "ex", "ey", "ebd", "ebx", "eby", "eage", "eid", "ealive", "vx", "vy", "vr2",
-              "vbd", "vbx", "vby", "vid", "valive", "next_id", "eown", "vlast", "vshooter", "vstat", "kstat", "eject_overwrites", "virus_overflow")
+              "vbd", "vbx", "vby", "vid", "valive", "next_id", "eown", "vlast", "vshooter", "vstat", "kstat", "popped", "eject_overwrites", "virus_overflow")
 
     def _capture(self, fn):
         """CUDA-graph `fn` (static shapes, no host sync). The world is restored after the warm-up run."""
