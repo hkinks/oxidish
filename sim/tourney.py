@@ -16,7 +16,7 @@ import math
 import torch
 
 from rl.ppo_sim import from_checkpoint
-from sim.bots import scripted_actions
+from sim.bots import farmer_actions, scripted_actions
 from sim.env import SimEnv
 
 
@@ -39,10 +39,13 @@ def run(nets: dict[str, str], B: int = 16, P: int = 50, steps: int = 3000, bots:
     splits = torch.zeros(B, P, device=dev)
     flat_owner = owner.reshape(-1)
     idx = [(flat_owner == k).nonzero()[:, 0] for k in range(M)]
-    for _ in range(steps):
-        a = torch.zeros(B * P, 3, dtype=torch.long, device=dev)
+    a = torch.zeros(B * P, 3, dtype=torch.long, device=dev)
+    for step in range(steps):
         for m, ix in zip(models, idx):
-            a[ix] = m.act(g[ix], s[ix], amp=True)[0]
+            if step % m.skip == 0:          # a frame-skip net decides every m.skip steps
+                a[ix] = m.act(g[ix], s[ix], amp=True)[0]
+            else:                           # ... and holds its move; split / eject fire once
+                a[ix, 1:] = 0
         if bots:
             a.view(B, P, 3)[:, n_play:] = scripted_actions(env.w, env.bot_split_prob)[:, n_play:]
         splits += ((a[:, 1] > 0) & env.prev_alive.reshape(-1)).view(B, P).float()
@@ -67,15 +70,22 @@ def run(nets: dict[str, str], B: int = 16, P: int = 50, steps: int = 3000, bots:
 @torch.no_grad()
 def farm(nets: dict[str, str], B: int = 16, steps: int = 1500, seed: int = 5, dev: str = "cuda") -> dict:
     """Farming alone: one player per arena, no enemies, no splits/ejects; mean mass after `steps`.
-    (For scale: going straight to the nearest pellet reaches ~320 in 1500 steps.)"""
+    (For scale: path "script" is the nearest-pellet farmer, sim.bots.farmer_actions, deciding
+    every 2 steps: ~300 mass.)"""
     out = {}
     for name, path in nets.items():
-        m = from_checkpoint(path, dev).eval()
-        m.binary_eps = 0.0
+        m = None
+        if path != "script":                # "script": the scripted bot (sim.bots) as the reference
+            m = from_checkpoint(path, dev).eval()
+            m.binary_eps = 0.0
         env = SimEnv(B=B, P=1, seed=seed, episode_steps=10 ** 9, curriculum_p=0.0)
         g, s, _, _, _ = env.reset()
-        for _ in range(steps):
-            a = m.act(g, s, amp=True)[0]
+        for step in range(steps):
+            if m is None:
+                if step % 2 == 0:
+                    a = farmer_actions(env)
+            elif step % m.skip == 0:
+                a = m.act(g, s, amp=True)[0]
             a[:, 1:] = 0
             g, s, _, _, _ = env.step(a)
         out[name] = env.prev_mass.mean().item()

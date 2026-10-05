@@ -47,8 +47,11 @@ _ROWS = ((CH_MINE, False), (CH_OWN_MERGE, False), (CH_VX, True), (CH_VY, True), 
 class Encoder:
     """Per-agent encoder state for `slots` (player indices) of every arena."""
 
-    def __init__(self, world, slots=None):
+    def __init__(self, world, slots=None, call_steps: int = 1):
+        """call_steps: env steps between encode calls (frame skip); velocities and merge timers
+        are scaled by it, so they keep their per-step meaning."""
         self.w = world
+        self.call_steps = call_steps
         B, P = world.B, world.P
         self.slots = torch.arange(P, device=world.dev) if slots is None else \
             torch.as_tensor(slots, device=world.dev, dtype=torch.long)
@@ -286,13 +289,13 @@ class Encoder:
         oi = old_slot.reshape(-1)[a]
         st = steps.reshape(-1)[a]
         hl = oi * (B * N) + fl
-        stf = st.clamp(min=1).float()
+        stf = st.clamp(min=1).float() * self.call_steps
         vxv = (x - hx_[hl]) / stf / VEL_SCALE
         vyv = (y - hy_[hl]) / stf / VEL_SCALE
         velok = (st > 0) & (hid_[hl] == oid) & hvis_[(oi * A + a) * N + j] & (vxv.abs() + vyv.abs() > 0.02)
         # merge readiness (first seen by this agent) and size relations to our largest cell
         jc = j.clamp(max=Cc - 1)
-        stepn = (self.n_obs.reshape(-1)[a] - self.fs_step.reshape(-1)[a * Cc + jc]).float() * SYNC_TICKS
+        stepn = (self.n_obs.reshape(-1)[a] - self.fs_step.reshape(-1)[a * Cc + jc]).float() * (SYNC_TICKS * self.call_steps)
         ready = torch.clamp(stepn / (torch.clamp(0.2 * fsz, min=float(MERGE_SECONDS)) * 25), max=1.0).clamp(min=0.05)
         mass_o = fsz * fsz / 100
         tot_f = total.reshape(-1)

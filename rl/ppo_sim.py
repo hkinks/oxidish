@@ -1,26 +1,29 @@
 """PPO self-play fully on the GPU, on the batched simulator (sim/).
 
-    uv run python -m rl.ppo_sim --run s1 [--init runs/rl/g8_048.pt] [--b 256] [--steps 32]
+    uv run python -m rl.ppo_sim --run s1 [--init runs/rl/g8_048.pt] [--b 256] [--steps 32] [--skip 2]
 
 B arenas x P players step on the GPU (`sim.env.SimEnv`); observations, rollouts and PPO all stay
 on the GPU. Slot roles: in most arenas every slot is a learner playing the current policy
 (self-play). A fraction of arenas gives half of the slots to opponents instead: `--league-frac`
 arenas use frozen snapshots of this run (a league: the starting policy plus a snapshot every
-`--league-every` iterations), `--bot-frac` arenas use the scripted bot (sim.bots). Only learner
-slots produce training samples. Lives' statistics (peak mass, shots, pops, ...) are logged for the
-learner slots only.
+`--league-every` iterations), `--bot-frac` arenas use the scripted bot (sim.bots). Drill arenas
+(farm, hunt, flee, giant) come first. Only learner slots produce training samples. Lives'
+statistics (peak mass, shots, pops, ...) are logged for the learner slots only.
+
+Frame skip (`--skip k`): every policy decides every k env steps (k x 80 ms) and holds its move in
+between; a split or eject fires once, on the decision's first step. Rewards are summed over the
+k steps and gamma applies per decision (gamma ** k), so `--gamma` keeps its per-step meaning.
+
+The training loop is the `Learner` class (one network, its arenas, its league, its PPO state), so
+several learners can share one env: rl.pbt runs a whole population in one process this way.
 
 Network: rl.model.Policy with the sim layout (c=15: the guided net's 13 channels + killable prey +
-enemy mass density; s=16, g=48) and heads (17, 2, 2): 16
-headings + stay, split, eject. There is no FOLLOW action (a net trained here has no champion), so the
-move head has 17 outputs instead of the guided net's 18 and FOLLOW can never be chosen. The 8 hint
-scalars are zero in the sim and in rl.nohint.NoHintEncoder (the real-server side). `--init` takes a
-guided checkpoint (its FOLLOW logit row is dropped, its hint input weights stay but see zeros) or an
-earlier run of this script.
+enemy mass density; s=16, g=48) and heads (17, 2, 2): 16 headings + stay, split, eject. There is
+no FOLLOW action (a net trained here has no champion). `--init` takes a guided checkpoint (its
+FOLLOW logit row is dropped, its hint input weights stay but see zeros) or an earlier sim run.
 
 Checkpoints: runs/rl/<run>/ckpt_NNNNN.pt and latest.pt, written with rl.common.save and tagged
-`sim=True, hint=False`; rl.common.load reads them and rl.policy.NNPolicy plays them on the real
-server (c=13 and no follow -> rl.nohint.NoHintEncoder).
+`sim=True, hint=False, skip=k`; rl.policy.NNPolicy plays them on the real server.
 """
 
 import argparse
@@ -28,21 +31,24 @@ import copy
 import json
 import statistics
 import time
+import weakref
+from collections import OrderedDict
 from pathlib import Path
 
 import numpy as np
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
-from sim.bots import scripted_actions
+from sim.bots import farmer_actions, scripted_actions
 from sim.env import SimEnv
 
 from .common import ROOT, load, save
 from .model import Policy
 
 C_IN, S_IN, G_IN = 15, 16, 48
-ARCH_KEYS = ("width", "convs", "pool", "in_mask", "s_mask", "shared")
+ARCH_KEYS = ("width", "convs", "pool", "in_mask", "s_mask", "shared", "coords")
 HEADS = (17, 2, 2)
+ROLE_LEARN, ROLE_LEAGUE, ROLE_BOT, ROLE_OFF = 0, 1, 2, 3
 
 
 def new_model(width: int = 256, **arch) -> Policy:
@@ -71,15 +77,415 @@ def from_checkpoint(path: str, dev: str) -> Policy:
                 w = sd[key]
                 sd[key] = torch.cat([w, w.new_zeros(w.shape[0], C_IN - w.shape[1], *w.shape[2:])], 1)
     model.load_state_dict(sd)
+    model.skip = getattr(src, "skip", 1)
     return model
 
 
+def grow_inputs(src: Policy, **arch) -> Policy | None:
+    """`src` with architecture changes that only add input channels (coords): the new channels
+    get zero weights, so the net plays exactly as before. None if `arch` changes anything else."""
+    dst = new_model(**{**arch_of(src), **arch}).to(next(src.parameters()).device)
+    sd, own = src.state_dict(), dst.state_dict()
+    for k, v in own.items():
+        if k not in sd:
+            return None
+        if sd[k].shape != v.shape:
+            if not (k.endswith("conv.0.weight") and sd[k].shape[1] < v.shape[1] and sd[k].shape[2:] == v.shape[2:]):
+                return None
+            sd[k] = torch.cat([sd[k], sd[k].new_zeros(v.shape[0], v.shape[1] - sd[k].shape[1], *v.shape[2:])], 1)
+    dst.load_state_dict(sd)
+    dst.skip = getattr(src, "skip", 1)
+    return dst
+
+
+def frozen(m: Policy) -> Policy:
+    m = copy.deepcopy(m).eval()
+    m.binary_eps = 0.0
+    for q in m.parameters():
+        q.requires_grad_(False)
+    return m
+
+
 AMP = True   # bfloat16 network passes (see Policy.dists); --no-amp turns it off
+torch.distributions.Distribution.set_default_validate_args(False)   # the checks sync the GPU
+
+
+class GraphedAct:
+    """model.act for one fixed batch size as a CUDA graph: one launch instead of dozens of small
+    kernels from Python (acting was launch-bound). The graph reads the model's parameters in
+    place, so it stays valid while the optimizer updates them; RNG is graph-safe."""
+
+    def __init__(self, model: Policy, g: torch.Tensor, s: torch.Tensor):
+        self.g, self.s = g.clone(), s.clone()
+        st = torch.cuda.Stream()
+        st.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(st), torch.no_grad():
+            for _ in range(3):                                     # warm-up: cudnn tuning, allocator
+                model.act(self.g, self.s, amp=AMP)
+        torch.cuda.current_stream().wait_stream(st)
+        self.graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(self.graph), torch.no_grad():
+            self.out = model.act(self.g, self.s, amp=AMP)
+
+    def __call__(self, g, s):
+        self.g.copy_(g)
+        self.s.copy_(s)
+        self.graph.replay()
+        return tuple(o.clone() for o in self.out)
+
+
+_graphs: "OrderedDict[tuple, GraphedAct]" = OrderedDict()   # (model id, batch, eps) -> graph, LRU
+_graph_owner = weakref.WeakValueDictionary()                 # model id -> model (drop graphs of dead models)
+MAX_GRAPHS = 32   # each keeps its own activation memory; league snapshots come and go
 
 
 def act_sampled(model: Policy, g: torch.Tensor, s: torch.Tensor):
-    with torch.no_grad():
-        return model.act(g if AMP else g.float(), s, amp=AMP)
+    if not AMP or not g.is_cuda or len(g) == 0:
+        with torch.no_grad():
+            return model.act(g if AMP else g.float(), s, amp=AMP)
+    key = (id(model), len(g), model.binary_eps)
+    if _graph_owner.get(id(model)) is not model:      # a new model reusing a dead one's id
+        for k in [k for k in _graphs if k[0] == id(model)]:
+            del _graphs[k]
+        _graph_owner[id(model)] = model
+    if key not in _graphs:
+        while len(_graphs) >= MAX_GRAPHS:
+            _graphs.popitem(last=False)
+        _graphs[key] = GraphedAct(model, g, s)
+    _graphs.move_to_end(key)
+    return _graphs[key](g, s)
+
+
+# ---- arena layout ------------------------------------------------------------------------------
+LAYOUT_DEFAULTS = dict(league_frac=0.2, bot_frac=0.1, farm_frac=0.0, farm_players=8, hunt_frac=0.0,
+                       hunt_players=10, flee_frac=0.0, flee_players=20, flee_hunters=10, giant_frac=0.0,
+                       giants=4, giant_learners=2)
+
+
+def layout(env: SimEnv, lo: int, nb: int, cfg: dict) -> torch.Tensor:
+    """Roles [nb, P] for arenas lo..lo+nb (0 learner, 1 league, 2 scripted bot, 3 off), and their
+    drill settings in `env` (active slots, spawn sizes). Drill arenas come first:
+      farm:  only `farm_players` learners, nothing else: a clean farming signal;
+      hunt:  `hunt_players` learners at 400-2000 mass among small scripted bots (20-200);
+      flee:  `flee_players` learners at 100-600 mass with `flee_hunters` scripted bots at 1500-6000;
+      giant: a full arena of learners plus `giants` scripted bots at 5k-20k mass (like a strong
+             human on the real server) and `giant_learners` learners that start that big.
+    Then `league_frac` arenas with half the slots league snapshots, `bot_frac` with half bots.
+    Drill players respawn at their drill size, so the pressure lasts all game."""
+    c = {**LAYOUT_DEFAULTS, **cfg}
+    P, dev = env.P, env.dev
+    n_league, n_bot = round(nb * c["league_frac"]), round(nb * c["bot_frac"])
+    n_farm, n_hunt = round(nb * c["farm_frac"]), round(nb * c["hunt_frac"])
+    n_flee, n_giant = round(nb * c["flee_frac"]), round(nb * c["giant_frac"])
+    n_drill = n_farm + n_hunt + n_flee + n_giant
+    assert n_drill + n_bot <= nb, "drill + bot arenas exceed the arenas"
+    n_league = max(0, min(n_league, nb - n_drill - n_bot))
+    env.active[lo:lo + nb] = True
+    env.spawn_mass[lo:lo + nb] = 0
+    role = torch.zeros(nb, P, dtype=torch.long, device=dev)
+    half = P - P // 2
+    role[nb - n_league - n_bot:nb - n_bot, half:] = ROLE_LEAGUE
+    role[nb - n_bot:, half:] = ROLE_BOT
+    t = lambda a, b: torch.tensor([a, b], device=dev)
+    a = 0
+    for i in range(a, a + n_farm):
+        env.active[lo + i, c["farm_players"]:] = False
+        role[i, c["farm_players"]:] = ROLE_OFF
+    a += n_farm
+    for i in range(a, a + n_hunt):
+        k = c["hunt_players"]
+        role[i, k:] = ROLE_BOT
+        env.spawn_mass[lo + i, :k] = t(400.0, 2000.0)
+        env.spawn_mass[lo + i, k:] = t(20.0, 200.0)
+    a += n_hunt
+    for i in range(a, a + n_flee):
+        k, hn = c["flee_players"], c["flee_hunters"]
+        role[i, k:k + hn] = ROLE_BOT
+        role[i, k + hn:] = ROLE_OFF
+        env.active[lo + i, k + hn:] = False
+        env.spawn_mass[lo + i, :k] = t(100.0, 600.0)
+        env.spawn_mass[lo + i, k:k + hn] = t(1500.0, 6000.0)
+    a += n_flee
+    for i in range(a, a + n_giant):
+        gb, gl = c["giants"], c["giant_learners"]
+        role[i, P - gb:] = ROLE_BOT
+        env.spawn_mass[lo + i, P - gb:] = t(5000.0, 20000.0)
+        env.spawn_mass[lo + i, :gl] = t(5000.0, 20000.0)
+    return role
+
+
+def parse_growth(x):
+    if not x:
+        return None
+    if isinstance(x, str):
+        x = [float(v) for v in x.split(",")]
+    return dict(zip(("par_doubling_min", "par_mass", "death"), map(float, x)))
+
+
+# ---- one learning network --------------------------------------------------------------------------
+class Learner:
+    """One network learning in arenas lo..lo+nb of a shared env: its learner slots, its league
+    (own snapshots + hall of fame), its rollout buffers and PPO update, its logs and checkpoints.
+
+    hp: lr, ent, gamma, lam, clip, epochs, mb, target_kl, vf, vf_warmup, explore, league_every,
+    league_size, league_models, save_every, plus the arena layout keys (see `layout`) and the
+    reward keys (virus_reward, explore_reward, kill_reward, growth, action_bonus)."""
+
+    def __init__(self, name: str, model: Policy, env: SimEnv, lo: int, nb: int, hp: dict, out: Path,
+                 hof: list[Policy] | None = None, teacher: Policy | None = None, distill_iters: int = 0,
+                 start_it: int = 0, log=None, skip: int = 1, resume_league: bool = True):
+        self.name, self.model, self.env, self.lo, self.nb = name, model, env, lo, nb
+        self.hp, self.out, self.skip = hp, Path(out), skip
+        self.teacher, self.distill_until = teacher, start_it + distill_iters
+        # imitate the nearest-pellet farmer (sim.bots.farmer_actions) first: DAgger on our own states
+        self.bc_until = start_it + hp.get("bc_farmer_iters", 0)
+        self.it = self.start_it = start_it
+        self.log_f = log
+        dev = self.dev = env.dev
+        P = env.P
+        model.binary_eps = hp.get("explore", 0.02)
+        self.opt = torch.optim.Adam(model.parameters(), lr=hp.get("lr", 1e-4), eps=1e-5, fused=True)
+        env.set_reward(slice(lo, lo + nb), hp.get("virus_reward", (0, 0, 0)), hp.get("explore_reward", 0.0),
+                       hp.get("kill_reward", (0, 0)), parse_growth(hp.get("growth")),
+                       hp.get("action_bonus", (0, 0)))
+        role = layout(env, lo, nb, hp)
+        flat = role.reshape(-1)
+        base = lo * P
+        self.learn_idx = base + (flat == ROLE_LEARN).nonzero()[:, 0]
+        self.bot_idx = base + (flat == ROLE_BOT).nonzero()[:, 0]
+        self.N = len(self.learn_idx)
+        track = env.track
+        track[lo:lo + nb] = role == ROLE_LEARN
+        env.set_tracked(track)
+        # league: own snapshots (resumed from disk) + hall of fame, split over a few groups of arenas
+        self.snaps = [frozen(model)]
+        old = sorted((self.out / "league").glob("it*.pt")) if resume_league else []
+        if old:
+            keep = old[:1] + old[1:][-(hp.get("league_size", 8) - 1):]
+            self.snaps = [frozen(from_checkpoint(str(f), dev)) for f in keep]
+        self.hof = hof or []
+        league_arenas = [a for a in range(nb) if bool((role[a] == ROLE_LEAGUE).any())]
+        self.league_idx, self.league_models = [], []
+        if league_arenas:
+            k = min(hp.get("league_models", 4), len(league_arenas))
+            for ch in np.array_split(np.array(league_arenas), k):
+                cht = torch.as_tensor(ch, device=dev)
+                ix = (role[cht] == ROLE_LEAGUE).nonzero()
+                self.league_idx.append(base + cht[ix[:, 0]] * P + ix[:, 1])
+                self.league_models.append(None)
+        self.assign_league()
+        self.tb = SummaryWriter(str(ROOT / "logs" / "tb" / name))
+        if not (self.out / "league" / "it00000.pt").exists():
+            self.save(self.out / "league" / "it00000.pt")
+        self.t_last = time.time()
+
+    @property
+    def arenas(self) -> slice:
+        return slice(self.lo, self.lo + self.nb)
+
+    def assign_league(self):
+        pool = self.snaps + self.hof
+        for i in range(len(self.league_models)):
+            self.league_models[i] = pool[np.random.randint(len(pool))]
+
+    def save(self, path: Path):
+        save(self.model, path, it=self.it, sim=True, hint=False, skip=self.skip)
+
+    def print(self, msg: str):
+        print(msg, file=self.log_f, flush=True)
+
+    # ---- rollout
+    def begin(self, T: int, gdim):
+        N, dev = self.N, self.dev
+        if getattr(self, "T", None) != T:      # buffers live across iterations (no allocator churn)
+            self.T = T
+            self.G = torch.empty((T, N, *gdim), dtype=torch.float16, device=dev)
+            self.Sc = torch.empty((T, N, S_IN), device=dev)
+            self.Act = torch.zeros((T, N, 3), dtype=torch.long, device=dev)
+            self.Logp = torch.zeros((T, N), device=dev)
+            self.Val = torch.zeros((T + 1, N), device=dev)
+            self.Rew = torch.zeros((T, N), device=dev)
+            self.Done = torch.zeros((T, N), device=dev)
+            self.Valid = torch.zeros((T + 1, N), device=dev)
+        if self.it < self.bc_until and getattr(self, "TAct", None) is None:
+            self.TAct = torch.zeros((T, N, 3), dtype=torch.long, device=dev)
+        elif self.it >= self.bc_until:
+            self.TAct = None
+        lr = self.hp.get("bc_lr", 1e-3) if self.it < self.bc_until else self.hp.get("lr", 1e-4)
+        for pg_ in self.opt.param_groups:
+            pg_["lr"] = lr
+        self.splits = self.ejects = torch.zeros((), device=dev)
+        self.t0 = time.time()
+
+    def act(self, t: int, g, s, v, acts):
+        """Sample the learners' actions (stored for training) and the league's; write them to acts."""
+        ix = self.learn_idx
+        gl, sl = g[ix], s[ix]
+        a, logp, val = act_sampled(self.model, gl, sl)
+        self.G[t], self.Sc[t], self.Act[t], self.Logp[t], self.Val[t] = gl, sl, a, logp, val
+        vl = v[ix]
+        self.Valid[t] = vl.float()
+        self.splits = self.splits + (a[:, 1] * vl).sum()
+        if self.it < self.bc_until:
+            self.TAct[t] = farmer_actions(self.env)[ix]
+        self.ejects = self.ejects + (a[:, 2] * vl).sum()
+        acts[ix] = a
+        for m, lx in zip(self.league_models, self.league_idx):
+            acts[lx] = act_sampled(m, g[lx], s[lx])[0]
+
+    def record(self, t: int, r, d):
+        self.Rew[t] = r[self.learn_idx]
+        self.Done[t] = d[self.learn_idx].float()
+
+    def finish(self, g, s, v):
+        ix = self.learn_idx
+        self.Val[self.T] = act_sampled(self.model, g[ix], s[ix])[2]
+        self.Valid[self.T] = v[ix].float()
+        self.collect_s = time.time() - self.t0
+
+    # ---- PPO
+    def update(self):
+        hp, model, T, N, dev = self.hp, self.model, self.T, self.N, self.dev
+        self.it += 1
+        it = self.it
+        t1 = time.time()
+        gamma, lam = hp.get("gamma", 0.998) ** self.skip, hp.get("lam", 0.95)
+        clip, mb = hp.get("clip", 0.2), hp.get("mb", 2048)
+        adv = torch.zeros((T, N), device=dev)
+        last = torch.zeros(N, device=dev)
+        for t in reversed(range(T)):
+            cont = (1 - self.Done[t]) * self.Valid[t + 1]
+            delta = self.Rew[t] + gamma * self.Val[t + 1] * cont - self.Val[t]
+            last = delta + gamma * lam * cont * last
+            adv[t] = last * self.Valid[t]
+        ret = adv + self.Val[:T]
+        ids = (self.Valid[:T].reshape(-1) > 0).nonzero()[:, 0]
+        n = len(ids)
+        gdim = self.G.shape[2:]
+        Gf, Sf, Af = self.G.view(T * N, *gdim), self.Sc.view(T * N, -1), self.Act.view(T * N, 3)
+        Lf, advf, retf = self.Logp.view(-1), adv.view(-1), ret.view(-1)
+        a_ = advf[ids]
+        advn = torch.zeros_like(advf)
+        advn[ids] = (a_ - a_.mean()) / (a_.std() + 1e-8)
+        stats = {"pg": [], "vf": [], "ent": [], "kl": [], "clip": []}
+        nmb = max(n // mb, 1)
+        distill = self.teacher is not None and it <= self.distill_until
+        bc = it <= self.bc_until
+        TAf = self.TAct.view(T * N, 3) if bc else None
+        for ep in range(hp.get("epochs", 3)):
+            if not bc and stats["kl"] and statistics.fmean(stats["kl"][-nmb:]) > hp.get("target_kl", 0.02):
+                break
+            perm = ids[torch.randperm(n, device=dev)]
+            # full minibatches only: a new batch size makes cudnn.benchmark re-tune every conv
+            # (seconds of CPU per update); the remainder sits this epoch out (a random few)
+            for k in range(0, max(n - n % mb, 1), mb):
+                ix = perm[k:k + mb]
+                gx = Gf[ix] if AMP else Gf[ix].float()
+                dists, value = model.dists(gx, Sf[ix], amp=AMP)
+                logp, ent = model.logp_entropy(dists, Af[ix])
+                ent = ent.mean()
+                ratio = (logp - Lf[ix]).exp()
+                pg = -torch.min(ratio * advn[ix], ratio.clamp(1 - clip, 1 + clip) * advn[ix]).mean()
+                vf = 0.5 * (value - retf[ix]).pow(2).mean()
+                if bc:        # imitate the farmer's move (and its never splitting / ejecting)
+                    loss = -sum(d.log_prob(TAf[ix][:, j]).mean() for j, d in enumerate(dists)) + hp.get("vf", 0.5) * vf
+                elif distill:   # new architecture: imitate the parent (DAgger: our states, its actions)
+                    with torch.no_grad():
+                        tdists, _ = self.teacher.dists(gx, Sf[ix], amp=AMP)
+                    kl_t = sum(torch.distributions.kl_divergence(td, sd_).mean() for td, sd_ in zip(tdists, dists))
+                    loss = kl_t + hp.get("vf", 0.5) * vf
+                elif it <= self.start_it + hp.get("vf_warmup", 0):
+                    loss = hp.get("vf", 0.5) * vf
+                else:
+                    loss = pg + hp.get("vf", 0.5) * vf - hp.get("ent", 0.001) * ent
+                self.opt.zero_grad(set_to_none=True)
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
+                self.opt.step()
+                with torch.no_grad():
+                    stats["pg"].append(pg.detach()); stats["vf"].append(vf.detach()); stats["ent"].append(ent.detach())
+                    stats["kl"].append(((ratio - 1) - ratio.log()).mean())
+                    stats["clip"].append(((ratio - 1).abs() > clip).float().mean())
+            stats = {k_: [x.item() if torch.is_tensor(x) else x for x in v_] for k_, v_ in stats.items()}
+        if distill and it == self.distill_until:
+            self.teacher = None
+        self.upd_s = time.time() - t1
+        self.report(stats, n)
+        if it % hp.get("league_every", 25) == 0:
+            self.snaps.append(frozen(model))
+            self.snaps[:] = self.snaps[:1] + self.snaps[1:][-(hp.get("league_size", 8) - 1):]
+            self.save(self.out / "league" / f"it{it:05d}.pt")
+            self.assign_league()
+        if it % hp.get("save_every", 10) == 0:
+            self.save(self.out / f"ckpt_{it:05d}.pt")
+            self.save(self.out / "latest.pt")
+
+    def report(self, stats, n):
+        life = self.env.pop_stats(self.arenas)
+        now = time.time()
+        dt, self.t_last = now - self.t_last, now
+        mean = lambda xs: statistics.fmean(xs) if xs else 0.0
+        steps = self.T * self.skip * self.nb * self.env.P
+        scal = {
+            "play/life_return": life["ret"], "play/peak_mass": life["peak"], "play/life_steps": life["steps"],
+            "play/death_share": life["died_share"], "play/virus_shots": life["shots"], "play/virus_pops": life["pops"],
+            "play/kills": life["kills"], "play/stuck_share": life["stuck_share"], "play/peak_mass_max": life["peak_max"],
+            "play/lives_over_10k": life["lives_over_10k"],
+            "play/split_rate": float(self.splits) / max(n, 1), "play/eject_rate": float(self.ejects) / max(n, 1),
+            "train/entropy": mean(stats["ent"]), "train/kl": mean(stats["kl"]), "train/clip_frac": mean(stats["clip"]),
+            "train/value_loss": mean(stats["vf"]),
+            "speed/samples_per_s": n / dt, "speed/agent_steps_per_s": steps / dt,
+        }
+        for key, val in scal.items():
+            self.tb.add_scalar(key, val, self.it)
+        self.tb.flush()
+        self.print(f"it {self.it:5d} samples {n:6d} ({n / dt:6.0f}/s, {steps / dt:6.0f} agent-steps/s, collect "
+                   f"{self.collect_s:4.1f}s upd {self.upd_s:4.1f}s) lives {life['lives']:5.0f} peak {life['peak']:6.0f} "
+                   f"max {life['peak_max']:6.0f} >10k {life['lives_over_10k']:3.0f} len {life['steps']:5.0f} "
+                   f"died {life['died_share']:.2f} kills {life['kills']:.2f} shots {life['shots']:.2f} pops {life['pops']:.2f} "
+                   f"stuck {life['stuck_share']:.2f} split {scal['play/split_rate']:.3f} eject {scal['play/eject_rate']:.3f} "
+                   f"ent {scal['train/entropy']:.2f} kl {scal['train/kl']:.4f} clip {scal['train/clip_frac']:.2f} "
+                   f"vf {scal['train/value_loss']:.4f} vram {torch.cuda.max_memory_allocated() / 2 ** 30:.1f}G")
+
+
+def collect(env: SimEnv, learners: list[Learner], obs, T: int, skip: int):
+    """T decisions of every learner (and its league) plus the scripted bots, each held for `skip`
+    env steps. Returns the observation after the last step."""
+    g, s, v = obs
+    A, dev = env.n_agents, env.dev
+    bot_idx = torch.cat([L.bot_idx for L in learners]) if learners else None
+    for L in learners:
+        L.begin(T, g.shape[1:])
+    for t in range(T):
+        acts = torch.zeros(A, 3, dtype=torch.long, device=dev)
+        for L in learners:
+            L.act(t, g, s, v, acts)
+        if len(bot_idx):
+            acts[bot_idx] = scripted_actions(env.w, env.bot_split_prob).reshape(-1, 3)[bot_idx]
+        R = torch.zeros(A, device=dev)
+        D = torch.zeros(A, dtype=torch.bool, device=dev)
+        for j in range(skip):
+            if j == 1:                       # split / eject fire once per decision
+                acts = acts.clone()
+                acts[:, 1:] = 0
+            g2, s2, r, d, v2 = env.step(acts, observe=j == skip - 1)
+            R += torch.where(D, torch.zeros_like(r), r)    # after a death: the next life's
+            D |= d
+        for L in learners:
+            L.record(t, R, D)
+        g, s, v = g2, s2, v2
+    for L in learners:
+        L.finish(g, s, v)
+    return g, s, v
+
+
+def setup_cuda(vram_gb: float, seed: int = 7):
+    total = torch.cuda.get_device_properties(0).total_memory
+    torch.cuda.set_per_process_memory_fraction(min(1.0, vram_gb * 2 ** 30 / total))
+    torch.backends.cudnn.benchmark = True
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    torch.manual_seed(seed)
 
 
 def main() -> None:
@@ -88,29 +494,20 @@ def main() -> None:
     p.add_argument("--init", help="checkpoint to start from (guided or sim-layout)")
     p.add_argument("--b", type=int, default=256, help="arenas")
     p.add_argument("--p", type=int, default=16, help="players per arena")
-    p.add_argument("--steps", type=int, default=32, help="env steps per iteration")
+    p.add_argument("--steps", type=int, default=32, help="decisions per iteration")
+    p.add_argument("--skip", type=int, default=1, help="env steps (80 ms) per decision")
     p.add_argument("--episode-steps", type=int, default=20000,
                    help="arena reset period in steps (2 ticks = 80 ms each); long, so lives can reach 10k+ mass")
     p.add_argument("--league-frac", type=float, default=0.2, help="arenas where half the slots play league snapshots")
-    p.add_argument("--farm-frac", type=float, default=0.0,
-                   help="arenas with only --farm-players learners and nothing else: a clean farming signal")
-    p.add_argument("--farm-players", type=int, default=3)
-    p.add_argument("--hunt-frac", type=float, default=0.0,
-                   help="hunting drills: arenas where --hunt-players learners start big (400-2000 mass) among "
-                        "small scripted bots (20-200): splitting onto prey pays off right away")
-    p.add_argument("--hunt-players", type=int, default=4)
-    p.add_argument("--flee-frac", type=float, default=0.0,
-                   help="escape drills: arenas where --flee-players learners (100-600 mass) share the map with "
-                        "--flee-hunters big scripted bots (1500-6000) that chase them; nothing else")
-    p.add_argument("--flee-players", type=int, default=6)
-    p.add_argument("--flee-hunters", type=int, default=8)
-    p.add_argument("--giant-frac", type=float, default=0.0,
-                   help="giant arenas: a full arena of learners plus --giants scripted bots at 5k-20k mass "
-                        "(like a strong human on the real server) and --giant-learners learners that start "
-                        "that big; everyone respawns at their drill size")
-    p.add_argument("--giants", type=int, default=4)
-    p.add_argument("--giant-learners", type=int, default=2)
     p.add_argument("--bot-frac", type=float, default=0.1, help="arenas where half the slots are scripted bots")
+    for k in ("farm", "hunt", "flee", "giant"):
+        p.add_argument(f"--{k}-frac", type=float, default=0.0, help=f"{k} drill arenas (see layout())")
+    p.add_argument("--farm-players", type=int, default=LAYOUT_DEFAULTS["farm_players"])
+    p.add_argument("--hunt-players", type=int, default=LAYOUT_DEFAULTS["hunt_players"])
+    p.add_argument("--flee-players", type=int, default=LAYOUT_DEFAULTS["flee_players"])
+    p.add_argument("--flee-hunters", type=int, default=LAYOUT_DEFAULTS["flee_hunters"])
+    p.add_argument("--giants", type=int, default=LAYOUT_DEFAULTS["giants"])
+    p.add_argument("--giant-learners", type=int, default=LAYOUT_DEFAULTS["giant_learners"])
     p.add_argument("--league-every", type=int, default=25)
     p.add_argument("--league-size", type=int, default=8, help="snapshots kept in memory")
     p.add_argument("--league-models", type=int, default=4, help="distinct snapshots playing at once")
@@ -122,7 +519,7 @@ def main() -> None:
     p.add_argument("--no-amp", action="store_true", help="float32 network passes")
     p.add_argument("--lr", type=float, default=1e-4)
     p.add_argument("--target-kl", type=float, default=0.02)
-    p.add_argument("--gamma", type=float, default=0.998)
+    p.add_argument("--gamma", type=float, default=0.998, help="per env step (applied as gamma ** skip per decision)")
     p.add_argument("--lam", type=float, default=0.95)
     p.add_argument("--clip", type=float, default=0.2)
     p.add_argument("--ent", type=float, default=0.001)
@@ -143,253 +540,70 @@ def main() -> None:
     p.add_argument("--action-bonus", default="0,0", help="reward per split, per eject (W) the game carries out")
     p.add_argument("--kill-reward", default="0,0", help="per enemy cell eaten, per 200 enemy mass eaten")
     p.add_argument("--save-every", type=int, default=10)
+    p.add_argument("--bc-farmer-iters", type=int, default=0,
+                   help="first imitate the nearest-pellet farmer (sim.bots.farmer_actions; no splits) for this "
+                        "many iterations: DAgger on the net's own states")
+    p.add_argument("--bc-lr", type=float, default=1e-3, help="learning rate while imitating")
+    p.add_argument("--farm-eval-every", type=int, default=0,
+                   help="every N iterations: the farming-alone check (sim.tourney.farm), printed and in TensorBoard")
     p.add_argument("--seed", type=int, default=7)
     p.add_argument("--vram-gb", type=float, default=12.0,
                    help="hard VRAM cap: past it torch raises OOM instead of Windows spilling into system RAM")
     args = p.parse_args()
     global AMP
     AMP = not args.no_amp
-
+    setup_cuda(args.vram_gb, args.seed)
     dev = "cuda"
-    total = torch.cuda.get_device_properties(0).total_memory
-    torch.cuda.set_per_process_memory_fraction(min(1.0, args.vram_gb * 2 ** 30 / total))
-    torch.backends.cudnn.benchmark = True
-    torch.backends.cuda.matmul.allow_tf32 = True
-    torch.backends.cudnn.allow_tf32 = True
-    torch.manual_seed(args.seed)
     out = ROOT / "runs" / "rl" / args.run
     teacher = None
     if args.arch:
-        arch = json.loads(args.arch)
-        model = new_model(**arch).to(dev)
+        model = new_model(**json.loads(args.arch)).to(dev)
         if args.init:
             parent = from_checkpoint(args.init, dev)
             if parent.config == model.config:
                 model = parent
-            else:   # new architecture: imitate the parent first (DAgger: our own states, its actions)
-                teacher = parent.eval()
-                for q in teacher.parameters():
-                    q.requires_grad_(False)
+            else:
+                teacher = frozen(parent)
                 print(f"new architecture {model.config} - distilling from {args.init} for "
                       f"{args.distill_iters} iterations", flush=True)
     else:
         model = from_checkpoint(args.init, dev) if args.init else new_model(args.width).to(dev)
-    model.binary_eps = args.explore
-    opt = torch.optim.Adam(model.parameters(), lr=args.lr, eps=1e-5)
-
+    floats = lambda x: [float(v) for v in x.split(",")]
+    hp = {k: getattr(args, k) for k in ("lr", "ent", "gamma", "lam", "clip", "epochs", "mb", "target_kl", "vf",
+                                         "vf_warmup", "explore", "league_every", "league_size", "league_models",
+                                         "save_every", "explore_reward", "bc_farmer_iters", "bc_lr",
+                                         *LAYOUT_DEFAULTS)}
+    hp.update(virus_reward=floats(args.virus_reward), kill_reward=floats(args.kill_reward),
+              action_bonus=floats(args.action_bonus), growth=args.growth)
     B, P, T = args.b, args.p, args.steps
     env = SimEnv(B=B, P=P, seed=args.seed, episode_steps=args.episode_steps, curriculum_p=args.curriculum_p,
-                 obs_dtype=torch.float16, virus_reward=tuple(float(x) for x in args.virus_reward.split(",")),
-                 explore_reward=args.explore_reward,
-                 kill_reward=tuple(float(x) for x in args.kill_reward.split(",")),
-                 growth=(dict(zip(("par_doubling_min", "par_mass", "death"), map(float, args.growth.split(","))))
-                         if args.growth else None),
-                 action_bonus=tuple(float(x) for x in args.action_bonus.split(",")))
-    # ---- slot roles: 0 learner (current policy), 1 league snapshot, 2 scripted bot
-    n_league, n_bot = round(B * args.league_frac), round(B * args.bot_frac)
-    n_farm, n_hunt, n_flee = round(B * args.farm_frac), round(B * args.hunt_frac), round(B * args.flee_frac)
-    n_giant = round(B * args.giant_frac)
-    n_league = max(0, min(n_league, B - n_farm - n_hunt - n_flee - n_giant - n_bot))   # drills come first
-    role = torch.zeros(B, P, dtype=torch.long, device=dev)
-    half = P - P // 2
-    role[B - n_league - n_bot:B - n_bot, half:] = 1
-    role[B - n_bot:, half:] = 2
-    if n_farm:                                      # farm arenas: the first n_farm (all-learner) arenas
-        env.active[:n_farm, args.farm_players:] = False
-        role[:n_farm, args.farm_players:] = 3          # inactive: no actions, no samples
-    if n_hunt:                                      # hunt arenas: right after the farm arenas
-        h = slice(n_farm, n_farm + n_hunt)
-        role[h, args.hunt_players:] = 2
-        env.spawn_mass[h, :args.hunt_players] = torch.tensor([400.0, 2000.0], device=dev)
-        env.spawn_mass[h, args.hunt_players:] = torch.tensor([20.0, 200.0], device=dev)
-    if n_flee:                                      # escape arenas: after the hunt arenas
-        fl = slice(n_farm + n_hunt, n_farm + n_hunt + n_flee)
-        k, hn = args.flee_players, args.flee_hunters
-        role[fl, k:k + hn] = 2
-        role[fl, k + hn:] = 3
-        env.active[fl, k + hn:] = False
-        env.spawn_mass[fl, :k] = torch.tensor([100.0, 600.0], device=dev)
-        env.spawn_mass[fl, k:k + hn] = torch.tensor([1500.0, 6000.0], device=dev)
-    if n_giant:                                     # giant arenas: after the escape arenas
-        n0 = n_farm + n_hunt + n_flee
-        gi = slice(n0, n0 + n_giant)
-        gb, gl = args.giants, args.giant_learners
-        role[gi, P - gb:] = 2
-        env.spawn_mass[gi, P - gb:] = torch.tensor([5000.0, 20000.0], device=dev)
-        env.spawn_mass[gi, :gl] = torch.tensor([5000.0, 20000.0], device=dev)
-    assert n_farm + n_hunt + n_flee + n_giant + n_league + n_bot <= B, "drill + league + bot arenas exceed --b"
-    flat = role.reshape(-1)
-    learn_idx = (flat == 0).nonzero()[:, 0]
-    league_arenas = list(range(B - n_league - n_bot, B - n_bot))
-    bot_idx = (flat == 2).nonzero()[:, 0]
-    N = len(learn_idx)
-    env.set_tracked((role == 0))
-    def frozen(m: Policy) -> Policy:
-        m = copy.deepcopy(m).eval()
-        m.binary_eps = 0.0
-        for q in m.parameters():
-            q.requires_grad_(False)
-        return m
-
-    snaps = [frozen(model)]                                 # league: starting policy + periodic snapshots
-    old = sorted((out / "league").glob("it*.pt"))          # resuming: the run's earlier snapshots rejoin
-    if old:
-        keep = old[:1] + old[1:][-(args.league_size - 1):]
-        snaps = [frozen(from_checkpoint(str(f), dev)) for f in keep]
-        print(f"league resumed from {len(keep)} snapshots: {', '.join(f.stem for f in keep)}", flush=True)
-    hof = []                                                # hall of fame: fixed opponents (other runs' bests)
+                 obs_dtype=torch.float16, skip=args.skip)
+    hof = []
     if args.hof:
-        for f in sorted(Path(args.hof).glob("*.pt")):
-            hof.append(frozen(from_checkpoint(str(f), dev)))
+        hof = [frozen(from_checkpoint(str(f), dev)) for f in sorted(Path(args.hof).glob("*.pt"))]
         print(f"hall of fame: {len(hof)} opponents from {args.hof}", flush=True)
-    league_models, league_idx = [], []
-    if n_league:
-        k = min(args.league_models, n_league)
-        chunks = np.array_split(np.array(league_arenas), k)
-        for ch in chunks:
-            ix = (role[torch.as_tensor(ch, device=dev)] == 1).nonzero()
-            league_idx.append(torch.as_tensor(ch, device=dev)[ix[:, 0]] * P + ix[:, 1])
-            league_models.append(None)
-
-    def assign_league():
-        pool = snaps + hof
-        for i in range(len(league_models)):
-            league_models[i] = pool[np.random.randint(len(pool))]
-    assign_league()
-
-    tb = SummaryWriter(str(ROOT / "logs" / "tb" / args.run))
+    L = Learner(args.run, model, env, 0, B, hp, out, hof=hof, teacher=teacher,
+                distill_iters=args.distill_iters if teacher is not None else 0, start_it=args.start_it,
+                skip=args.skip)
     g, s, _, _, v = env.reset()
-    A = B * P
-    print(f"PPO-sim run {args.run}: {B} arenas x {P} slots = {A} agents ({N} learners, {len(bot_idx)} bots, "
-          f"{sum(len(i) for i in league_idx)} league), {T} steps/iter, episode {args.episode_steps} steps",
-          flush=True)
-    if not (out / "league" / "it00000.pt").exists():
-        save(model, out / "league" / "it00000.pt", it=0, sim=True, hint=False)
-
-    gdim = g.shape[1:]
+    print(f"PPO-sim run {args.run}: {B} arenas x {P} slots ({L.N} learners, {len(L.bot_idx)} bots, "
+          f"{sum(len(i) for i in L.league_idx)} league), {T} decisions/iter, skip {args.skip}, "
+          f"episode {args.episode_steps} steps", flush=True)
     t_start = time.time()
-    it = args.start_it
-    for it in range(args.start_it + 1, args.start_it + args.iters + 1):
+    if args.farm_eval_every:
+        from sim.tourney import farm
+    for _ in range(args.iters):
         if args.max_minutes and time.time() - t_start > args.max_minutes * 60:
-            it -= 1
             break
-        t0 = time.time()
-        G = torch.empty((T, N, *gdim), dtype=torch.float16, device=dev)
-        Sc = torch.empty((T, N, S_IN), device=dev)
-        Act = torch.zeros((T, N, 3), dtype=torch.long, device=dev)
-        Logp = torch.zeros((T, N), device=dev)
-        Val = torch.zeros((T + 1, N), device=dev)
-        Rew = torch.zeros((T, N), device=dev)
-        Done = torch.zeros((T, N), device=dev)
-        Valid = torch.zeros((T + 1, N), device=dev)
-        splits = ejects = torch.zeros((), device=dev)
-        for t in range(T):
-            gl, sl = g[learn_idx], s[learn_idx]
-            a, logp, val = act_sampled(model, gl, sl)
-            G[t], Sc[t], Act[t], Logp[t], Val[t] = gl, sl, a, logp, val
-            vl = v[learn_idx]
-            Valid[t] = vl.float()
-            splits = splits + (a[:, 1] * vl).sum()
-            ejects = ejects + (a[:, 2] * vl).sum()
-            acts = torch.zeros(A, 3, dtype=torch.long, device=dev)
-            acts[learn_idx] = a
-            for m, ix in zip(league_models, league_idx):
-                acts[ix] = act_sampled(m, g[ix], s[ix])[0]
-            if len(bot_idx):
-                acts[bot_idx] = scripted_actions(env.w, env.bot_split_prob).reshape(-1, 3)[bot_idx]
-            g, s, r, d, v = env.step(acts)
-            Rew[t] = r[learn_idx]
-            Done[t] = d[learn_idx].float()
-        with torch.no_grad():
-            Val[T] = act_sampled(model, g[learn_idx], s[learn_idx])[2]
-        Valid[T] = v[learn_idx].float()
-        life = env.pop_stats()
-        collect_s = time.time() - t0
-
-        adv = torch.zeros((T, N), device=dev)
-        last = torch.zeros(N, device=dev)
-        for t in reversed(range(T)):
-            cont = (1 - Done[t]) * Valid[t + 1]
-            delta = Rew[t] + args.gamma * Val[t + 1] * cont - Val[t]
-            last = delta + args.gamma * args.lam * cont * last
-            adv[t] = last * Valid[t]
-        ret = adv + Val[:T]
-
-        ids = (Valid[:T].reshape(-1) > 0).nonzero()[:, 0]          # indices of valid samples
-        n = len(ids)
-        Gf, Sf, Af = G.view(T * N, *gdim), Sc.view(T * N, -1), Act.view(T * N, 3)
-        Lf, advf, retf = Logp.view(-1), adv.view(-1), ret.view(-1)
-        a_ = advf[ids]
-        advn = torch.zeros_like(advf)
-        advn[ids] = (a_ - a_.mean()) / (a_.std() + 1e-8)
-        stats = {"pg": [], "vf": [], "ent": [], "kl": [], "clip": []}
-        nmb = max(n // args.mb, 1)
-        for ep in range(args.epochs):
-            if stats["kl"] and statistics.fmean(stats["kl"][-nmb:]) > args.target_kl:
-                break
-            perm = ids[torch.randperm(n, device=dev)]
-            for k in range(0, n, args.mb):
-                ix = perm[k:k + args.mb]
-                dists, value = model.dists(Gf[ix] if AMP else Gf[ix].float(), Sf[ix], amp=AMP)
-                logp, ent = model.logp_entropy(dists, Af[ix])
-                ent = ent.mean()
-                ratio = (logp - Lf[ix]).exp()
-                pg = -torch.min(ratio * advn[ix], ratio.clamp(1 - args.clip, 1 + args.clip) * advn[ix]).mean()
-                vf = 0.5 * (value - retf[ix]).pow(2).mean()
-                if teacher is not None and it <= args.start_it + args.distill_iters:
-                    with torch.no_grad():
-                        tdists, _ = teacher.dists(Gf[ix] if AMP else Gf[ix].float(), Sf[ix], amp=AMP)
-                    kl_t = sum(torch.distributions.kl_divergence(td, sd_).mean() for td, sd_ in zip(tdists, dists))
-                    loss = kl_t + args.vf * vf
-                elif it <= args.vf_warmup:
-                    loss = args.vf * vf
-                else:
-                    loss = pg + args.vf * vf - args.ent * ent
-                opt.zero_grad(set_to_none=True)
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
-                opt.step()
-                with torch.no_grad():
-                    stats["pg"].append(pg.detach()); stats["vf"].append(vf.detach()); stats["ent"].append(ent.detach())
-                    stats["kl"].append(((ratio - 1) - ratio.log()).mean())
-                    stats["clip"].append(((ratio - 1).abs() > args.clip).float().mean())
-            stats = {k_: [x.item() if torch.is_tensor(x) else x for x in v_] for k_, v_ in stats.items()}  # one sync per epoch
-        stats = {k_: [x.item() if torch.is_tensor(x) else x for x in v_] for k_, v_ in stats.items()}
-        dt = time.time() - t0
-        mean = lambda xs: statistics.fmean(xs) if xs else 0.0
-        valid_n = n
-        scal = {
-            "play/life_return": life["ret"], "play/peak_mass": life["peak"], "play/life_steps": life["steps"],
-            "play/death_share": life["died_share"], "play/virus_shots": life["shots"], "play/virus_pops": life["pops"], "play/kills": life["kills"],
-            "play/stuck_share": life["stuck_share"], "play/peak_mass_max": life["peak_max"],
-            "play/lives_over_10k": life["lives_over_10k"],
-            "play/split_rate": float(splits) / max(valid_n, 1), "play/eject_rate": float(ejects) / max(valid_n, 1),
-            "play/follow_rate": 0.0,
-            "train/entropy": mean(stats["ent"]), "train/kl": mean(stats["kl"]), "train/clip_frac": mean(stats["clip"]),
-            "train/value_loss": mean(stats["vf"]), "train/anchor_kl": 0.0,
-            "speed/samples_per_s": valid_n / dt, "speed/agent_steps_per_s": A * T / dt,
-        }
-        for key, val in scal.items():
-            tb.add_scalar(key, val, it)
-        tb.flush()
-        print(f"it {it:5d} samples {valid_n:6d} ({valid_n / dt:6.0f}/s, {A * T / dt:6.0f} agent-steps/s, collect "
-              f"{collect_s:4.1f}s upd {dt - collect_s:4.1f}s) lives {life['lives']:5.0f} peak {life['peak']:6.0f} "
-              f"max {life['peak_max']:6.0f} >10k {life['lives_over_10k']:3.0f} len {life['steps']:5.0f} "
-              f"died {life['died_share']:.2f} kills {life['kills']:.2f} shots {life['shots']:.2f} pops {life['pops']:.2f} "
-              f"stuck {life['stuck_share']:.2f} split {scal['play/split_rate']:.3f} eject {scal['play/eject_rate']:.3f} "
-              f"ent {scal['train/entropy']:.2f} kl {scal['train/kl']:.4f} clip {scal['train/clip_frac']:.2f} "
-              f"vf {scal['train/value_loss']:.4f} vram {torch.cuda.max_memory_allocated() / 2 ** 30:.1f}G", flush=True)
-        if it % args.league_every == 0:
-            snaps.append(frozen(model))
-            snaps[:] = snaps[:1] + snaps[1:][-(args.league_size - 1):]
-            save(model, out / "league" / f"it{it:05d}.pt", it=it, sim=True, hint=False)
-            assign_league()
-        if it % args.save_every == 0:
-            save(model, out / f"ckpt_{it:05d}.pt", it=it, sim=True, hint=False)
-            save(model, out / "latest.pt", it=it, sim=True, hint=False)
-
-    save(model, out / "latest.pt", it=it, sim=True, hint=False)
-    print(f"done at iteration {it}", flush=True)
+        g, s, v = collect(env, [L], (g, s, v), T, args.skip)
+        L.update()
+        if args.farm_eval_every and L.it % args.farm_eval_every == 0:
+            L.save(out / "latest.pt")
+            fm = farm({"net": str(out / "latest.pt")})["net"]
+            L.tb.add_scalar("eval/farm_mass", fm, L.it)
+            print(f"farm check at it {L.it}: {fm:.0f} mass after 2 min alone (nearest-pellet routine ~320)", flush=True)
+    L.save(out / "latest.pt")
+    print(f"done at iteration {L.it}", flush=True)
 
 
 if __name__ == "__main__":

@@ -23,23 +23,27 @@ class Policy(nn.Module):
     """Architecture genes (rl/evo.py mutates them; defaults = the original net):
     convs: (channels, stride) per 3x3 conv layer; pool: average-pool the input grid by this
     factor first; in_mask: grid channels the net sees (others are dropped, None = all);
-    s_mask: likewise for the scalars; shared: policy and value share the conv trunk."""
+    s_mask: likewise for the scalars; shared: policy and value share the conv trunk;
+    coords: two extra input channels with every pixel's x and y (CoordConv)."""
 
     def __init__(self, width: int = 256, c: int = PLAIN_C, s: int = PLAIN_S,
                  heads: tuple = PLAIN_HEADS, follow: int | None = None, g: int = G,
                  convs: tuple = DEFAULT_CONVS, pool: int = 1, in_mask: tuple | None = None,
-                 s_mask: tuple | None = None, shared: bool = False):
+                 s_mask: tuple | None = None, shared: bool = False, coords: bool = False):
         super().__init__()
         convs = tuple(tuple(x) for x in convs)
         self.config = dict(width=width, c=c, s=s, heads=tuple(heads), follow=follow, g=g)
         if convs != DEFAULT_CONVS or pool != 1 or in_mask is not None or s_mask is not None or shared:
             self.config.update(convs=convs, pool=pool, in_mask=in_mask, s_mask=s_mask, shared=shared)
+        if coords:
+            self.config["coords"] = True
+        self.coords = coords
         self.follow = follow
         self.pool = pool
         self.shared = shared
         self.register_buffer("in_idx", torch.tensor(in_mask if in_mask is not None else range(c)), persistent=False)
         self.register_buffer("s_idx", torch.tensor(s_mask if s_mask is not None else range(s)), persistent=False)
-        cin, sin = len(self.in_idx), len(self.s_idx)
+        cin, sin = len(self.in_idx) + 2 * coords, len(self.s_idx)
 
         def trunk():
             layers, ch = [], cin
@@ -80,6 +84,11 @@ class Policy(nn.Module):
             scal = scal.index_select(1, self.s_idx)
         if self.pool > 1:
             grid = nn.functional.avg_pool2d(grid, self.pool)
+        if self.coords:     # CoordConv: x, y of every pixel (-1..1), so distances to the centre are visible
+            n, _, h, w = grid.shape
+            ys = torch.linspace(-1, 1, h, device=grid.device, dtype=grid.dtype)
+            xs = torch.linspace(-1, 1, w, device=grid.device, dtype=grid.dtype)
+            grid = torch.cat([grid, xs.view(1, 1, 1, w).expand(n, 1, h, w), ys.view(1, 1, h, 1).expand(n, 1, h, w)], 1)
         f = self.conv(grid)
         h = self.body(torch.cat([f, scal], dim=1))
         fv = f if self.shared else self.critic_conv(grid)
@@ -97,7 +106,7 @@ class Policy(nn.Module):
         """amp: run the network in bfloat16 (2-3x faster training on the GPU); the
         distributions and value are still built in float32, so PPO ratios stay exact."""
         if amp:
-            with torch.autocast("cuda", dtype=torch.bfloat16):
+            with torch.autocast("cuda", dtype=torch.bfloat16, cache_enabled=False):   # CUDA-graph safe
                 logits, value = self(grid, scal)
             logits, value = [l.float() for l in logits], value.float()
         else:

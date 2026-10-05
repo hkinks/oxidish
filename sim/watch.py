@@ -40,6 +40,7 @@ class Watcher:
         self.bots, self.past = bots, past
         self.groups, self.names, self.ver, self.ready, self.title = [], [], None, False, ""
         self.paused, self.new_round = False, False
+        self.held = None                   # the last actions (frame-skip nets hold theirs)
         self.round, self.round_step, self.rate = 0, 0, 0.0
         # per slot this round, kept on the GPU (no sync per step): splits, ejects (W), deaths
         self.counts = torch.zeros(3, players, device="cuda")
@@ -146,9 +147,14 @@ class Watcher:
 
     def actions(self, g: torch.Tensor, s: torch.Tensor) -> torch.Tensor:
         P = self.env.P
-        a = torch.zeros(P, 3, dtype=torch.long, device=g.device)
+        if self.held is None:
+            self.held = torch.zeros(P, 3, dtype=torch.long, device=g.device)
+        a = self.held
         for m, lo, hi in self.groups:
-            a[lo:hi] = m.act(g[lo:hi], s[lo:hi], amp=True)[0]
+            if self.round_step % m.skip == 0:     # frame-skip nets decide every m.skip steps
+                a[lo:hi] = m.act(g[lo:hi], s[lo:hi], amp=True)[0]
+            else:                                 # ... holding the move; split / eject fire once
+                a[lo:hi, 1:] = 0
         if self.bots:
             a[P - self.bots:] = scripted_actions(self.env.w, self.env.bot_split_prob)[0, P - self.bots:]
         return a

@@ -76,3 +76,20 @@ def scripted_actions(w: World, split_prob: float = 0.5, chase_range: float = 120
              & (torch.rand(B, P, generator=w.gen, device=dev) < split_prob))
     out = torch.stack([move, split.long(), torch.zeros_like(move)], -1)
     return out
+
+
+@torch.no_grad()
+def farmer_actions(env) -> torch.Tensor:
+    """The nearest-pellet farmer: per learner slot of `env` (a SimEnv), the heading (of 16) from
+    the last observation's view centre to the nearest pellet; never splits or ejects. [B*NL, 3].
+    Alone it reaches ~300 mass in 2 min (skip 2): the teacher for farming (rl.ppo_sim --bc-farmer-iters)."""
+    w = env.w
+    cx, cy, _ = env.frame                                                   # [B, NL]
+    d2 = torch.where(w.falive[:, None, :], (w.fx[:, None, :] - cx[..., None]) ** 2 + (w.fy[:, None, :] - cy[..., None]) ** 2,
+                     torch.full((w.B, cx.shape[1], w.F), 1e12, device=w.dev))
+    i = d2.argmin(-1)
+    fx, fy = w.fx.gather(1, i), w.fy.gather(1, i)
+    ang = torch.atan2(fy - cy, fx - cx)
+    move = (torch.round(ang / (2 * math.pi) * 16).long() % 16).reshape(-1)
+    z = torch.zeros_like(move)
+    return torch.stack([move, z, z], -1)

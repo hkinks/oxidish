@@ -35,9 +35,16 @@ class NNPolicy:
     def reset(self) -> None:
         if self.encoder:
             self.encoder.reset()
+        self.held = None
+
+    held = None   # frame-skip nets (sim-trained with skip k) decide every k steps and hold the target
 
     def act(self, s: Snapshot):
         g, sc, cx, cy, ext = self.encoder.encode(s) if self.encoder else encode(s)
+        skip = getattr(self.model, "skip", 1)
+        if self.held is not None and self.counters["steps"] % skip:
+            self.counters["steps"] += 1
+            return self.held
         a, _, _ = self.model.act(torch.from_numpy(g)[None], torch.from_numpy(sc)[None], self.greedy)
         move, split, eject = (int(v) for v in a[0])
         self.counters["steps"] += 1
@@ -48,4 +55,5 @@ class NNPolicy:
             x, y, sp, ej = A.decode(move, split, eject, cx, cy, ext)
         self.counters["ejects"] += ej
         self.counters["splits"] += sp
+        self.held = (x, y, False, False)        # split / eject fire once per decision
         return x, y, sp, ej

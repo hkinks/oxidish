@@ -61,4 +61,5 @@ def load(path: str | Path, device: str = "cpu") -> Policy:
     if any(not k.startswith("critic_") for k in missing):
         raise ValueError(f"checkpoint {path} lacks policy weights: {missing}")
     model.guide = ckpt.get("guide")  # champion spec for guided nets, else None
+    model.skip = ckpt.get("skip", 1)  # sim-trained nets: decides every `skip` steps, holding its move
     return model
