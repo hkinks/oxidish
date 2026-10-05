@@ -17,13 +17,20 @@ torch.set_num_threads(1)  # many agents per process; keep each one light
 class NNPolicy:
     def __init__(self, ckpt: str, greedy: bool | None = None):
         self.model = load(ckpt, "cpu").eval()
+        if self.model.config.get("kind") == "entity":   # sim-trained transformer over object tokens
+            from .ppo_sim import from_checkpoint          # pads older nets' inputs to the current layout
+            self.model = from_checkpoint(ckpt, "cpu").eval()
+            self.model.binary_eps = 0.0
         # Guided nets play greedily outside training: sampled exploration (random
         # overrides) costs far more than it's worth in real play; greedy = follow the
         # champion except where the net has learned an override is better.
         self.greedy = greedy if greedy is not None else self.model.follow is not None
         self.counters = {"ejects": 0, "splits": 0, "follow": 0, "steps": 0}
         self.encoder = None
-        if self.model.follow is not None:
+        if self.model.config.get("kind") == "entity":
+            from .entity_obs import RealEntityEncoder
+            self.encoder = RealEntityEncoder()
+        elif self.model.follow is not None:
             from .guided import GuidedEncoder
             self.encoder = GuidedEncoder(self.model.guide)
         else:

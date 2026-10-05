@@ -182,7 +182,8 @@ def act_sampled(model: Policy, g: torch.Tensor, s: torch.Tensor):
 LAYOUT_DEFAULTS = dict(league_frac=0.2, bot_frac=0.1, farm_frac=0.0, farm_players=8, hunt_frac=0.0,
                        hunt_players=10, flee_frac=0.0, flee_players=20, flee_hunters=10, giant_frac=0.0,
                        giants=4, giant_learners=2, farm_spawn=None, hunt_spawn=(400.0, 2000.0),
-                       prey_spawn=(20.0, 200.0), prey_nets=0.0, prey_net_spawn=None)
+                       prey_spawn=(20.0, 200.0), prey_nets=0.0, prey_net_spawn=None, flee_spawn=(100.0, 600.0),
+                       flee_hunter_spawn=(1500.0, 6000.0))
 
 
 def layout(env: SimEnv, lo: int, nb: int, cfg: dict) -> torch.Tensor:
@@ -232,8 +233,8 @@ def layout(env: SimEnv, lo: int, nb: int, cfg: dict) -> torch.Tensor:
         role[i, k:k + hn] = ROLE_BOT
         role[i, k + hn:] = ROLE_OFF
         env.active[lo + i, k + hn:] = False
-        env.spawn_mass[lo + i, :k] = t(100.0, 600.0)
-        env.spawn_mass[lo + i, k:k + hn] = t(1500.0, 6000.0)
+        env.spawn_mass[lo + i, :k] = t(*map(float, c["flee_spawn"]))
+        env.spawn_mass[lo + i, k:k + hn] = t(*map(float, c["flee_hunter_spawn"]))
     a += n_flee
     for i in range(a, a + n_giant):
         gb, gl = c["giants"], c["giant_learners"]

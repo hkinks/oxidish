@@ -177,6 +177,43 @@ def hunt_batch(nets: dict[str, str], B: int = 32, P: int = 16, steps: int = 1500
                 "splits_per_min": splits[k].item() / B / mins} for k, n in enumerate(names)}
 
 
+@torch.no_grad()
+def evade_batch(nets: dict[str, str], B: int = 32, P: int = 8, steps: int = 1500, start: float = 200.0,
+                hunters: tuple = (1500.0, 4000.0), seed: int = 8, dev: str = "cuda") -> dict:
+    """Farming under threat: per net `B` arenas, each with that net as one player (starting and
+    respawning at `start` mass) among P - 1 big scripted hunters (sim.bots: they chase anything they
+    can eat) that start and respawn at `hunters` mass. Per net: mean mass at the end of `steps`
+    (1500 = 2 min), and deaths per minute. One simulator for all nets."""
+    names = list(nets)
+    models = [from_checkpoint(path, dev).eval() for path in nets.values()]
+    for m in models:
+        m.binary_eps = 0.0
+    M = len(models)
+    kinds = {obs_kind(m) for m in models}
+    env = SimEnv(B=B * M, P=P, seed=seed, episode_steps=10 ** 9, curriculum_p=0.0, max_player_mass=0,
+                 obs="both" if len(kinds) > 1 else kinds.pop())
+    env.spawn_mass[:, 0] = torch.tensor([start, start], device=dev)
+    env.spawn_mass[:, 1:] = torch.tensor(list(hunters), device=dev)
+    g, s, _, _, _ = env.reset()
+    me = torch.arange(B * M, device=dev) * P
+    a = torch.zeros(B * M * P, 3, dtype=torch.long, device=dev)
+    deaths = torch.zeros(M, device=dev)
+    for step in range(steps):
+        a.view(B * M, P, 3)[:, 1:] = scripted_actions(env.w, env.bot_split_prob)[:, 1:]
+        for k, m in enumerate(models):
+            ix = me[k * B:(k + 1) * B]
+            if step % m.skip == 0:
+                a[ix] = m.act(obs_for(m, env, g)[ix], s[ix], amp=True)[0]
+                a[ix, 2] = 0
+            else:
+                a[ix, 1:] = 0
+        g, s, _, d, _ = env.step(a)
+        deaths += d[me].view(M, B).float().sum(1)
+    end = env.prev_mass[:, 0].view(M, B).mean(1)
+    mins = steps * 0.08 / 60
+    return {n: {"mass": end[k].item(), "deaths_per_min": deaths[k].item() / B / mins} for k, n in enumerate(names)}
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--nets", nargs="+", required=True, help="name=checkpoint")
