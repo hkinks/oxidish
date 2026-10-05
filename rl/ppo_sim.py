@@ -182,7 +182,7 @@ def act_sampled(model: Policy, g: torch.Tensor, s: torch.Tensor):
 LAYOUT_DEFAULTS = dict(league_frac=0.2, bot_frac=0.1, farm_frac=0.0, farm_players=8, hunt_frac=0.0,
                        hunt_players=10, flee_frac=0.0, flee_players=20, flee_hunters=10, giant_frac=0.0,
                        giants=4, giant_learners=2, farm_spawn=None, hunt_spawn=(400.0, 2000.0),
-                       prey_spawn=(20.0, 200.0), prey_nets=0.0)
+                       prey_spawn=(20.0, 200.0), prey_nets=0.0, prey_net_spawn=None)
 
 
 def layout(env: SimEnv, lo: int, nb: int, cfg: dict) -> torch.Tensor:
@@ -224,6 +224,8 @@ def layout(env: SimEnv, lo: int, nb: int, cfg: dict) -> torch.Tensor:
         role[i, P - n_net:] = ROLE_LEAGUE          # don't flee, so eating others pays from the first meeting
         env.spawn_mass[lo + i, :k] = t(*map(float, c["hunt_spawn"]))
         env.spawn_mass[lo + i, k:] = t(*map(float, c["prey_spawn"]))
+        if n_net and c["prey_net_spawn"]:          # e.g. big farmers: they pop on viruses into edible pieces
+            env.spawn_mass[lo + i, P - n_net:] = t(*map(float, c["prey_net_spawn"]))
     a += n_hunt
     for i in range(a, a + n_flee):
         k, hn = c["flee_players"], c["flee_hunters"]

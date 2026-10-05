@@ -48,15 +48,17 @@ from sim.env import SimEnv
 FIXED_HP = dict(league_frac=0.3, bot_frac=0.1, league_models=2, league_every=25, league_size=8,
                 save_every=20, vf_warmup=0, clip=0.2, target_kl=0.02, vf=0.5)
 # --objective hunt: hunting arenas only - a few hunters (learners, 300-3000 mass) among respawning prey
-# (20-300): 75% scripted bots (they flee: splitting is how to catch them), 25% frozen hall-of-fame nets
-# (farmers: they move but never flee - the easy first meals); mass is the
+# (20-300): half scripted bots (they flee: splitting is how to catch them), half frozen hall-of-fame
+# farmer nets at 300-5000 (they never flee and pop on viruses into edible pieces: big bait); mass is the
 # only reward and death costs nothing (fearless); fitness is the hunting test (sim.tourney.hunt_batch)
 HUNT_HP = dict(hunt_frac=1.0, farm_frac=0.0, flee_frac=0.0, giant_frac=0.0, league_frac=0.0, bot_frac=0.0,
-               hunt_players=3, hunt_spawn=[300.0, 3000.0], prey_spawn=[20.0, 300.0], prey_nets=0.25,
+               hunt_players=3, hunt_spawn=[300.0, 3000.0], prey_spawn=[20.0, 300.0], prey_nets=0.5,
+               prey_net_spawn=[300.0, 5000.0],
                league_pool="hof", league_models=4, death_scale=0.0, kill_reward=[0.0, 0.0],
                virus_reward=[0.0, 0.0, 0.0], growth=None, action_bonus=[0.0, 0.0], eject_explore=False)
 LAYOUT_KEYS = ("farm_frac", "hunt_frac", "flee_frac", "giant_frac", "league_frac", "bot_frac", "kill_reward",
                "virus_reward", "growth", "action_bonus", "hunt_players", "hunt_spawn", "prey_spawn", "prey_nets",
+               "prey_net_spawn",
                "league_pool", "death_scale")
 # --objective farm: farming arenas only (every slot a learner), mass is the only reward; fitness is
 # the free farming check (alone for 2 min, split / eject allowed: whatever farms fastest)
