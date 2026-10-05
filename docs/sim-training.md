@@ -202,6 +202,54 @@ Random discovery doesn't just take longer: it settles into a much worse habit.
 
 **fe1's setup didn't work:** with 4 players per arena, PPO swung between 112 and 251 between checks, because they eat each other and blur the farming signal. Solo arenas (P=1) are the clean setup.
 
+### fp2: the entity farming population, and virus eating discovered (2026-10-05, night)
+
+**Setup:** `rl.pbt --objective farm`, entity nets, solo arenas.
+- Fitness is both farming tests relative to their routines.
+- Selection runs every 10 minutes.
+- Seeded from fe3 (imitation, then PPO, ~270 from 10 mass).
+
+**Fixes that made it work, in order of discovery:**
+1. **PPO log-ratio bounded.** KL was infinite from iteration 1 for entity nets, so every update stopped after one pass. One extreme ratio wrecked fe3: 270 fell to 64 after imitation ended.
+2. **Move exploration floor (2%).** Imitation had made the move choice deterministic (p = 1 - 2e-7), so a single step could swing a probability by e^20.
+3. **Staggered per-arena restarts** (`--arena-steps 3000`) and farm start sizes 10-3000. Found by the research agent.
+   - Solo farmers never die, so they never respawned. The size curriculum never applied, and all lives ran the whole 27-minute episode in lockstep.
+   - Those lives stalled at ~270 mass, 88% of the time stuck. Most samples were noise.
+4. **Cut-off lives bootstrap** from V(s_t) instead of counting as deaths, and the early stop uses the clipped share instead of an outlier-driven KL.
+5. **An own cell at the centre is no pointer target:** "head toward myself" meant standing still.
+6. **Velocity memory reset** on arena restarts, and **dual-clip PPO**: one floor-rare sample could steer a whole update, and m1 froze that way.
+7. **Commitment inputs:** the last pointer target is flagged as a token feature, and the last direction and stay go in scalars 8-10.
+8. **Batched evaluation** (`sim.tourney.farm_batch`): the one-net-at-a-time evaluation never finished a round on a busy GPU.
+
+**Round 0 results (2 minutes alone; split and W allowed):**
+
+| Member | From 10 | Gain from 1000 |
+|---|---|---|
+| **m4** (d 256, lr 2e-4) | 267 | **+910** |
+| m2 | 280 | +267 |
+| m0 | 263 | +281 |
+| m5 | 270 | +266 |
+| routines | ~300 | +374 plain / +467 split-farming |
+
+**m4 discovered virus eating, not pellet split-farming.** Measured from 1000 mass over 2 minutes:
+- it eats 8.6 viruses per player (m2 eats 2.2);
+- that is ~860 of its +930 gain;
+- pellets add only ~+71 net of decay.
+
+Its many cells (~12 on average) come from virus pops; it chooses to split 0 times per minute. In the viewer, the "shaking" of a split m4 is its popped cells jostling: they can't merge for ~30 s, the server pushes them apart, and they all steer to one point. It is not indecision: there were 0% direction reversals between decisions.
+
+**What made it discoverable:**
+- **Big cells existed in training at last** (fix 3). Only a cell well above virus size can eat one, and before the fix no solo farmer got past ~270.
+- **The entity input lists every virus as a token** with its mass and a "we can eat it" flag, and the pointer makes "go to that virus" a single choice.
+- **The reward is mass however gained**, and virus mass counts.
+- **Evolution kept the lucky variant.** Only m4 found it: the wider transformer and the doubled lr. Selection copied it at once (m6 = m4 + ent 0.002). Which gene mattered is not yet known.
+- **Stable training** (fixes 1, 4, 6) meant one bad update didn't wipe it out.
+
+**Caveats:**
+- It is a real MultiOgar mechanic (eating a virus adds its mass, then pops the cell), so it works on our server.
+- Popped cells are easy prey, so it is only safe without enemies. The farming fitness rewards it fully, and a separate pellet-only measure is needed to judge pellet farming.
+- Virus supply limits it: a virus respawns at a rate of one per spawn event while below the minimum count.
+
 ## Evolution (`rl/evo.py`)
 
 Weights are learned by PPO. Evolution searches over the **design**.
