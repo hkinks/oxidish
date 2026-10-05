@@ -16,7 +16,7 @@ const path = require("path");
 
 const args = {port: 9001, bots: 8, map: 7000, sync: 2, seed: 0, agents: 0, "max-tps": 0,
               realtime: false, food: 0, verbose: false, follow: "", "log-players": 0,
-              "food-mult": 1, minions: 0};
+              "food-mult": 1, minions: 0, record: ""};
 for (let i = 2; i < process.argv.length; i++) {
     const key = process.argv[i].replace(/^--/, "");
     if (!(key in args)) throw new Error(`unknown option --${key}`);
@@ -117,6 +117,11 @@ Virus.prototype.onEaten = function (cell) {
 const origHandle = PacketHandler.prototype.handleMessage;
 PacketHandler.prototype.handleMessage = function (message) {
     const ws = this.socket;
+    if (!ws.isAgent && message.length === 1 && (message[0] === 17 || message[0] === 21)) {
+        // --record: count a human's split (17) / eject (21) presses since the last recorded step
+        if (message[0] === 17) ws.recSplits = (ws.recSplits || 0) + 1;
+        else ws.recEjects = (ws.recEjects || 0) + 1;
+    }
     if (message[0] === OP_AGENT && message.length === 1) {
         ws.isAgent = true;
         ws.ackTick = -1;
@@ -255,6 +260,46 @@ if (args["log-players"] > 0) {
                           c: pt.cells.length});
         }
         process.stdout.write(`[players] ${JSON.stringify({t: gs.tickCount, p: players})}\n`);
+    };
+}
+
+if (args.record) {
+    // Human players only (not agents, not minions): every step (--sync ticks) one JSON line per human
+    // into <record>/humans-<time>.jsonl.gz - the inputs (mouse target, split / eject presses since the
+    // last line) and everything the server sends that player (its view nodes), for imitation learning.
+    // Line: {t, n: name, m: [mouseX, mouseY], s: splits, w: ejects, mine: [[id, x, y, size]],
+    //        o: [[id, x, y, size, type (0 player 1 food 2 virus 3 ejected), owner name]], b: [l, r, t, b]}
+    const fs = require("fs"), zlib = require("zlib");
+    fs.mkdirSync(args.record, {recursive: true});
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const gz = zlib.createGzip();
+    gz.pipe(fs.createWriteStream(path.join(args.record, `humans-${stamp}.jsonl.gz`)));
+    process.on("SIGINT", () => gz.end(() => process.exit(0)));
+    process.on("SIGTERM", () => gz.end(() => process.exit(0)));
+    setInterval(() => gz.flush(), 10000);
+    const r = v => Math.round(v);
+    const origMainRec = gs.mainLoop.bind(gs);
+    gs.mainLoop = function () {
+        origMainRec();
+        if (gs.tickCount % args.sync !== 0) return;
+        const b = gs.border;
+        for (const ws of gs.clients) {
+            const pt = ws.playerTracker;
+            if (ws.isAgent || !pt || pt.isRemoved || pt.isMi || pt.isMinion || !pt.cells.length) continue;
+            const name = pt._name || "";
+            if (name === "minion") continue;
+            const mine = pt.cells.map(c => [c.nodeID, r(c.position.x), r(c.position.y), r(c._size)]);
+            const o = [];
+            for (const c of pt.viewNodes) {
+                if (c.owner === pt) continue;
+                o.push([c.nodeID, r(c.position.x), r(c.position.y), r(c._size), c.cellType,
+                        c.owner ? (c.owner._name || "") : ""]);
+            }
+            gz.write(JSON.stringify({t: gs.tickCount, n: name, m: [r(pt.mouse.x), r(pt.mouse.y)],
+                                     s: ws.recSplits || 0, w: ws.recEjects || 0, mine, o,
+                                     b: [b.minX, b.maxX, b.minY, b.maxY]}) + "\n");
+            ws.recSplits = ws.recEjects = 0;
+        }
     };
 }
 
