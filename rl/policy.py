@@ -15,7 +15,8 @@ torch.set_num_threads(1)  # many agents per process; keep each one light
 
 
 class NNPolicy:
-    def __init__(self, ckpt: str, greedy: bool | None = None):
+    def __init__(self, ckpt: str, greedy: bool | None = None, nosplit: bool = False):
+        self.nosplit = nosplit          # diagnostics: never split or eject (the net's move only)
         self.model = load(ckpt, "cpu").eval()
         if self.model.config.get("kind") == "entity":   # sim-trained transformer over object tokens
             from .ppo_sim import from_checkpoint          # pads older nets' inputs to the current layout
@@ -54,6 +55,8 @@ class NNPolicy:
             return self.held
         a, _, _ = self.model.act(torch.from_numpy(g)[None], torch.from_numpy(sc)[None], self.greedy)
         move, split, eject = (int(v) for v in a[0])
+        if self.nosplit:
+            split = eject = 0
         self.counters["steps"] += 1
         if self.encoder:
             self.counters["follow"] += self.model.follow is not None and move == self.model.follow

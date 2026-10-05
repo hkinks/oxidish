@@ -42,6 +42,7 @@ class AgentStats:
     counters: dict = field(default_factory=dict)  # policy skill usage (ejects, shots, ...)
     # one entry per cell of ours eaten by another player: who ate it and in what situation
     losses: list = field(default_factory=list)
+    popped: int = 0      # own virus pops: our cell count jumped by 3+ in one step without a split of ours
 
     @property
     def avg_mass(self) -> float:
@@ -148,6 +149,10 @@ class AgentClient:
                 self.stats.lives += 1
             self._alive = True
             mass = s.total_mass
+            n = len(s.mine)
+            if self._alive and n >= getattr(self, "_n_cells", n) + 3 and not getattr(self, "_split_sent", False):
+                self.stats.popped += 1
+            self._n_cells = n
             self.stats.steps_alive += 1
             self.stats.mass_ticks += mass * self.sync
             self.stats.peak_mass = max(self.stats.peak_mass, mass)

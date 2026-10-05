@@ -68,6 +68,10 @@ def parse_lineup(specs: list[str]) -> list[tuple[str, dict]]:
             key, path = key.split("=", 1)
             if path.startswith("jev:"):   # "jevbot=jev:runs/final_champion.json": Jev + a champion's routines
                 policy = {"kind": "jev", **json.loads(Path(path[4:]).read_text())}
+            elif path.startswith("greedy:"):   # "nng=greedy:runs/rl/x.pt": always the most likely action
+                policy = {"kind": "nn", "ckpt": path[7:], "greedy": True}
+            elif path.startswith("nosplit:"):  # "nns=nosplit:runs/rl/x.pt": the net with split / W masked off
+                policy = {"kind": "nn", "ckpt": path[8:], "nosplit": True}
             elif path.endswith(".pt"):  # neural network checkpoint
                 policy = {"kind": "nn", "ckpt": path}
             else:

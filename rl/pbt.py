@@ -86,7 +86,9 @@ GENERAL_HP = dict(farm_frac=0.3, hunt_frac=0.35, flee_frac=0.35, giant_frac=0.0,
 # drills against forgetting; no split bonus, no imitation; kickstarting (--teachers) fades as in general.
 # fitness = a real MultiOgar tournament every round (fresh seeds): members vs champ / r2g9 and the
 # server's bots, scored as log-mass margin over the rule-based champions in the same matches
-FFA_HP = dict(bot_frac=0.4, league_frac=0.25, farm_frac=0.1, hunt_frac=0.1, flee_frac=0.15, giant_frac=0.0,
+# no solo farming drills (and no farm teacher): there, eating viruses pays (fp2 found it), but in a real
+# game popping leaves pieces that the server's bots eat - the round-0 nets lost most mass that way
+FFA_HP = dict(bot_frac=0.5, league_frac=0.25, farm_frac=0.0, hunt_frac=0.1, flee_frac=0.15, giant_frac=0.0,
               farm_players=2, farm_spawn=[10.0, 3000.0], hunt_players=3, hunt_spawn=[300.0, 3000.0],
               prey_spawn=[20.0, 300.0], prey_nets=0.5, prey_net_spawn=[300.0, 5000.0], flee_players=10,
               flee_hunters=6, flee_spawn=[10.0, 3000.0], flee_hunter_spawn=[1500.0, 6000.0], flee_hunter_nets=0.5,
@@ -182,9 +184,11 @@ def ffa_eval(nets: dict, job: dict) -> dict:
     rows = play_many(specs, job.get("matches", 24), workers=job.get("workers", 8), seed_base=job["seed"])
     by: dict[str, dict[int, list[float]]] = {}
     dead: dict[str, list[float]] = {}
+    pops: dict[str, list[float]] = {}
     for r in rows:
         by.setdefault(r["policy"], {}).setdefault(r["seed"], []).append(r["log_mass"])
         dead.setdefault(r["policy"], []).append(r["deaths"])
+        pops.setdefault(r["policy"], []).append(r.get("popped", 0))
     mean = {k: {s: statistics.fmean(v) for s, v in d.items()} for k, d in by.items()}
     ref = {s: statistics.fmean(mean[n][s] for n in ("champ", "r2g9") if s in mean.get(n, {}))
            for s in set().union(*(mean.get(n, {}).keys() for n in ("champ", "r2g9")))}
@@ -198,7 +202,7 @@ def ffa_eval(nets: dict, job: dict) -> dict:
         res[k] = {"log_mass": statistics.fmean(margin),
                   "ci": 1.96 * statistics.stdev(margin) / math.sqrt(len(margin)) if len(margin) > 1 else 0.0,
                   "avg_mass": statistics.fmean(math.exp(mean[k][s]) for s in seeds),
-                  "deaths": statistics.fmean(dead[k]), "kills": 0.0,
+                  "deaths": statistics.fmean(dead[k]), "kills": 0.0, "popped": statistics.fmean(pops[k]),
                   "wins": sum(m > 0 for m in margin) / len(margin), "matches": len(seeds)}
     return {"results": res, "farm": {}, "long": {}, "rows": rows}
 
@@ -389,7 +393,8 @@ class Population:
                 continue
             if self.args.objective == "ffa":
                 log(f"  {name:<9} margin {r['log_mass']:+.3f} +-{r['ci']:.3f}  beats the rule bots in {r.get('wins', 0):.0%} "
-                    f"of {r.get('matches', 0)} matches  avg mass {r['avg_mass']:.0f}  deaths/match {r['deaths']:.2f}")
+                    f"of {r.get('matches', 0)} matches  avg mass {r['avg_mass']:.0f}  deaths/match {r['deaths']:.2f}  "
+                    f"virus pops/match {r.get('popped', 0):.1f}")
                 continue
             if self.args.objective == "evade":
                 log(f"  {name:<9} fitness {r['log_mass']:+.3f}  under threat: mass {r['avg_mass']:.0f} "

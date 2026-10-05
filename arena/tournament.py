@@ -31,7 +31,8 @@ def _play(index: int, specs: list[str], ticks: int, bots: int, map_size: int,
         server.terminate()
     return [{"policy": s.name.rsplit("-", 1)[0], "seed": seed, "avg_mass": s.avg_mass,
              "log_mass": math.log(max(s.avg_mass, 1.0)),
-             "peak_mass": s.peak_mass, "deaths": s.deaths, "kills": s.kills, "losses": s.losses}
+             "peak_mass": s.peak_mass, "deaths": s.deaths, "kills": s.kills, "losses": s.losses,
+             "counters": s.counters, "popped": s.popped}
             for s in stats]
 
 

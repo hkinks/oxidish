@@ -362,3 +362,10 @@ Surveyed GoBigger (OpenDILab, ICLR 2023), AgarCL (arXiv 2505.18347), the RPG pap
 - `arena.tournament`: `play_many`, `--out`, and the loss report.
 
 Run: see `ffa1` (pop 4, b 32, `--vram-gb 18`). Keep total GPU memory under ~26 GB: the 0x133 crash happened with VRAM nearly full.
+
+**ffa1 round 0 diagnosis** (real server, ffa1 round-0 best m2; `runs/bench/greedy_61000.json`, `nosplit_62000.json`):
+- **Greedy play is worse** than sampled (log-mass 4.95 vs 5.18), so sampled play stays.
+- **The net never splits** (0 splits in 3000 steps); masking split / W off changes nothing (5.02).
+- **Its losses are virus pops:** it loses 452 cells while holding 8+ cells, where champ loses 24. It pops 0.6x per 2 game-min; champ never does. The server's bots eat the pieces.
+- **Cause:** solo farm drills and the farm teacher (fp2) reward eating viruses, which is safe only when nobody can eat the pieces.
+- **Fix:** the ffa layout has no farm drills and no farm teacher (bot arenas 50%). The real-server matches now count own pops (`AgentStats.popped`), reported each round. A `greedy:` / `nosplit:` lineup prefix is available for diagnostics.
