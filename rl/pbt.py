@@ -103,6 +103,7 @@ class Population:
 
     # ---- state
     def load_state(self) -> dict:
+        """Resume from evo.json, or build generation 0 (from an rl.evo population or one --seed checkpoint)."""
         a = self.args
         if self.state_f.exists():
             st = json.loads(self.state_f.read_text())
@@ -140,6 +141,7 @@ class Population:
 
     # ---- members
     def make_learner(self, m: dict, k: int) -> Learner:
+        """Learner for member `m` owning arenas [k*b, (k+1)*b) of the shared env; its genome supplies hyper-parameters."""
         a = self.args
         hp = {**DEFAULT_HP, **m["genome"]["hp"], **FIXED_HP, "mb": a.mb}
         if a.objective == "farm":
@@ -161,6 +163,7 @@ class Population:
 
     # ---- evaluation
     def launch_eval(self):
+        """Snapshot every member and start the side evaluation process (training continues meanwhile)."""
         a, rnd = self.args, self.state["gen"]
         nets = {}
         for m, L in zip(self.state["members"], self.learners):
@@ -184,6 +187,7 @@ class Population:
         log(f"\n=== round {rnd}: evaluating {', '.join(nets)} (training continues)")
 
     def poll_eval(self):
+        """Start an evaluation when due; when a running one has finished, run the selection on its results."""
         if self.eval_proc is None:
             if time.time() - self.eval_t > self.args.eval_minutes * 60:
                 self.launch_eval()
@@ -292,6 +296,7 @@ class Population:
 
     # ---- main loop
     def run(self):
+        """Train all members together until --max-minutes; evaluation and selection happen inside the loop."""
         a = self.args
         g, s, _, _, v = self.env.reset()
         mem = self.state["members"]

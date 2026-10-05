@@ -160,6 +160,7 @@ def mutate(genome: dict, rng: random.Random, arch_p: float = 0.35, hp_kinds=HP_K
 
 
 def train_cmd(m: dict, name: str, args) -> list[str]:
+    """The rl.ppo_sim command line that trains member `m` for one generation."""
     hp = m["genome"]["hp"]
     cmd = [sys.executable, "-m", "rl.ppo_sim", "--run", f"{name}/{m['id']}",
            "--init", m["ckpt"], "--arch", json.dumps(m["genome"]["arch"]),

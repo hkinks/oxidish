@@ -23,6 +23,8 @@ from sim.env import SimEnv
 @torch.no_grad()
 def run(nets: dict[str, str], B: int = 16, P: int = 50, steps: int = 3000, bots: int = 5,
         seed: int = 123, dev: str = "cuda") -> dict:
+    """Shared tournament: the nets (name -> checkpoint) and `bots` scripted bots per arena fill B arenas of P
+    slots; returns per-net mass statistics (fitness = mean log of average mass)."""
     names = list(nets)
     models = [from_checkpoint(path, dev).eval() for path in nets.values()]
     for m in models:

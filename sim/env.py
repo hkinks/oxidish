@@ -237,6 +237,8 @@ class SimEnv:
 
     @torch.no_grad()
     def step(self, actions, observe: bool = True):
+        """Advance every arena one env step with `actions` [B*NL, 3] (see rl.actions).
+        Returns (grid, scalars, reward, done, alive); grid/scalars are None when observe=False."""
         w, B, P, NL, dev = self.w, self.B, self.P, self.NL, self.dev
         if not torch.is_tensor(actions):
             actions = torch.as_tensor(np.asarray(actions))

@@ -148,6 +148,7 @@ MAX_GRAPHS = 32   # each keeps its own activation memory; league snapshots come 
 
 
 def act_sampled(model: Policy, g: torch.Tensor, s: torch.Tensor):
+    """Sample actions for a batch; on CUDA with AMP it replays a CUDA graph (`GraphedAct`)."""
     if not AMP or not g.is_cuda or len(g) == 0:
         with torch.no_grad():
             return model.act(g if AMP else g.float(), s, amp=AMP)
@@ -306,6 +307,7 @@ class Learner:
 
     # ---- rollout
     def begin(self, T: int, gdim):
+        """Allocate (or reuse) the T-step rollout buffers before a collection."""
         N, dev = self.N, self.dev
         if getattr(self, "T", None) != T:      # buffers live across iterations (no allocator churn)
             self.T = T
@@ -360,6 +362,8 @@ class Learner:
 
     # ---- PPO
     def update(self):
+        """One PPO iteration on the finished rollout: GAE, then `epochs` of minibatch updates (plus the
+        distillation / farmer-imitation terms while active); saves and snapshots on schedule."""
         hp, model, T, N, dev = self.hp, self.model, self.T, self.N, self.dev
         self.it += 1
         it = self.it
@@ -441,6 +445,7 @@ class Learner:
             self.save(self.out / "latest.pt")
 
     def report(self, stats, n):
+        """Print the "it N ..." training line (other tools grep it) and write the TensorBoard scalars."""
         life = self.env.pop_stats(self.arenas)
         now = time.time()
         dt, self.t_last = now - self.t_last, now
