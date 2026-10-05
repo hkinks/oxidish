@@ -287,7 +287,8 @@ if (args.record) {
             const pt = ws.playerTracker;
             if (ws.isAgent || !pt || pt.isRemoved || pt.isMi || pt.isMinion || !pt.cells.length) continue;
             const name = pt._name || "";
-            if (name === "minion") continue;
+            // not MultiOgar's own bots, nor our AposBots (they connect like a browser)
+            if (name === "minion" || pt.isBot || /^apos-/.test(name)) continue;
             const mine = pt.cells.map(c => [c.nodeID, r(c.position.x), r(c.position.y), r(c._size)]);
             const o = [];
             for (const c of pt.viewNodes) {
