@@ -76,12 +76,16 @@ GENERAL_HP = dict(farm_frac=0.3, hunt_frac=0.35, flee_frac=0.35, giant_frac=0.0,
                   flee_hunters=6, flee_spawn=[10.0, 3000.0], flee_hunter_spawn=[1500.0, 6000.0], flee_hunter_nets=0.5,
                   league_pool="hof", league_models=4, death_scale=1.0, kill_reward=[0.0, 0.0],
                   virus_reward=[0.0, 0.0, 0.0], growth=None, action_bonus=[0.02, 0.0], adv_per_type=True,
-                  kick_lambda=1.0, kick_iters=300, kick_min=0.1)
+                  kick_lambda=1.0, kick_iters=300, kick_min=0.1,
+                  # imitation of recorded human play (rl/human_data.py), fading 0.5 -> 0.05 over 300 iterations
+                  human_data=str(ROOT / "runs" / "human" / "dataset.pt"), human_lambda=0.5, human_iters=300,
+                  human_min=0.05, human_batch=512, human_rare_weight=20.0)
 GENERAL_REFS = {"farm10": 288.0, "farm1000": 889.0, "hunt": 1000.0, "evade": 494.0}   # the specialists' scores
 LAYOUT_KEYS = ("farm_frac", "hunt_frac", "flee_frac", "giant_frac", "league_frac", "bot_frac", "kill_reward",
                "virus_reward", "growth", "action_bonus", "hunt_players", "hunt_spawn", "prey_spawn", "prey_nets",
                "prey_net_spawn", "flee_players", "flee_hunters", "flee_spawn", "flee_hunter_spawn", "flee_hunter_nets",
-               "farm_players", "adv_per_type", "kick_lambda", "kick_iters", "kick_min",
+               "farm_players", "adv_per_type", "kick_lambda", "kick_iters", "kick_min", "human_data",
+               "human_lambda", "human_iters", "human_min", "human_batch", "human_rare_weight",
                "league_pool", "death_scale")
 # --objective farm: farming arenas only (every slot a learner), mass is the only reward; fitness is
 # the free farming check (alone for 2 min, split / eject allowed: whatever farms fastest)

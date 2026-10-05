@@ -327,6 +327,12 @@ class Learner:
         # per-situation: each learner slot's arena kind; kickstarting teachers {arena kind: frozen net}
         self.ltype = env.arena_type[self.learn_idx // P]
         self.kick = {}
+        # human imitation (rl/human_data.py): recorded human frames and actions, pulled toward in
+        # every minibatch with a fading weight; rare split / eject presses weighted up
+        self.human = None
+        if hp.get("human_data") and Path(hp["human_data"]).exists():
+            d = torch.load(hp["human_data"], map_location=dev)
+            self.human = (d["ent"], d["scal"].float(), d["act"])
         if not (self.out / "league" / "it00000.pt").exists():
             self.save(self.out / "league" / "it00000.pt")
         self.t_last = time.time()
@@ -490,6 +496,18 @@ class Learner:
                                 tdists, _ = teacher.dists(gx, Sf[ix], amp=AMP)
                             kl_s = sum(torch.distributions.kl_divergence(td, sd_) for td, sd_ in zip(tdists, dists))
                             loss = loss + kick_w * (kl_s * w_).sum() / len(ix)
+                    if self.human is not None:
+                        hw = max(hp.get("human_min", 0.0), hp.get("human_lambda", 0.0) * (1 - prog * hp.get("kick_iters", 1)
+                                                                                          / max(hp.get("human_iters", 1), 1)))
+                        if hw > 0:
+                            he, hs, ha = self.human
+                            hi = torch.randint(0, len(ha), (hp.get("human_batch", 512),), device=dev)
+                            hd, _ = model.dists(he[hi], hs[hi], amp=AMP)
+                            up = hp.get("human_rare_weight", 20.0)
+                            l_h = -(hd[0].log_prob(ha[hi, 0]).mean()
+                                    + (hd[1].log_prob(ha[hi, 1]) * (1 + (up - 1) * ha[hi, 1])).mean()
+                                    + (hd[2].log_prob(ha[hi, 2]) * (1 + (up - 1) * ha[hi, 2])).mean())
+                            loss = loss + hw * l_h
                     if fade > 0:   # fading imitation of the move
                         loss = loss - fade * dists[0].log_prob(TAf[ix][:, 0]).mean()
                 self.opt.zero_grad(set_to_none=True)
