@@ -6,6 +6,7 @@
 | [training-plan.md](training-plan.md) | history of the arena, evolution, QD and real-server PPO work, with results |
 | [sim.md](sim.md) | the GPU simulator: mechanics, encoder, fidelity checks |
 | [sim-training.md](sim-training.md) | **current work:** PPO self-play in the simulator, the evolution loop, viewer, evaluation |
+| [code-map.md](code-map.md) | module roles and how the pieces fit |
 | [showcase.md](showcase.md) | the real-server showcase for playing against the bots |
 
 Layout:
