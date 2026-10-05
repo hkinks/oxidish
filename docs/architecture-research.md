@@ -55,3 +55,32 @@ Also cited, from memory and unverified: UPDeT (2101.08001, entity-token transfor
 **Our own evidence so far:**
 - 16 headings deciding every 160 ms farm as well as continuous aim (303 vs 266).
 - CoordConv did not help the grid net imitate (62% vs 61%).
+
+## Forgetting across modes (farm / hunt / evade): research shortlist (2026-10-05)
+
+**The observation:** specialists trained from one seed farmer forget the skills they don't practise.
+
+| Net | Farming from 10 | Gain from 1000 |
+|---|---|---|
+| seed farmer | 288 | +889 |
+| evader | 228 | +313 |
+| hunter | 102 | +251 |
+
+**Sources:** from the agent's memory, not fetched, so the IDs and claims are unverified: kickstarting (arXiv 1803.03835), Policy Distillation (1511.06295), Actor-Mimic (1511.06342), Distral (1707.04175), multi-task PopArt (1809.04474), PCGrad (2001.06782), Soft Modularization (2003.13661), CARE (2102.06177), Progress & Compress (1805.06370), AlphaStar (Nature 2019).
+
+**Recommendation:** no architecture change first. The modes can be told apart from the observation, so one net can switch implicitly as long as every mode keeps appearing in its training batches. Sequential phases alone would reproduce the forgetting.
+
+Ranked:
+1. **Interleaved multi-task PPO.**
+   - Every learner gets every arena type in every batch, through `layout`: about 1/3 solo farming (half from 10 mass, half from 1000), 1/3 prey arenas, 1/3 arenas with big hunters.
+   - An optional drill one-hot input is worth testing both with and without.
+   - Target: at least 90% of each specialist on its own test, confirmed on fresh seeds.
+2. **Kickstarting from the frozen specialists** on top of 1.
+   - Loss: `L = L_ppo + lambda * KL(pi_expert(arena type) || pi)` on each arena type's states, with lambda annealed from 1 to 0.1. It covers all heads, plus value regression to the expert critic.
+   - It is a dense anti-forgetting signal, at about 1.5x compute.
+3. **DAgger distillation into one generalist** as a fallback if 1 is unstable: label mixed-arena states with the matching expert, where evade overrides hunt; then fine-tune with PPO.
+4. **MoE**, only if 1 and 2 fall short: expert FFNs in the last transformer block with a top-1/2 router, or 3 head sets with a soft gate; each expert initialized from a specialist; a load-balancing loss. Risks: router collapse, and noisy routing under PPO.
+5. **Per-task advantage normalization or PopArt, plus PCGrad if gradients conflict.** A pellet is worth ~1e-3 per step while a kill is large, so an unnormalized sum favours hunting.
+6. **A manager over frozen specialists**, as a last resort: no forgetting, but 3x inference, and the frozen skills can't improve.
+
+**What large agents did:** AlphaStar and OpenAI Five each ended with one network trained on a broad distribution with a distillation-like anchor (AlphaStar's KL to its human prior). The exploiters were training opponents and were not merged in.
