@@ -105,6 +105,37 @@ def farm(nets: dict[str, str], B: int = 16, steps: int = 1500, seed: int = 5, de
     return out
 
 
+@torch.no_grad()
+def farm_batch(nets: dict[str, str], B: int = 64, steps: int = 1500, seed: int = 5, dev: str = "cuda",
+               free: bool = False, start: float = 10.0, gain: bool = False) -> dict:
+    """farm() for many nets at once: one simulator, `B` solo arenas per net (one pass instead of one
+    per net; same numbers up to the arenas' random draws)."""
+    names = list(nets)
+    models = [from_checkpoint(path, dev).eval() for path in nets.values()]
+    for m in models:
+        m.binary_eps = 0.0
+    kinds = {obs_kind(m) for m in models}
+    env = SimEnv(B=B * len(models), P=1, seed=seed, episode_steps=10 ** 9, curriculum_p=0.0,
+                 obs="both" if len(kinds) > 1 else kinds.pop())
+    if start > 10:
+        env.spawn_mass[:] = torch.tensor([start, start], device=dev)
+    g, s, _, _, _ = env.reset()
+    m0 = env.prev_mass.view(len(models), B).mean(1)
+    a = torch.zeros(B * len(models), 3, dtype=torch.long, device=dev)
+    for step in range(steps):
+        for k, m in enumerate(models):
+            ix = slice(k * B, (k + 1) * B)
+            if step % m.skip == 0:
+                a[ix] = m.act(obs_for(m, env, g)[ix], s[ix], amp=True)[0]
+                if not free:
+                    a[ix, 1:] = 0
+            else:
+                a[ix, 1:] = 0                # held between decisions: split / eject fire once
+        g, s, _, _, _ = env.step(a)
+    end = env.prev_mass.view(len(models), B).mean(1)
+    return {n: (end[k] - (m0[k] if gain else 0.0)).item() for k, n in enumerate(names)}
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--nets", nargs="+", required=True, help="name=checkpoint")

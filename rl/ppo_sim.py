@@ -184,7 +184,7 @@ def act_sampled(model: Policy, g: torch.Tensor, s: torch.Tensor):
 # ---- arena layout ------------------------------------------------------------------------------
 LAYOUT_DEFAULTS = dict(league_frac=0.2, bot_frac=0.1, farm_frac=0.0, farm_players=8, hunt_frac=0.0,
                        hunt_players=10, flee_frac=0.0, flee_players=20, flee_hunters=10, giant_frac=0.0,
-                       giants=4, giant_learners=2)
+                       giants=4, giant_learners=2, farm_spawn=None)
 
 
 def layout(env: SimEnv, lo: int, nb: int, cfg: dict) -> torch.Tensor:
@@ -216,6 +216,8 @@ def layout(env: SimEnv, lo: int, nb: int, cfg: dict) -> torch.Tensor:
     for i in range(a, a + n_farm):
         env.active[lo + i, c["farm_players"]:] = False
         role[i, c["farm_players"]:] = ROLE_OFF
+        if c["farm_spawn"]:      # farmers (re)start at this mass range: every size gets practice
+            env.spawn_mass[lo + i, :c["farm_players"]] = t(*map(float, c["farm_spawn"]))
     a += n_farm
     for i in range(a, a + n_hunt):
         k = c["hunt_players"]
@@ -271,6 +273,10 @@ class Learner:
         dev = self.dev = env.dev
         P = env.P
         model.binary_eps = hp.get("explore", 0.02)
+        # where the split / eject exploration floor applies (farming: W only wastes mass, and a
+        # split can only pay for a big cell)
+        model.split_explore_min_mass = hp.get("split_explore_min_mass", 70.0)
+        model.eject_explore = hp.get("eject_explore", True)
         self.opt = torch.optim.Adam(model.parameters(), lr=hp.get("lr", 1e-4), eps=1e-5, fused=True)
         env.set_reward(slice(lo, lo + nb), hp.get("virus_reward", (0, 0, 0)), hp.get("explore_reward", 0.0),
                        hp.get("kill_reward", (0, 0)), parse_growth(hp.get("growth")),
@@ -333,6 +339,7 @@ class Learner:
             self.Val = torch.zeros((T + 1, N), device=dev)
             self.Rew = torch.zeros((T, N), device=dev)
             self.Done = torch.zeros((T, N), device=dev)
+            self.Trunc = torch.zeros((T, N), device=dev)
             self.Valid = torch.zeros((T + 1, N), device=dev)
         if self.it < self.fade_until and getattr(self, "TAct", None) is None:
             self.TAct = torch.zeros((T, N, 3), dtype=torch.long, device=dev)
@@ -365,9 +372,10 @@ class Learner:
         for m, lx in zip(self.league_models, self.league_idx):
             acts[lx] = act_sampled(m, obs_for(m, self.env, g)[lx], s[lx])[0]
 
-    def record(self, t: int, r, d):
+    def record(self, t: int, r, d, tr=None):
         self.Rew[t] = r[self.learn_idx]
         self.Done[t] = d[self.learn_idx].float()
+        self.Trunc[t] = tr[self.learn_idx].float() if tr is not None else 0.0
 
     def finish(self, g, s, v):
         ix = self.learn_idx
@@ -386,8 +394,11 @@ class Learner:
         adv = torch.zeros((T, N), device=dev)
         last = torch.zeros(N, device=dev)
         for t in reversed(range(T)):
-            cont = (1 - self.Done[t]) * self.Valid[t + 1]
-            delta = self.Rew[t] + gamma * self.Val[t + 1] * cont - self.Val[t]
+            # a life cut short by a restart (not a death) keeps its value: bootstrap from V(s_t), the
+            # best estimate we have; the next state belongs to the restarted arena, so the chain stops
+            tr = self.Trunc[t]
+            cont = (1 - self.Done[t]) * (1 - tr) * self.Valid[t + 1]
+            delta = self.Rew[t] + gamma * (self.Val[t + 1] * cont + tr * self.Val[t]) - self.Val[t]
             last = delta + gamma * lam * cont * last
             adv[t] = last * self.Valid[t]
         ret = adv + self.Val[:T]
@@ -406,7 +417,9 @@ class Learner:
         fade = 0.0 if bc or it > self.fade_until else 1 - (it - self.bc_until) / max(self.fade_until - self.bc_until, 1)
         TAf = self.TAct.view(T * N, 3) if bc or fade > 0 else None
         for ep in range(hp.get("epochs", 3)):
-            if not bc and stats["kl"] and statistics.fmean(stats["kl"][-nmb:]) > hp.get("target_kl", 0.02):
+            # early stop on the share of clipped samples: the KL mean was driven by a few outliers
+            # (a near-deterministic policy) and stopped most updates after one pass
+            if not bc and stats["clip"] and statistics.fmean(stats["clip"][-nmb:]) > hp.get("clip_stop", 0.3):
                 break
             perm = ids[torch.randperm(n, device=dev)]
             # full minibatches only: a new batch size makes cudnn.benchmark re-tune every conv
@@ -501,15 +514,17 @@ def collect(env: SimEnv, learners: list[Learner], obs, T: int, skip: int):
             acts[bot_idx] = scripted_actions(env.w, env.bot_split_prob).reshape(-1, 3)[bot_idx]
         R = torch.zeros(A, device=dev)
         D = torch.zeros(A, dtype=torch.bool, device=dev)
+        Tr = torch.zeros(A, dtype=torch.bool, device=dev)
         for j in range(skip):
             if j == 1:                       # split / eject fire once per decision
                 acts = acts.clone()
                 acts[:, 1:] = 0
             g2, s2, r, d, v2 = env.step(acts, observe=j == skip - 1)
             R += torch.where(D, torch.zeros_like(r), r)    # after a death: the next life's
+            Tr |= env.trunc & ~D
             D |= d
         for L in learners:
-            L.record(t, R, D)
+            L.record(t, R, D & ~Tr, Tr)
         g, s, v = g2, s2, v2
     for L in learners:
         L.finish(g, s, v)
@@ -567,6 +582,11 @@ def main() -> None:
     p.add_argument("--explore-reward", type=float, default=0.0, help="bonus per new 500x500 square in a life")
     p.add_argument("--curriculum-p", type=float, default=0.5, help="share of respawns that start big")
     p.add_argument("--curriculum-mass", default="50,5000", help="their start mass range (log-uniform)")
+    p.add_argument("--arena-steps", type=int, default=0,
+                   help="each arena restarts on its own (staggered) clock after this many steps (0: off)")
+    p.add_argument("--farm-spawn", help="farm arenas: (re)start mass range, e.g. 10,3000")
+    p.add_argument("--split-explore-min-mass", type=float, default=70.0, help="split exploration floor from this mass")
+    p.add_argument("--no-eject-explore", action="store_true", help="no eject exploration floor")
     p.add_argument("--width", type=int, default=256)
     p.add_argument("--arch", help="architecture genes as JSON (rl.model.Policy kwargs: width, convs, pool, "
                    "in_mask, s_mask, shared); differs from --init's -> fresh net distilled from it")
@@ -615,6 +635,8 @@ def main() -> None:
                                          *LAYOUT_DEFAULTS)}
     hp.update(virus_reward=floats(args.virus_reward), kill_reward=floats(args.kill_reward),
               action_bonus=floats(args.action_bonus), growth=args.growth)
+    hp.update(farm_spawn=floats(args.farm_spawn) if args.farm_spawn else None,
+              split_explore_min_mass=args.split_explore_min_mass, eject_explore=not args.no_eject_explore)
     B, P, T = args.b, args.p, args.steps
     hof = []
     if args.hof:
@@ -623,7 +645,8 @@ def main() -> None:
     kinds = {obs_kind(m) for m in [model, *hof]}
     env = SimEnv(B=B, P=P, seed=args.seed, episode_steps=args.episode_steps, curriculum_p=args.curriculum_p,
                  curriculum_mass=tuple(float(x) for x in args.curriculum_mass.split(",")),
-                 obs_dtype=torch.float16, skip=args.skip, obs="both" if len(kinds) > 1 else kinds.pop())
+                 obs_dtype=torch.float16, skip=args.skip, obs="both" if len(kinds) > 1 else kinds.pop(),
+                 arena_steps=args.arena_steps)
     L = Learner(args.run, model, env, 0, B, hp, out, hof=hof, teacher=teacher,
                 distill_iters=args.distill_iters if teacher is not None else 0, start_it=args.start_it,
                 skip=args.skip)

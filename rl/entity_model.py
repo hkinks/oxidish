@@ -77,6 +77,8 @@ class EntityPolicy(nn.Module):
 
     binary_eps: float = 0.0
     EXPLORE_MIN_LOG_MASS = math.log(70) / 8
+    split_explore_min_mass: float = 70.0      # the split floor applies from this mass (farming: 300)
+    eject_explore: bool = True                # the eject floor (farming: off, W only wastes mass)
 
     def dists(self, ent, scal, amp: bool = False):
         if amp:
@@ -94,8 +96,10 @@ class EntityPolicy(nn.Module):
             out = [Categorical(probs=(1 - self.binary_eps) * logits[0].softmax(-1) + self.binary_eps * uni)]
         else:
             out = [Categorical(logits=logits[0])]
-        eps = self.binary_eps * (scal[:, 0] >= self.EXPLORE_MIN_LOG_MASS).float().unsqueeze(-1)
-        for l in logits[1:]:
+        big = scal[:, 0] >= math.log(max(self.split_explore_min_mass, 1.0)) / 8      # scal[0] = log(total mass) / 8
+        eps_split = self.binary_eps * big.float().unsqueeze(-1)
+        eps_eject = self.binary_eps * (scal[:, 0] >= self.EXPLORE_MIN_LOG_MASS).float().unsqueeze(-1) * float(self.eject_explore)
+        for l, eps in zip(logits[1:], (eps_split, eps_eject)):
             if self.binary_eps > 0:
                 out.append(Categorical(probs=(1 - eps) * l.softmax(-1) + eps / 2))
             else:

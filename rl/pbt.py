@@ -50,7 +50,8 @@ FIXED_HP = dict(league_frac=0.3, bot_frac=0.1, league_models=2, league_every=25,
 # --objective farm: farming arenas only (every slot a learner), mass is the only reward; fitness is
 # the free farming check (alone for 2 min, split / eject allowed: whatever farms fastest)
 FARM_HP = dict(farm_frac=1.0, hunt_frac=0.0, flee_frac=0.0, giant_frac=0.0, league_frac=0.0, bot_frac=0.0,
-               kill_reward=[0.0, 0.0], virus_reward=[0.0, 0.0, 0.0], growth=None, action_bonus=[0.0, 0.0])
+               kill_reward=[0.0, 0.0], virus_reward=[0.0, 0.0, 0.0], growth=None, action_bonus=[0.0, 0.0],
+               farm_spawn=[10.0, 3000.0], split_explore_min_mass=300.0, eject_explore=False, epochs=6)
 
 
 def log(msg: str):
@@ -59,7 +60,7 @@ def log(msg: str):
 
 def eval_job(path: str) -> None:
     """Side process: tournament + checks on frozen snapshots; writes the JSON result."""
-    from sim.tourney import farm, run
+    from sim.tourney import farm, farm_batch, run
     job = json.loads(Path(path).read_text())
     setup_cuda(job.get("vram_gb", 5.0))
     nets = job["nets"]
@@ -67,8 +68,8 @@ def eval_job(path: str) -> None:
     if job.get("objective") == "farm":
         # fitness: both farming tests (split / eject allowed), each relative to its routine:
         # from 10 mass (routines ~300) and the gain from 1000 mass (routine +374; split-farming +467)
-        small = farm(nets, B=64, free=True)
-        big = farm(nets, B=64, free=True, start=1000.0, gain=True)
+        small = farm_batch(nets, B=64, free=True)
+        big = farm_batch(nets, B=64, free=True, start=1000.0, gain=True)
         res = {k: {"log_mass": math.log(max((small[k] / 300 + max(big[k], 1.0) / 374) / 2, 1e-3)), "ci": 0.0,
                    "avg_mass": small[k], "gain_1000": big[k], "deaths": 0.0, "kills": 0.0} for k in nets}
         Path(job["out"]).write_text(json.dumps({"results": res, "farm": small, "long": {}}, indent=1))
@@ -95,6 +96,7 @@ class Population:
         self.env = SimEnv(B=pop * args.b, P=args.p, seed=args.rng, episode_steps=20000, curriculum_p=args.curriculum_p,
                           curriculum_mass=tuple(float(x) for x in args.curriculum_mass.split(",")),
                           obs="both" if len(kinds) > 1 or args.hof_extra else kinds.pop(),
+                          arena_steps=args.arena_steps,
                           obs_dtype=torch.float16, skip=args.skip)
         self.hof_files = [f for d in [self.root / "hof", *map(Path, args.hof_extra)] for f in sorted(d.glob("*.pt"))]
         self.hof = [frozen(from_checkpoint(str(f), self.dev)) for f in self.hof_files]
@@ -313,6 +315,7 @@ def main() -> None:
     p.add_argument("--max-minutes", type=float, default=0)
     p.add_argument("--curriculum-p", type=float, default=0.15, help="share of learner respawns that start big (50-5000)")
     p.add_argument("--curriculum-mass", default="50,5000", help="their start mass range (log-uniform)")
+    p.add_argument("--arena-steps", type=int, default=0, help="per-arena restart clock in steps (staggered; 0: off)")
     p.add_argument("--arch", help="genome architecture of a new population (JSON), e.g. '{\"kind\": \"entity\"}'")
     p.add_argument("--objective", choices=("arena", "farm"), default="arena",
                    help="farm: farming arenas only, mass reward, fitness = free farming check")

@@ -51,7 +51,7 @@ class SimEnv:
                  virus_reward: tuple = (0.0, 0.0, 0.0), explore_reward: float = 0.0,
                  kill_reward: tuple = (0.0, 0.0), growth: dict | None = None,
                  action_bonus: tuple = (0.0, 0.0), skip: int = 1, max_player_mass: float = 100_000.0,
-                 obs: str = "grid"):
+                 obs: str = "grid", arena_steps: int = 0):
         self.w = World(B, P, device, map_size, food_mult, max_eject, seed)
         self.B, self.P = B, P
         self.NL = P if n_learn is None else n_learn
@@ -99,6 +99,13 @@ class SimEnv:
         self.spawn_mass = torch.zeros(B, P, 2, device=d)
         self.l_kills = torch.zeros(B, NL, device=d)
         self.whale_resets = 0
+        # arena_steps > 0: every arena restarts on its own clock after this many steps; the clocks start
+        # staggered, so a batch mixes every stage of a life (solo farmers never die, so without this
+        # all lives run the whole episode in lockstep and the respawn curriculum never applies)
+        self.arena_steps = arena_steps
+        self.age = torch.randint(0, max(arena_steps, 1), (B,), device=self.w.dev)
+        # lives cut short by a restart (episode end, arena clock, whale) in the last step: not deaths
+        self.trunc = torch.zeros(B * self.NL, dtype=torch.bool, device=self.w.dev)
 
     def set_reward(self, arenas, virus_reward=(0.0, 0.0, 0.0), explore_reward=0.0, kill_reward=(0.0, 0.0),
                    growth: dict | None = None, action_bonus=(0.0, 0.0)):
@@ -288,6 +295,7 @@ class SimEnv:
         if self._any_bonus:
             rew = rew + self.r_bonus[0] * self._acted[0] + self.r_bonus[1] * self._acted[1]
         done = died.clone()
+        trunc = torch.zeros_like(died)
         live = alive_now | pa
         # virus shots / pops of this step
         vs = w.vstat[:, :, :NL].clone()
@@ -331,6 +339,7 @@ class SimEnv:
         self.py_steps += 1
         if self.py_steps >= self.episode_steps:      # all arenas run in lockstep, so they truncate together
             done = done | alive_now
+            trunc = trunc | alive_now
             self._finish(alive_now, torch.zeros_like(alive_now))
             w.reset()
             self._drop_inactive()
@@ -346,9 +355,21 @@ class SimEnv:
             if bool(whale.any()):
                 cut = whale[:, None] & self.prev_alive
                 done = done | cut
+                trunc = trunc | cut
                 self._finish(cut, torch.zeros_like(cut))
                 self.reset_arenas(whale)
                 self.whale_resets += int(whale.sum())
+        if self.arena_steps:
+            self.age += 1
+            if self.py_steps % 25 == 0:
+                old = self.age >= self.arena_steps                                # [B]
+                if bool(old.any()):
+                    cut = old[:, None] & self.prev_alive
+                    done, trunc = done | cut, trunc | cut
+                    self._finish(cut, torch.zeros_like(cut))
+                    self.reset_arenas(old)
+                    self.age.masked_fill_(old, 0)
+        self.trunc = trunc.reshape(-1)
         if not observe:
             return None, None, rew.reshape(-1), done.reshape(-1), self.prev_alive.reshape(-1)
         grid, scal, alive, mass = self._observe()
