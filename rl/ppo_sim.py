@@ -187,7 +187,7 @@ LAYOUT_DEFAULTS = dict(league_frac=0.2, bot_frac=0.1, farm_frac=0.0, farm_player
                        hunt_players=10, flee_frac=0.0, flee_players=20, flee_hunters=10, giant_frac=0.0,
                        giants=4, giant_learners=2, farm_spawn=None, hunt_spawn=(400.0, 2000.0),
                        prey_spawn=(20.0, 200.0), prey_nets=0.0, prey_net_spawn=None, flee_spawn=(100.0, 600.0),
-                       flee_hunter_spawn=(1500.0, 6000.0))
+                       flee_hunter_spawn=(1500.0, 6000.0), flee_hunter_nets=0.0)
 
 
 def layout(env: SimEnv, lo: int, nb: int, cfg: dict) -> torch.Tensor:
@@ -235,6 +235,8 @@ def layout(env: SimEnv, lo: int, nb: int, cfg: dict) -> torch.Tensor:
     for i in range(a, a + n_flee):
         k, hn = c["flee_players"], c["flee_hunters"]
         role[i, k:k + hn] = ROLE_BOT
+        n_net = round(hn * c["flee_hunter_nets"])      # hunters played by frozen nets (league / hall of fame)
+        role[i, k + hn - n_net:k + hn] = ROLE_LEAGUE
         role[i, k + hn:] = ROLE_OFF
         env.active[lo + i, k + hn:] = False
         env.spawn_mass[lo + i, :k] = t(*map(float, c["flee_spawn"]))

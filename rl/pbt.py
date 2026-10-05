@@ -61,11 +61,12 @@ HUNT_HP = dict(hunt_frac=1.0, farm_frac=0.0, flee_frac=0.0, giant_frac=0.0, leag
 # (dying costs everything farmed); fitness = farming under threat (sim.tourney.evade_batch) x farming alone
 EVADE_HP = dict(flee_frac=1.0, farm_frac=0.0, hunt_frac=0.0, giant_frac=0.0, league_frac=0.0, bot_frac=0.0,
                 flee_players=12, flee_hunters=6, flee_spawn=[10.0, 3000.0], flee_hunter_spawn=[1500.0, 6000.0],
+                flee_hunter_nets=0.5, league_pool="hof", league_models=4,
                 death_scale=1.0, kill_reward=[0.0, 0.0], virus_reward=[0.0, 0.0, 0.0], growth=None,
                 action_bonus=[0.0, 0.0], eject_explore=False, split_explore_min_mass=300.0)
 LAYOUT_KEYS = ("farm_frac", "hunt_frac", "flee_frac", "giant_frac", "league_frac", "bot_frac", "kill_reward",
                "virus_reward", "growth", "action_bonus", "hunt_players", "hunt_spawn", "prey_spawn", "prey_nets",
-               "prey_net_spawn", "flee_players", "flee_hunters", "flee_spawn", "flee_hunter_spawn",
+               "prey_net_spawn", "flee_players", "flee_hunters", "flee_spawn", "flee_hunter_spawn", "flee_hunter_nets",
                "league_pool", "death_scale")
 # --objective farm: farming arenas only (every slot a learner), mass is the only reward; fitness is
 # the free farming check (alone for 2 min, split / eject allowed: whatever farms fastest)
@@ -136,6 +137,11 @@ class Population:
                           obs_dtype=torch.float16, skip=args.skip)
         self.hof_files = [f for d in [self.root / "hof", *map(Path, args.hof_extra)] for f in sorted(d.glob("*.pt"))]
         self.hof = [frozen(from_checkpoint(str(f), self.dev)) for f in self.hof_files]
+        # hunt / evade: the league slots (prey nets, hunter nets) are played by the --hof-extra populations'
+        # halls of fame only, rescanned every round: an arms race with the other population
+        self.opp_files: list[Path] = []
+        self.opp: list = []
+        self.refresh_opponents()
         self.learners = [self.make_learner(m, k) for k, m in enumerate(self.state["members"])]
         self.eval_proc, self.eval_t = None, time.time()
 
@@ -195,7 +201,8 @@ class Population:
         else:
             teacher = frozen(parent)
         logf = open(ROOT / "logs" / f"pbt-{a.name}-{m['id']}.txt", "a", encoding="utf-8")
-        L = Learner(f"{a.name}/{m['id']}", model, self.env, k * a.b, a.b, hp, self.root / m["id"], hof=self.hof,
+        opp = self.opp if a.objective in ("hunt", "evade") and self.opp else self.hof
+        L = Learner(f"{a.name}/{m['id']}", model, self.env, k * a.b, a.b, hp, self.root / m["id"], hof=opp,
                     teacher=teacher, distill_iters=30 if teacher is not None else 0, start_it=m["it"], log=logf,
                     skip=a.skip)
         L.print(f"--- {m['id']} in arenas {k * a.b}-{(k + 1) * a.b - 1}: {m['origin']}  genome {m['genome']}"
@@ -237,6 +244,7 @@ class Population:
             return
         self.eval_proc, self.eval_t = None, time.time()
         self.eval_log.close()
+        self.refresh_opponents()
         if not self.eval_out.exists():
             log(f"  evaluation failed: see logs/pbt-{self.args.name}-eval.txt")
             return
@@ -295,6 +303,22 @@ class Population:
         if ev["long"]:
             log(f"  long game ({self.args.long_steps * 0.08 / 60:.0f} min from mass 10), avg mass: " +
                 "  ".join(f"{k} {v:.0f}" for k, v in sorted(ev["long"].items(), key=lambda kv: -kv[1])))
+
+    def refresh_opponents(self, per_dir: int = 3):
+        """Load the newest `per_dir` checkpoints of every --hof-extra dir into self.opp, in place (the
+        learners hold this list; their league picks from it at the next reassignment)."""
+        want = [f for d in map(Path, self.args.hof_extra) for f in sorted(d.glob("*.pt"))[-per_dir:]]
+        if want == self.opp_files:
+            return
+        have = dict(zip(self.opp_files, self.opp))
+        self.opp[:] = [have[f] if f in have else frozen(from_checkpoint(str(f), self.dev)) for f in want]
+        new = [f.stem for f in want if f not in have]
+        self.opp_files = want
+        if new and self.learners_ready():
+            log(f"  opponents refreshed: {', '.join(f'{f.parent.parent.name}/{f.stem}' for f in want)}")
+
+    def learners_ready(self) -> bool:
+        return bool(getattr(self, "learners", None))
 
     def promote_to_hof(self, rnd: int, best: dict):
         """Copy the round's best member's evaluated checkpoint to the hall of fame (disk, state, league)."""
