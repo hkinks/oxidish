@@ -19,13 +19,11 @@ from rl.guided import GuidedEncoder
 
 def snapshot(w, b, p):
     K = w.K
-    sl = slice(p*K, (p+1)*K)
     al = w.calive[b].cpu().numpy(); cx = w.cx[b].cpu().numpy(); cy = w.cy[b].cpu().numpy()
     r2 = w.cr2[b].cpu().numpy(); cid = w.cid[b].cpu().numpy()
     size = np.sqrt(r2)
     mine = [Cell(int(cid[i]), float(int(cx[i])), float(int(cy[i])), float(int(size[i])), "mine", f"p{p}") for i in range(p*K,(p+1)*K) if al[i]]
     # view box
-    n = len(mine)
     ids = [i for i in range(p*K,(p+1)*K) if al[i]]
     ccx = np.mean(cx[ids]); ccy = np.mean(cy[ids])
     ssum = size[ids].sum(); sc = max(min(64/ssum,1)**.4, .15)

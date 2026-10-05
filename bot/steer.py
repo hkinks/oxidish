@@ -13,8 +13,6 @@ SPLIT_KILL_RATIO = 2.6   # a cell this much heavier can split onto us
 SPLIT_RANGE = DEFAULT.split_range  # kept for the Jev strategist's state description
 AIM_DISTANCE = 600       # how far ahead of the cell the mouse is placed
 
-MODES = ("farm", "hunt", "flee", "hide")
-
 
 @dataclass
 class Plan:
