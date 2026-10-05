@@ -140,27 +140,44 @@ def farm_batch(nets: dict[str, str], B: int = 64, steps: int = 1500, seed: int =
 
 @torch.no_grad()
 def hunt_batch(nets: dict[str, str], B: int = 32, P: int = 16, steps: int = 1500, start: float = 1000.0,
-               prey: tuple = (20.0, 300.0), seed: int = 6, dev: str = "cuda") -> dict:
+               prey: tuple = (20.0, 300.0), seed: int = 6, dev: str = "cuda", prey_nets: list | None = None) -> dict:
     """Hunting test: per net `B` arenas, each with that net as one hunter starting at `start` mass among
-    P - 1 scripted prey (sim.bots: they flee threats) that start and respawn at `prey` mass. Per net:
-    mass gained in `steps` (1500 = 2 min), kills and splits per minute. One simulator for all nets."""
+    P - 1 prey that start and respawn at `prey` mass: scripted bots (sim.bots: they flee threats) and,
+    with `prey_nets` (checkpoints, e.g. the evaders' newest), the second half of the prey played by those
+    nets in turn - prey that has learned to run. Per net: mass gained in `steps` (1500 = 2 min), kills
+    and splits per minute. One simulator for all nets."""
     names = list(nets)
     models = [from_checkpoint(path, dev).eval() for path in nets.values()]
-    for m in models:
+    preys = [from_checkpoint(path, dev).eval() for path in (prey_nets or [])]
+    for m in models + preys:
         m.binary_eps = 0.0
     M = len(models)
-    kinds = {obs_kind(m) for m in models}
+    kinds = {obs_kind(m) for m in models + preys}
     env = SimEnv(B=B * M, P=P, seed=seed, episode_steps=10 ** 9, curriculum_p=0.0, max_player_mass=0,
                  obs="both" if len(kinds) > 1 else kinds.pop())
     env.spawn_mass[:, 0] = torch.tensor([start, start], device=dev)
     env.spawn_mass[:, 1:] = torch.tensor(list(prey), device=dev)
     g, s, _, _, _ = env.reset()
     hunters = torch.arange(B * M, device=dev) * P                 # slot 0 of every arena
+    half = P // 2                                                  # prey slots half..P-1: the prey nets
+    prey_groups = []
+    if preys:
+        slots = (torch.arange(B * M, device=dev)[:, None] * P + torch.arange(half, P, device=dev)[None]).reshape(-1)
+        prey_groups = [(pm, slots[j::len(preys)]) for j, pm in enumerate(preys)]
     m0 = env.prev_mass[:, 0].view(M, B).mean(1)
     a = torch.zeros(B * M * P, 3, dtype=torch.long, device=dev)
     splits = torch.zeros(M, device=dev)
     for step in range(steps):
         a.view(B * M, P, 3)[:, 1:] = scripted_actions(env.w, env.bot_split_prob)[:, 1:]
+        for pm, ix in prey_groups:
+            if step % pm.skip == 0:
+                pa = pm.act(obs_for(pm, env, g)[ix], s[ix], amp=True)[0]
+                pa[:, 2] = 0
+                pm._held = pa
+            pa = pm._held.clone()
+            if step % pm.skip:
+                pa[:, 1:] = 0
+            a[ix] = pa
         for k, m in enumerate(models):
             ix = hunters[k * B:(k + 1) * B]
             if step % m.skip == 0:

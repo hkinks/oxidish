@@ -95,7 +95,7 @@ def eval_job(path: str) -> None:
         Path(job["out"]).write_text(json.dumps({"results": res, "farm": small, "long": {}}, indent=1))
         return
     if job.get("objective") == "hunt":
-        hb = hunt_batch(nets, B=32)
+        hb = hunt_batch(nets, B=32, prey_nets=job.get("prey_nets"))
         res = {k: {"log_mass": v["gain"] / 1000, "ci": 0.0, "avg_mass": v["gain"], "kills": v["kills_per_min"],
                    "splits_per_min": v["splits_per_min"], "deaths": 0.0} for k, v in hb.items()}
         Path(job["out"]).write_text(json.dumps({"results": res, "farm": {}, "long": {}}, indent=1))
@@ -224,7 +224,10 @@ class Population:
         self.eval_nets = nets
         job = {"nets": nets, "eval_b": a.eval_b, "p": a.p, "steps": a.eval_steps, "seed": 7000 + rnd,
                "long_steps": a.long_steps, "out": str(self.root / "eval" / f"g{rnd:03d}.json"), "vram_gb": 5.0,
-               "objective": a.objective}
+               "objective": a.objective,
+               # hunting test: half the prey = the first --hof-extra population's newest nets (the evaders)
+               "prey_nets": [str(f) for f in sorted(Path(a.hof_extra[0]).glob("*.pt"))[-3:]]
+               if a.objective == "hunt" and a.hof_extra else None}
         jf = self.root / "eval" / f"g{rnd:03d}_job.json"
         jf.write_text(json.dumps(job))
         self.eval_out = Path(job["out"])
@@ -280,7 +283,7 @@ class Population:
     def log_results(self, rnd: int, res: dict, ev: dict):
         """The "--- round N results" block of the log (other tools grep its lines)."""
         log(f"--- round {rnd} results" + {"farm": " (fitness: free farming, 2 min alone, split / eject allowed)",
-                                           "hunt": " (fitness: hunting test, 1000 mass among 15 fleeing prey, 2 min)",
+                                           "hunt": " (fitness: hunting test, 1000 mass among 15 prey - half scripted, half the evaders' newest nets - 2 min)",
                                            "evade": " (fitness: 200 mass among 7 big hunters x farming alone, 2 min each)"
                                            }.get(self.args.objective, ""))
         for name, r in sorted(res.items(), key=lambda kv: -kv[1]["log_mass"]):
