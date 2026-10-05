@@ -68,8 +68,10 @@ def run(nets: dict[str, str], B: int = 16, P: int = 50, steps: int = 3000, bots:
 
 
 @torch.no_grad()
-def farm(nets: dict[str, str], B: int = 16, steps: int = 1500, seed: int = 5, dev: str = "cuda") -> dict:
+def farm(nets: dict[str, str], B: int = 16, steps: int = 1500, seed: int = 5, dev: str = "cuda",
+         free: bool = False) -> dict:
     """Farming alone: one player per arena, no enemies, no splits/ejects; mean mass after `steps`.
+    free=True: the net may split and eject too (smaller cells move faster: farming speed by any means).
     (For scale: path "script" is the nearest-pellet farmer, sim.bots.farmer_actions, deciding
     every 2 steps: ~300 mass.)"""
     out = {}
@@ -86,7 +88,10 @@ def farm(nets: dict[str, str], B: int = 16, steps: int = 1500, seed: int = 5, de
                     a = farmer_actions(env)
             elif step % m.skip == 0:
                 a = m.act(g, s, amp=True)[0]
-            a[:, 1:] = 0
+            if not free or m is None:
+                a[:, 1:] = 0
+            elif step % m.skip:
+                a[:, 1:] = 0        # held between decisions: split / eject fire once
             g, s, _, _, _ = env.step(a)
         out[name] = env.prev_mass.mean().item()
     return out

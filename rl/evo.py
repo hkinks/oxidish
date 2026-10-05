@@ -38,7 +38,12 @@ DEFAULT_HP = {"lr": 1e-4, "ent": 0.001, "gamma": 0.998, "explore": 0.02, "kill_r
 CH_MINE = 2   # our own cells: always visible to the net
 
 
-def mutate(genome: dict, rng: random.Random, arch_p: float = 0.35) -> tuple[dict, str]:
+HP_KINDS = ["lr", "ent", "gamma", "explore", "kill", "virus", "explore_reward", "epochs", "farm", "hunt", "hunt",
+            "flee", "giant", "growth", "growth", "bonus", "bonus"]
+FARM_HP_KINDS = ["lr", "lr", "ent", "ent", "gamma", "explore", "explore", "explore_reward", "epochs"]
+
+
+def mutate(genome: dict, rng: random.Random, arch_p: float = 0.35, hp_kinds=HP_KINDS) -> tuple[dict, str]:
     """One or two random changes; returns the child genome and a description."""
     g = copy.deepcopy(genome)
     arch, hp = g["arch"], g["hp"]
@@ -83,7 +88,7 @@ def mutate(genome: dict, rng: random.Random, arch_p: float = 0.35) -> tuple[dict
                 arch["shared"] = not arch["shared"]
                 notes.append(f"shared {arch['shared']}")
         else:
-            kind = rng.choice(["lr", "ent", "gamma", "explore", "kill", "virus", "explore_reward", "epochs", "farm", "hunt", "hunt", "flee", "giant", "growth", "growth", "bonus", "bonus"])
+            kind = rng.choice(hp_kinds)
             if kind == "lr":
                 hp["lr"] = min(5e-4, max(2e-5, hp["lr"] * rng.choice([0.5, 0.7, 1.4, 2])))
                 notes.append(f"lr {hp['lr']:.1e}")

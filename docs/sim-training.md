@@ -128,24 +128,47 @@ Where the speed came from:
 - **The effect:** after ~30 minutes, most training slots were dead. Valid samples fell from 8,850 to ~1,300 per iteration, and the old evolution runs show the same symptom (about a third valid).
 - **The fix:** `SimEnv(max_player_mass=100_000)` restarts an arena when a player passes 100k mass, and rl.pbt uses curriculum 0.15. With these, players stay ~100% alive in 6000-step tests.
 
-## Farming specialist (f1)
+## Farming (2026-10-05)
+
+**Measured farming speed:** mass after 2 minutes alone, from mass 10, 32 arenas.
+
+| Player | Mass |
+|---|---|
+| perfect mouse on the nearest pellet (continuous aim) | 266 |
+| nearest pellet, our 16 headings, deciding every step / 2 steps / 4 steps | 256 / **303** / 245 |
+| cluster routine: each heading scored by pellets ahead, `exp(-d/150) * cos^2` | **318** |
+| cluster routine, lam 300, cos^8 | 303 |
+| the scripted sim bot (sim.bots.scripted_actions) | 33 (gets stuck: stops eating after ~500 steps) |
+| f1 after imitating the nearest-pellet routine, sampled / greedy | 252 / 233 |
+| every earlier net (s1, e1 generations) | 20-60 |
+
+**Lessons:**
+- **The action space is not the limit.** 16 headings and a decision every 160 ms farm as well as continuous aim.
+- **The nets were never shown how to farm.** In crowded arenas the per-pellet reward drowns in fights and deaths. Imitation (DAgger, `--bc-farmer-iters`) lifts a net from 60 to ~250-284 in ~100 iterations.
+- **Imitation needs a high learning rate.** At lr 1e-4 it barely moves (offline: 35% heading accuracy after 600 steps, 61% at lr 1e-3).
+  - A bug kept `--bc-farmer-iters` out of the trainer's settings, so the first f1 run never imitated at all.
+- **CoordConv** (`coords` gene: x/y input channels) made no difference to imitation (62% vs 61%).
+- **Plain PPO after imitation slowly loses the skill:** 284 at iteration 120 down to 228 by iteration 440, with 8 learners per arena competing for food and eating each other. So imitation is only a starting point, and farming must be selected for directly.
+
+**f1** (the imitation run):
 
 ```
 uv run python -m rl.ppo_sim --run f1 --init runs/rl/e1/hof/g003_m9.pt --b 128 --p 8 --farm-frac 1 --farm-players 8     --league-frac 0 --bot-frac 0 --skip 2 --bc-farmer-iters 150 --bc-lr 1e-3 --farm-eval-every 20 --curriculum-p 0.3     --explore 0 --vf-warmup 0 --ent 0.003 --vram-gb 12
 ```
 
-- **The teacher:** the scripted sim bot farms only 33 alone (it gets stuck), so the teacher is `sim.bots.farmer_actions`: the heading to the nearest pellet, ~300 mass.
-- **Imitation (DAgger):** the net plays, and the farmer labels its states. It runs at lr 1e-3; at the PPO rate of 1e-4 imitation barely moves (35% accuracy after 600 steps offline).
-- **Results** (2 minutes alone):
+Its best checkpoint, iteration 120, is saved as `runs/rl/f1_seed.pt`.
 
-  | Net | Mass |
-  |---|---|
-  | f1 after imitation | **250-284** |
-  | the farmer | ~300 |
-  | every earlier net | 20-60 |
+**fp1, the farming population** (`rl.pbt --objective farm`), runs from that seed:
 
-  PPO afterwards holds ~250-260.
-- **CoordConv** (`coords` gene: x/y input channels) made no difference to imitation (62% vs 61%).
+```
+uv run python -m rl.pbt --name fp1 --objective farm --seed runs/rl/f1_seed.pt --pop 6 --b 64 --p 4 --skip 2     --eval-minutes 10 --vram-gb 20 >> logs/pbt-fp1.txt 2>&1
+```
+
+- **Arenas and reward:** farming arenas only (4 learners each) and mass as the only reward.
+- **Exploration stays on:** the split/eject floor from 70 mass, and entropy.
+- **Fitness is the free farming check** (`sim.tourney.farm(free=True)`), where split and W are allowed, because smaller cells move faster: the nets may find faster farming than any routine.
+- **Mutations** (`rl.evo.FARM_HP_KINDS`): lr, entropy, gamma, exploration floor, explore reward, epochs, and architecture.
+- **Stopping rule:** it runs until the best free-farming score stops improving.
 
 ## Evolution (`rl/evo.py`)
 

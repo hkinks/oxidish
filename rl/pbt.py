@@ -39,12 +39,18 @@ from pathlib import Path
 import torch
 
 from rl.common import ROOT
-from rl.evo import DEFAULT_ARCH, DEFAULT_HP, mutate
+import math
+
+from rl.evo import DEFAULT_ARCH, DEFAULT_HP, FARM_HP_KINDS, HP_KINDS, mutate
 from rl.ppo_sim import Learner, collect, from_checkpoint, frozen, new_model, setup_cuda
 from sim.env import SimEnv
 
 FIXED_HP = dict(league_frac=0.3, bot_frac=0.1, league_models=2, league_every=25, league_size=8,
                 save_every=20, vf_warmup=0, lam=0.95, clip=0.2, target_kl=0.02, vf=0.5)
+# --objective farm: farming arenas only (every slot a learner), mass is the only reward; fitness is
+# the free farming check (alone for 2 min, split / eject allowed: whatever farms fastest)
+FARM_HP = dict(farm_frac=1.0, hunt_frac=0.0, flee_frac=0.0, giant_frac=0.0, league_frac=0.0, bot_frac=0.0,
+               kill_reward=[0.0, 0.0], virus_reward=[0.0, 0.0, 0.0], growth=None, action_bonus=[0.0, 0.0])
 
 
 def log(msg: str):
@@ -58,6 +64,12 @@ def eval_job(path: str) -> None:
     setup_cuda(job.get("vram_gb", 5.0))
     nets = job["nets"]
     mem = {k: v for k, v in nets.items() if k != "hof_last"}
+    if job.get("objective") == "farm":
+        free = farm(nets, B=32, free=True)
+        res = {k: {"log_mass": math.log(max(v, 1.0)), "ci": 0.0, "avg_mass": v, "deaths": 0.0, "kills": 0.0}
+               for k, v in free.items()}
+        Path(job["out"]).write_text(json.dumps({"results": res, "farm": farm(mem, B=32), "long": {}}, indent=1))
+        return
     res = run(nets, B=job["eval_b"], P=job["p"], steps=job["steps"], seed=job["seed"])
     out = {"results": res, "farm": farm(mem)}
     out["long"] = {k: v["avg_mass"] for k, v in run(mem, B=4, P=job["p"], steps=job["long_steps"],
@@ -104,8 +116,9 @@ class Population:
                 raise SystemExit("--seed or --from-evo is required for a new population")
             base = {"arch": DEFAULT_ARCH, "hp": DEFAULT_HP}
             members = []
+            kinds = FARM_HP_KINDS if a.objective == "farm" else HP_KINDS
             for k in range(a.pop):
-                g, note = (copy.deepcopy(base), "seed") if k == 0 else mutate(base, self.rng)
+                g, note = (copy.deepcopy(base), "seed") if k == 0 else mutate(base, self.rng, hp_kinds=kinds)
                 members.append({"id": f"m{k}", "genome": g, "ckpt": a.seed, "it": 0, "seed": 100 + k,
                                 "origin": note, "history": []})
             st = {"gen": 0, "members": members, "next_id": a.pop, "log": [], "hof": []}
@@ -123,6 +136,8 @@ class Population:
     def make_learner(self, m: dict, k: int) -> Learner:
         a = self.args
         hp = {**DEFAULT_HP, **m["genome"]["hp"], **FIXED_HP, "mb": a.mb}
+        if a.objective == "farm":
+            hp.update(FARM_HP, farm_players=a.p)
         model = new_model(**m["genome"]["arch"]).to(self.dev)
         parent = from_checkpoint(m["ckpt"], self.dev)
         teacher = None
@@ -151,7 +166,8 @@ class Population:
             nets["hof_last"] = str(hof_files[-1])
         self.eval_nets = nets
         job = {"nets": nets, "eval_b": a.eval_b, "p": a.p, "steps": a.eval_steps, "seed": 7000 + rnd,
-               "long_steps": a.long_steps, "out": str(self.root / "eval" / f"g{rnd:03d}.json"), "vram_gb": 5.0}
+               "long_steps": a.long_steps, "out": str(self.root / "eval" / f"g{rnd:03d}.json"), "vram_gb": 5.0,
+               "objective": a.objective}
         jf = self.root / "eval" / f"g{rnd:03d}_job.json"
         jf.write_text(json.dumps(job))
         self.eval_out = Path(job["out"])
@@ -178,14 +194,16 @@ class Population:
     def select(self, ev: dict):
         rnd, res = self.state["gen"], ev["results"]
         members = self.state["members"]
-        log(f"--- round {rnd} results")
+        log(f"--- round {rnd} results" + (" (fitness: free farming, 2 min alone, split / eject allowed)"
+                                          if self.args.objective == "farm" else ""))
         for name, r in sorted(res.items(), key=lambda kv: -kv[1]["log_mass"]):
             log(f"  {name:<9} log_mass {r['log_mass']:.3f} +-{r['ci']:.3f}  mass {r['avg_mass']:.0f}  "
                 f"deaths {r['deaths']:.2f}  kills {r['kills']:.2f}  splits/min {r.get('splits_per_min', 0):.2f}")
         log("  farming alone, mass after 2 min (nearest-pellet routine ~320): " +
             "  ".join(f"{k} {v:.0f}" for k, v in sorted(ev["farm"].items(), key=lambda kv: -kv[1])))
-        log(f"  long game ({self.args.long_steps * 0.08 / 60:.0f} min from mass 10), avg mass: " +
-            "  ".join(f"{k} {v:.0f}" for k, v in sorted(ev["long"].items(), key=lambda kv: -kv[1])))
+        if ev["long"]:
+            log(f"  long game ({self.args.long_steps * 0.08 / 60:.0f} min from mass 10), avg mass: " +
+                "  ".join(f"{k} {v:.0f}" for k, v in sorted(ev["long"].items(), key=lambda kv: -kv[1])))
         ids = {m["id"] for m in members}
         ranking = [k for k, _ in sorted(res.items(), key=lambda kv: -kv[1]["log_mass"]) if k in ids or k == "hof_last"]
         ranked = [next(m for m in members if m["id"] == k) for k in ranking if k in ids]
@@ -219,7 +237,8 @@ class Population:
             log(f"  {m['id']} (new architecture) protected this round")
         for j, dead in enumerate(losers):
             par = parents[j % len(parents)]
-            g, note = mutate(par["genome"], self.rng)
+            g, note = mutate(par["genome"], self.rng,
+                             hp_kinds=FARM_HP_KINDS if self.args.objective == "farm" else HP_KINDS)
             cid = f"m{self.state['next_id']}"
             self.state["next_id"] += 1
             same = g["arch"] == par["genome"]["arch"]
@@ -282,6 +301,8 @@ def main() -> None:
     p.add_argument("--hof-extra", nargs="*", default=[], help="more hall-of-fame dirs (league opponents only)")
     p.add_argument("--max-minutes", type=float, default=0)
     p.add_argument("--curriculum-p", type=float, default=0.15, help="share of learner respawns that start big (50-5000)")
+    p.add_argument("--objective", choices=("arena", "farm"), default="arena",
+                   help="farm: farming arenas only, mass reward, fitness = free farming check")
     p.add_argument("--rng", type=int, default=1)
     p.add_argument("--vram-gb", type=float, default=20.0)
     args = p.parse_args()
