@@ -40,7 +40,7 @@ CH_MINE = 2   # our own cells: always visible to the net
 
 HP_KINDS = ["lr", "ent", "gamma", "explore", "kill", "virus", "explore_reward", "epochs", "farm", "hunt", "hunt",
             "flee", "giant", "growth", "growth", "bonus", "bonus"]
-HUNT_HP_KINDS = ["lr", "ent", "gamma", "explore", "explore", "epochs", "lam", "lam", "split_min"]
+HUNT_HP_KINDS = ["lr", "ent", "gamma", "explore", "explore", "epochs", "lam", "lam", "split_min", "fun", "fun"]
 FARM_HP_KINDS = ["lr", "ent", "gamma", "explore", "explore", "explore_reward", "epochs", "lam", "lam",
                  "split_min", "split_min", "farm_spawn"]
 
@@ -152,6 +152,9 @@ def mutate(genome: dict, rng: random.Random, arch_p: float = 0.35, hp_kinds=HP_K
             elif kind == "hunt":
                 hp["hunt_frac"] = rng.choice([x for x in (0.0, 0.1, 0.2, 0.3) if x != hp.get("hunt_frac", 0.15)])
                 notes.append(f"hunt drills {hp['hunt_frac']:.0%} of arenas")
+            elif kind == "fun":           # reward per executed split: how much the genome likes splitting
+                hp["fun"] = rng.choice([x for x in (0.0, 0.02, 0.05, 0.1) if x != hp.get("fun", 0.02)])
+                notes.append(f"split fun {hp['fun']}")
             elif kind == "lam":           # credit horizon: a split pays 15-30 s (100-190 decisions) later
                 hp["lam"] = rng.choice([x for x in (0.95, 0.97, 0.99) if x != hp.get("lam", 0.95)])
                 notes.append(f"lambda {hp['lam']}")

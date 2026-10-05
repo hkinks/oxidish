@@ -229,6 +229,8 @@ class Population:
         hp = {**DEFAULT_HP, "lam": 0.95, **farm, **m["genome"]["hp"], **FIXED_HP, "mb": a.mb}
         if farm:
             hp.update({"farm_players": a.p, **{k: farm[k] for k in LAYOUT_KEYS if k in farm}})
+            if "fun" in m["genome"]["hp"]:     # the genome's taste for splitting overrides the objective's bonus
+                hp["action_bonus"] = [m["genome"]["hp"]["fun"], hp["action_bonus"][1]]
         model = new_model(**m["genome"]["arch"]).to(self.dev)
         parent = from_checkpoint(m["ckpt"], self.dev)
         teacher = None
