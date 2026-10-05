@@ -345,7 +345,7 @@ def exp_view(quick):
 
 def exp_virus(quick):
     """A mass-500 cell looks for a virus and runs into it; compare the pop."""
-    mass, size = 500, int(math.sqrt(500 * 100))
+    size = int(math.sqrt(500 * 100))  # mass 500
     waypoints = [(2500, 2500), (-2500, 2500), (-2500, -2500), (2500, -2500), (0, 0)]
 
     def pol(k, obs):

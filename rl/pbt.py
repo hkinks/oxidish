@@ -29,6 +29,7 @@ logs/pbt-<name>-<member>.txt (training lines), TensorBoard <name>/<member>.
 import argparse
 import copy
 import json
+import math
 import random
 import shutil
 import subprocess
@@ -39,7 +40,6 @@ from pathlib import Path
 import torch
 
 from rl.common import ROOT
-import math
 
 from rl.evo import DEFAULT_ARCH, DEFAULT_HP, FARM_HP_KINDS, HP_KINDS, mutate
 from rl.ppo_sim import Learner, collect, from_checkpoint, frozen, new_model, setup_cuda
@@ -198,8 +198,34 @@ class Population:
         self.select(json.loads(self.eval_out.read_text()))
 
     def select(self, ev: dict):
+        """One selection round: rank the evaluated members, promote the best to the hall of fame,
+        replace the bottom half by mutated copies of the top half (see the module docstring)."""
         rnd, res = self.state["gen"], ev["results"]
         members = self.state["members"]
+        self.log_results(rnd, res, ev)
+        ids = {m["id"] for m in members}
+        ranking = [k for k, _ in sorted(res.items(), key=lambda kv: -kv[1]["log_mass"]) if k in ids or k == "hof_last"]
+        ranked = [next(m for m in members if m["id"] == k) for k in ranking if k in ids]
+        for m in ranked:
+            m["history"].append({"gen": rnd, **res[m["id"]], "farm": ev["farm"].get(m["id"]),
+                                 "long_mass": ev["long"].get(m["id"])})
+        best = ranked[0]
+        self.promote_to_hof(rnd, best)
+        self.state["log"].append({"gen": rnd, "results": res, "farm": ev["farm"], "long": ev["long"],
+                                  "best": best["id"], "time": time.time()})
+        n_keep = max(1, len(members) // 2)
+        grace = [m for m in ranked if m.get("new_arch_gen") == rnd]
+        losers = [m for m in ranked[n_keep:] if m not in grace]
+        parents = self.pick_parents(ranking, losers, n_keep)
+        for m in grace:
+            log(f"  {m['id']} (new architecture) protected this round")
+        for j, dead in enumerate(losers):
+            self.replace_member(dead, parents[j % len(parents)], rnd)
+        self.state["gen"] = rnd + 1
+        self.save_state()
+
+    def log_results(self, rnd: int, res: dict, ev: dict):
+        """The "--- round N results" block of the log (other tools grep its lines)."""
         log(f"--- round {rnd} results" + (" (fitness: free farming, 2 min alone, split / eject allowed)"
                                           if self.args.objective == "farm" else ""))
         for name, r in sorted(res.items(), key=lambda kv: -kv[1]["log_mass"]):
@@ -215,23 +241,18 @@ class Population:
         if ev["long"]:
             log(f"  long game ({self.args.long_steps * 0.08 / 60:.0f} min from mass 10), avg mass: " +
                 "  ".join(f"{k} {v:.0f}" for k, v in sorted(ev["long"].items(), key=lambda kv: -kv[1])))
-        ids = {m["id"] for m in members}
-        ranking = [k for k, _ in sorted(res.items(), key=lambda kv: -kv[1]["log_mass"]) if k in ids or k == "hof_last"]
-        ranked = [next(m for m in members if m["id"] == k) for k in ranking if k in ids]
-        for m in ranked:
-            m["history"].append({"gen": rnd, **res[m["id"]], "farm": ev["farm"].get(m["id"]),
-                                 "long_mass": ev["long"].get(m["id"])})
-        best = ranked[0]
+
+    def promote_to_hof(self, rnd: int, best: dict):
+        """Copy the round's best member's evaluated checkpoint to the hall of fame (disk, state, league)."""
         hof_f = self.root / "hof" / f"g{rnd:03d}_{best['id']}.pt"
         shutil.copy(self.eval_nets[best["id"]], hof_f)
         self.state["hof"].append({"file": str(hof_f), "genome": best["genome"], "from": best["id"]})
         self.hof.append(frozen(from_checkpoint(str(hof_f), self.dev)))
-        self.state["log"].append({"gen": rnd, "results": res, "farm": ev["farm"], "long": ev["long"],
-                                  "best": best["id"], "time": time.time()})
-        # parents: the top half of the ranking, the last hall-of-fame net included (if its genome is known)
-        n_keep = max(1, len(members) // 2)
-        grace = [m for m in ranked if m.get("new_arch_gen") == rnd]
-        losers = [m for m in ranked[n_keep:] if m not in grace]
+
+    def pick_parents(self, ranking: list, losers: list, n_keep: int) -> list[dict]:
+        """The top half of the ranking (minus the replaced), the last hall-of-fame net included if its
+        genome is known. Each parent: {id, genome, ckpt[, it]}."""
+        members = self.state["members"]
         hof_prev = self.state["hof"][-2] if len(self.state["hof"]) > 1 else None
         parents = []
         for k in ranking:
@@ -244,31 +265,30 @@ class Population:
             elif all(k != m["id"] for m in losers):
                 m = next(m for m in members if m["id"] == k)
                 parents.append({"id": k, "genome": m["genome"], "ckpt": self.eval_nets[k], "it": m["it"]})
-        for m in grace:
-            log(f"  {m['id']} (new architecture) protected this round")
-        for j, dead in enumerate(losers):
-            par = parents[j % len(parents)]
-            g, note = mutate(par["genome"], self.rng,
-                             hp_kinds=FARM_HP_KINDS if self.args.objective == "farm" else HP_KINDS)
-            cid = f"m{self.state['next_id']}"
-            self.state["next_id"] += 1
-            same = g["arch"] == par["genome"]["arch"]
-            child = {"id": cid, "genome": g, "ckpt": par["ckpt"], "it": par.get("it", 0) if same else 0,
-                     "seed": self.rng.randrange(10 ** 6), "origin": f"r{rnd} child of {par['id']}: {note}",
-                     "history": [], **({} if same else {"new_arch_gen": rnd + 1})}
-            k = members.index(dead)
-            old = self.learners[k]
-            old.save(old.out / "latest.pt")
-            old.tb.close()
-            old.log_f.close()
-            members[k] = child
-            self.learners[k] = self.make_learner(child, k)
-            mask = torch.zeros(self.env.B, dtype=torch.bool, device=self.dev)
-            mask[k * self.args.b:(k + 1) * self.args.b] = True
-            self.env.reset_arenas(mask)
-            log(f"  {dead['id']} out -> {cid} = {par['id']} + {note}")
-        self.state["gen"] = rnd + 1
-        self.save_state()
+        return parents
+
+    def replace_member(self, dead: dict, par: dict, rnd: int):
+        """Swap `dead` for a mutated child of `par`: new learner, its arenas restarted."""
+        members = self.state["members"]
+        g, note = mutate(par["genome"], self.rng,
+                         hp_kinds=FARM_HP_KINDS if self.args.objective == "farm" else HP_KINDS)
+        cid = f"m{self.state['next_id']}"
+        self.state["next_id"] += 1
+        same = g["arch"] == par["genome"]["arch"]
+        child = {"id": cid, "genome": g, "ckpt": par["ckpt"], "it": par.get("it", 0) if same else 0,
+                 "seed": self.rng.randrange(10 ** 6), "origin": f"r{rnd} child of {par['id']}: {note}",
+                 "history": [], **({} if same else {"new_arch_gen": rnd + 1})}
+        k = members.index(dead)
+        old = self.learners[k]
+        old.save(old.out / "latest.pt")
+        old.tb.close()
+        old.log_f.close()
+        members[k] = child
+        self.learners[k] = self.make_learner(child, k)
+        mask = torch.zeros(self.env.B, dtype=torch.bool, device=self.dev)
+        mask[k * self.args.b:(k + 1) * self.args.b] = True
+        self.env.reset_arenas(mask)
+        log(f"  {dead['id']} out -> {cid} = {par['id']} + {note}")
 
     # ---- main loop
     def run(self):

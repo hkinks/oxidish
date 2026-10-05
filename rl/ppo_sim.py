@@ -106,23 +106,6 @@ def from_checkpoint(path: str, dev: str) -> Policy:
     return model
 
 
-def grow_inputs(src: Policy, **arch) -> Policy | None:
-    """`src` with architecture changes that only add input channels (coords): the new channels
-    get zero weights, so the net plays exactly as before. None if `arch` changes anything else."""
-    dst = new_model(**{**arch_of(src), **arch}).to(next(src.parameters()).device)
-    sd, own = src.state_dict(), dst.state_dict()
-    for k, v in own.items():
-        if k not in sd:
-            return None
-        if sd[k].shape != v.shape:
-            if not (k.endswith("conv.0.weight") and sd[k].shape[1] < v.shape[1] and sd[k].shape[2:] == v.shape[2:]):
-                return None
-            sd[k] = torch.cat([sd[k], sd[k].new_zeros(v.shape[0], v.shape[1] - sd[k].shape[1], *v.shape[2:])], 1)
-    dst.load_state_dict(sd)
-    dst.skip = getattr(src, "skip", 1)
-    return dst
-
-
 def frozen(m: Policy) -> Policy:
     m = copy.deepcopy(m).eval()
     m.binary_eps = 0.0
@@ -525,7 +508,8 @@ def setup_cuda(vram_gb: float, seed: int = 7):
     torch.manual_seed(seed)
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
+    """All command-line flags of `python -m rl.ppo_sim` (defaults are the single source of truth)."""
     p = argparse.ArgumentParser()
     p.add_argument("--run", default="s1")
     p.add_argument("--init", help="checkpoint to start from (guided or sim-layout)")
@@ -589,12 +573,11 @@ def main() -> None:
     p.add_argument("--seed", type=int, default=7)
     p.add_argument("--vram-gb", type=float, default=12.0,
                    help="hard VRAM cap: past it torch raises OOM instead of Windows spilling into system RAM")
-    args = p.parse_args()
-    global AMP
-    AMP = not args.no_amp
-    setup_cuda(args.vram_gb, args.seed)
-    dev = "cuda"
-    out = ROOT / "runs" / "rl" / args.run
+    return p
+
+
+def build_start_model(args, dev: str) -> tuple[Policy, Policy | None]:
+    """The network to train and, when `--arch` differs from `--init`'s, the frozen parent to distil from."""
     teacher = None
     if args.arch:
         model = new_model(**json.loads(args.arch)).to(dev)
@@ -608,6 +591,11 @@ def main() -> None:
                       f"{args.distill_iters} iterations", flush=True)
     else:
         model = from_checkpoint(args.init, dev) if args.init else new_model(args.width).to(dev)
+    return model, teacher
+
+
+def build_hparams(args) -> dict:
+    """Learner hyper-parameters: the flags `Learner` reads, with comma-separated ones parsed to lists."""
     floats = lambda x: [float(v) for v in x.split(",")]
     hp = {k: getattr(args, k) for k in ("lr", "ent", "gamma", "lam", "clip", "epochs", "mb", "target_kl", "vf",
                                          "vf_warmup", "explore", "league_every", "league_size", "league_models",
@@ -615,6 +603,31 @@ def main() -> None:
                                          *LAYOUT_DEFAULTS)}
     hp.update(virus_reward=floats(args.virus_reward), kill_reward=floats(args.kill_reward),
               action_bonus=floats(args.action_bonus), growth=args.growth)
+    return hp
+
+
+def farm_check(L: "Learner", out: Path) -> None:
+    """The farming-alone check (`--farm-eval-every`): save, play the net alone from 10 and from 1000 mass."""
+    from sim.tourney import farm
+    L.save(out / "latest.pt")
+    net = {"net": str(out / "latest.pt")}
+    fm = farm(net, B=64, free=True)["net"]
+    fb = farm(net, B=64, free=True, start=1000.0, gain=True)["net"]
+    L.tb.add_scalar("eval/farm_mass", fm, L.it)
+    L.tb.add_scalar("eval/farm_gain_from_1000", fb, L.it)
+    print(f"farm check at it {L.it}: from 10 -> {fm:.0f} mass in 2 min (routines 283-310); "
+          f"from 1000: +{fb:.0f} in 2 min (routine +374, split-farming routine +467)", flush=True)
+
+
+def main() -> None:
+    args = build_parser().parse_args()
+    global AMP
+    AMP = not args.no_amp
+    setup_cuda(args.vram_gb, args.seed)
+    dev = "cuda"
+    out = ROOT / "runs" / "rl" / args.run
+    model, teacher = build_start_model(args, dev)
+    hp = build_hparams(args)
     B, P, T = args.b, args.p, args.steps
     hof = []
     if args.hof:
@@ -632,22 +645,13 @@ def main() -> None:
           f"{sum(len(i) for i in L.league_idx)} league), {T} decisions/iter, skip {args.skip}, "
           f"episode {args.episode_steps} steps", flush=True)
     t_start = time.time()
-    if args.farm_eval_every:
-        from sim.tourney import farm
     for _ in range(args.iters):
         if args.max_minutes and time.time() - t_start > args.max_minutes * 60:
             break
         g, s, v = collect(env, [L], (g, s, v), T, args.skip)
         L.update()
         if args.farm_eval_every and L.it % args.farm_eval_every == 0:
-            L.save(out / "latest.pt")
-            net = {"net": str(out / "latest.pt")}
-            fm = farm(net, B=64, free=True)["net"]
-            fb = farm(net, B=64, free=True, start=1000.0, gain=True)["net"]
-            L.tb.add_scalar("eval/farm_mass", fm, L.it)
-            L.tb.add_scalar("eval/farm_gain_from_1000", fb, L.it)
-            print(f"farm check at it {L.it}: from 10 -> {fm:.0f} mass in 2 min (routines 283-310); "
-                  f"from 1000: +{fb:.0f} in 2 min (routine +374, split-farming routine +467)", flush=True)
+            farm_check(L, out)
     L.save(out / "latest.pt")
     print(f"done at iteration {L.it}", flush=True)
 
