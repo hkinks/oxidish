@@ -70,7 +70,9 @@ def eval_job(path: str) -> None:
         # from 10 mass (routines ~300) and the gain from 1000 mass (routine +374; split-farming +467)
         small = farm_batch(nets, B=64, free=True)
         big = farm_batch(nets, B=64, free=True, start=1000.0, gain=True)
-        res = {k: {"log_mass": math.log(max((small[k] / 300 + max(big[k], 1.0) / 374) / 2, 1e-3)), "ci": 0.0,
+        # product of the two (sum of logs): averaging let a member trade a collapsed small-size
+        # score for a big-size one (m4: 50 from 10, +1100 from 1000)
+        res = {k: {"log_mass": (math.log(max(small[k], 1.0) / 300) + math.log(max(big[k], 1.0) / 374)) / 2, "ci": 0.0,
                    "avg_mass": small[k], "gain_1000": big[k], "deaths": 0.0, "kills": 0.0} for k in nets}
         Path(job["out"]).write_text(json.dumps({"results": res, "farm": small, "long": {}}, indent=1))
         return

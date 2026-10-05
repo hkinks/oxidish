@@ -13,7 +13,7 @@ token per region of the view (4 x 4): the food in it as one pellet-type token at
 mass with mass = its pellet count (so far-away clusters, invisible among the 32 nearest pellets, can
 be seen and pointed at: a split cell can be sent through a whole cluster).
 
-Token features (FD = 21):
+Token features (FD = 22):
   0 valid | 1-5 type: pellet, enemy cell, own cell, virus, ejected | 6, 7 relative x, y / 1000 |
   8 distance / 1000 (centre to centre) | 9, 10 velocity per step / 40 (from the last encode, same
   object id) | 11 log(1 + mass) / 8 | 12 log(mass / our largest cell) / 3 | 13 we can eat it
@@ -21,7 +21,8 @@ Token features (FD = 21):
   16 it could split onto us | 17 merge readiness (own cells) | 18 log(owner's total / ours) / 3
   (enemy cells) | 19 virus fill (0 at 100 mass, 1 at 200: about to split off) | 20 this object was our
   pointer target at the last decision (commitment: without it every decision started from scratch and
-  near-ties made cells dither in place)
+  near-ties made cells dither in place) | 21 pellets: distance to our nearest cell / 1000 (which cell
+  would get it: split cells spread out)
 Scalars: the grid encoder's 16 (8 base + 8 hint slots, zero in the grid encoder); here hint slots 8-10
 carry the last decision: its direction (x, y; zero for stay) and whether it was "stay".
 No host syncs; static shapes (one CUDA graph when the world uses graphs).
@@ -34,9 +35,9 @@ import torch
 from .engine import ES, MERGE_SIZE_COEF
 from .obs import EAT_RATIO, MIN_SCALE, S, SPLIT_KILL_RATIO, VEL_SCALE, VIEW_X, VIEW_Y, VIRUS_MAX, VIRUS_MIN
 
-FD = 21
+FD = 22
 T_FOOD, T_CELL, T_OWN, T_VIRUS, T_EJECT = range(5)
-K_FOOD, K_CELL, K_VIRUS, K_EJECT = 32, 32, 8, 8
+K_FOOD, K_CELL, K_VIRUS, K_EJECT = 32, 32, 8, 8   # pellets: the 32 nearest to any of our cells
 REGIONS = 4                                             # food clusters: the view split into 4 x 4 regions
 N_TOK = 16 + K_FOOD + K_CELL + K_VIRUS + K_EJECT + REGIONS * REGIONS   # 112 tokens per agent
 
@@ -143,17 +144,20 @@ class EntityEncoder:
             return ((px[:, None, :] - ccx[..., None]).abs() <= hx + ps[:, None, :]) & \
                    ((py[:, None, :] - ccy[..., None]).abs() <= hy + ps[:, None, :]) & alive[..., None]
 
-        def nearest(px, py, ok, k):
-            """k nearest of the ok objects per agent: (index [B,NA,k], valid, dx, dy, dist)."""
+        def nearest(px, py, ok, k, rank=None):
+            """k nearest of the ok objects per agent: (index [B,NA,k], valid, dx, dy, dist). Positions and
+            distances are relative to our centre; `rank` [B,NA,M] (default: that distance squared)
+            decides which k are taken."""
             dx = px[:, None, :] - cx[..., None]
             dy = py[:, None, :] - cy[..., None]
-            d2 = torch.where(ok, dx * dx + dy * dy, torch.full_like(dx, 1e18))
+            d2 = torch.where(ok, dx * dx + dy * dy if rank is None else rank, torch.full_like(dx, 1e18))
             if d2.shape[-1] < k:       # fewer objects than token slots (e.g. a one-player arena)
                 d2 = torch.cat([d2, torch.full((*d2.shape[:-1], k - d2.shape[-1]), 1e18, device=dev)], -1)
                 dx = torch.cat([dx, torch.zeros_like(d2[..., dx.shape[-1]:])], -1)
                 dy = torch.cat([dy, torch.zeros_like(d2[..., dy.shape[-1]:])], -1)
             v, i = torch.topk(d2, k, dim=-1, largest=False)
-            return i, v < 1e17, dx.gather(-1, i), dy.gather(-1, i), v.clamp(max=1e12).sqrt()
+            gx, gy = dx.gather(-1, i), dy.gather(-1, i)
+            return i, v < 1e17, gx, gy, (gx * gx + gy * gy).sqrt()
 
         def vel(name, x, y, ids, i):
             i = i.clamp(max=x.shape[1] - 1)          # padded slots (invalid anyway)
@@ -205,9 +209,17 @@ class EntityEncoder:
                        18: (torch.log(omass.clamp(min=1.0) / total[..., None]) / 3).clamp(-2, 2)})
         # pellets
         vis_f = visible(w.fx, w.fy, torch.full_like(w.fx, 10.0)) & w.falive[:, None, :]
-        fi, fok, fdx, fdy, fdd = nearest(torch.trunc(w.fx), torch.trunc(w.fy), vis_f, self.k["food"])
+        # ranked by the distance to our NEAREST cell, not to our centre: split cells spread out, and the
+        # pellets in front of the outer cells (the ones they can eat next) must be in the list
+        fxt, fyt = torch.trunc(w.fx), torch.trunc(w.fy)
+        oxc = torch.where(o_al, own(xi), torch.full_like(own(xi), 1e9))             # [B,NA,K]
+        oyc = torch.where(o_al, own(yi), torch.full_like(own(yi), 1e9))
+        cell_d2 = ((fxt[:, None, None, :] - oxc[..., None]) ** 2 +
+                   (fyt[:, None, None, :] - oyc[..., None]) ** 2).amin(2)           # [B,NA,F]
+        fi, fok, fdx, fdy, fdd = nearest(fxt, fyt, vis_f, self.k["food"], rank=cell_d2)
+        f_cd = cell_d2.gather(-1, fi.clamp(max=w.F - 1)).clamp(max=1e12).sqrt()
         z = torch.zeros_like(fdx)
-        f_food = rows(T_FOOD, fok, fdx, fdy, fdd, torch.ones_like(fdx), z, z, {})
+        f_food = rows(T_FOOD, fok, fdx, fdy, fdd, torch.ones_like(fdx), z, z, {21: (f_cd / 1000).clamp(max=5)})
         # viruses
         vs = w.vr2.sqrt()
         vis_v = visible(w.vx, w.vy, vs) & w.valive[:, None, :]

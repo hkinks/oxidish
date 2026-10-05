@@ -93,9 +93,10 @@ def from_checkpoint(path: str, dev: str) -> Policy:
             for k in ("enc.tok.weight", "critic.tok.weight"):
                 w = sd[k]
                 sd[k] = torch.cat([w, w.new_zeros(w.shape[0], FD - w.shape[1])], 1)
-            for k in ("enc.state.weight", "critic.state.weight"):   # scalars 8-10 (last decision) were
-                sd[k] = sd[k].clone()                              # always zero: untrained weights
-                sd[k][:, 8:11] = 0
+            if cfg["fd"] < 21:        # nets from before the commitment inputs: scalars 8-10 were always
+                for k in ("enc.state.weight", "critic.state.weight"):        # zero, untrained weights
+                    sd[k] = sd[k].clone()
+                    sd[k][:, 8:11] = 0
             new.load_state_dict(sd)
             new.skip = getattr(src, "skip", 1)
             src = new
