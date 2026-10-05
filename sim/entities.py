@@ -59,6 +59,12 @@ class EntityEncoder:
     def reset_agents(self, mask):
         pass   # no per-agent history (velocities are per object)
 
+    def forget(self, arenas):
+        """Arenas restarted: their object ids start over, so drop the last positions (in place: the
+        CUDA graph keeps reading the same tensors)."""
+        for _, _, pid in self.prev.values():
+            pid.masked_fill_(arenas[:, None], -1)
+
     # ------------------------------------------------------------------
     def encode(self, dtype=torch.float32):
         w = self.w
@@ -203,8 +209,9 @@ class EntityEncoder:
         R = REGIONS
         fdx_all = torch.trunc(w.fx)[:, None, :] - cx[..., None]
         fdy_all = torch.trunc(w.fy)[:, None, :] - cy[..., None]
-        bx = ((fdx_all + hx) / (2 * hx) * R).floor().clamp(0, R - 1)
-        by = ((fdy_all + hy) / (2 * hy) * R).floor().clamp(0, R - 1)
+        ox, oy = (ccx - cx)[..., None], (ccy - cy)[..., None]     # view box centre vs our mass centre
+        bx = ((fdx_all - ox + hx) / (2 * hx) * R).floor().clamp(0, R - 1)
+        by = ((fdy_all - oy + hy) / (2 * hy) * R).floor().clamp(0, R - 1)
         reg = (by * R + bx).long()                                                  # [B,NA,F]
         wf = vis_f.float()
         cnt = torch.zeros(B, NA, R * R, device=dev).scatter_add_(-1, reg, wf)

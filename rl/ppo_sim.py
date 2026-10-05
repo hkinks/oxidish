@@ -419,7 +419,12 @@ class Learner:
                 ent = ent.mean()
                 logr = (logp - Lf[ix]).clamp(-20.0, 20.0)   # bounded: an exp() overflow / log(0) poisons the step
                 ratio = logr.exp()
-                pg = -torch.min(ratio * advn[ix], ratio.clamp(1 - clip, 1 + clip) * advn[ix]).mean()
+                A_ = advn[ix]
+                surr = torch.min(ratio * A_, ratio.clamp(1 - clip, 1 + clip) * A_)
+                # dual clip: with A < 0 a huge ratio (an action the floor made rare, now likely) made
+                # r * A unbounded and one sample could steer the whole step (a member froze that way)
+                surr = torch.where(A_ < 0, torch.max(surr, 3.0 * A_), surr)
+                pg = -surr.mean()
                 vf = 0.5 * (value - retf[ix]).pow(2).mean()
                 if bc:        # imitate the farmer's move only: split / eject are left to the reward to discover
                     loss = -dists[0].log_prob(TAf[ix][:, 0]).mean() + hp.get("vf", 0.5) * vf

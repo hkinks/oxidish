@@ -181,6 +181,8 @@ class SimEnv:
         in progress are dropped from the statistics; observations refresh at the next step."""
         self.w.reset(arenas)
         self._drop_inactive(arenas)
+        if self.ent_enc is not None:          # object ids restart with the arena: no velocity across it
+            self.ent_enc.forget(arenas)
         m = arenas[:, None].expand(self.B, self.NL)
         self._reset_enc(m)
         self._clear_lives(m)
@@ -191,6 +193,8 @@ class SimEnv:
     def reset(self):
         self.w.reset()
         self._drop_inactive()
+        if self.ent_enc is not None:
+            self.ent_enc.forget(torch.ones(self.B, dtype=torch.bool, device=self.dev))
         ones = torch.ones(self.B, self.NL, dtype=torch.bool, device=self.dev)
         self._reset_enc(ones)
         self.py_steps = 0

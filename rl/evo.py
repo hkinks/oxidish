@@ -40,7 +40,8 @@ CH_MINE = 2   # our own cells: always visible to the net
 
 HP_KINDS = ["lr", "ent", "gamma", "explore", "kill", "virus", "explore_reward", "epochs", "farm", "hunt", "hunt",
             "flee", "giant", "growth", "growth", "bonus", "bonus"]
-FARM_HP_KINDS = ["lr", "lr", "ent", "ent", "gamma", "explore", "explore", "explore_reward", "epochs"]
+FARM_HP_KINDS = ["lr", "ent", "gamma", "explore", "explore", "explore_reward", "epochs", "lam", "lam",
+                 "split_min", "split_min", "farm_spawn"]
 
 
 def mutate(genome: dict, rng: random.Random, arch_p: float = 0.35, hp_kinds=HP_KINDS) -> tuple[dict, str]:
@@ -150,6 +151,17 @@ def mutate(genome: dict, rng: random.Random, arch_p: float = 0.35, hp_kinds=HP_K
             elif kind == "hunt":
                 hp["hunt_frac"] = rng.choice([x for x in (0.0, 0.1, 0.2, 0.3) if x != hp.get("hunt_frac", 0.15)])
                 notes.append(f"hunt drills {hp['hunt_frac']:.0%} of arenas")
+            elif kind == "lam":           # credit horizon: a split pays 15-30 s (100-190 decisions) later
+                hp["lam"] = rng.choice([x for x in (0.95, 0.97, 0.99) if x != hp.get("lam", 0.95)])
+                notes.append(f"lambda {hp['lam']}")
+            elif kind == "split_min":     # split exploration only from this mass
+                hp["split_explore_min_mass"] = rng.choice([x for x in (150.0, 300.0, 500.0, 1000.0)
+                                                           if x != hp.get("split_explore_min_mass", 300.0)])
+                notes.append(f"split exploration from {hp['split_explore_min_mass']:.0f} mass")
+            elif kind == "farm_spawn":    # farm start sizes
+                hp["farm_spawn"] = rng.choice([x for x in ([10.0, 3000.0], [100.0, 6000.0], [300.0, 6000.0])
+                                               if x != hp.get("farm_spawn", [10.0, 3000.0])])
+                notes.append(f"farm starts {hp['farm_spawn'][0]:.0f}-{hp['farm_spawn'][1]:.0f} mass")
             elif kind == "farm":
                 hp["farm_frac"] = rng.choice([x for x in (0.0, 0.1, 0.2, 0.3) if x != hp.get("farm_frac", 0.15)])
                 notes.append(f"farm drills {hp['farm_frac']:.0%} of arenas")

@@ -46,12 +46,12 @@ from rl.ppo_sim import Learner, collect, from_checkpoint, frozen, new_model, set
 from sim.env import SimEnv
 
 FIXED_HP = dict(league_frac=0.3, bot_frac=0.1, league_models=2, league_every=25, league_size=8,
-                save_every=20, vf_warmup=0, lam=0.95, clip=0.2, target_kl=0.02, vf=0.5)
+                save_every=20, vf_warmup=0, clip=0.2, target_kl=0.02, vf=0.5)
 # --objective farm: farming arenas only (every slot a learner), mass is the only reward; fitness is
 # the free farming check (alone for 2 min, split / eject allowed: whatever farms fastest)
 FARM_HP = dict(farm_frac=1.0, hunt_frac=0.0, flee_frac=0.0, giant_frac=0.0, league_frac=0.0, bot_frac=0.0,
                kill_reward=[0.0, 0.0], virus_reward=[0.0, 0.0, 0.0], growth=None, action_bonus=[0.0, 0.0],
-               farm_spawn=[10.0, 3000.0], split_explore_min_mass=300.0, eject_explore=False, epochs=6)
+               farm_spawn=[10.0, 3000.0], split_explore_min_mass=300.0, eject_explore=False, epochs=4)
 
 
 def log(msg: str):
@@ -145,9 +145,14 @@ class Population:
     def make_learner(self, m: dict, k: int) -> Learner:
         """Learner for member `m` owning arenas [k*b, (k+1)*b) of the shared env; its genome supplies hyper-parameters."""
         a = self.args
-        hp = {**DEFAULT_HP, **m["genome"]["hp"], **FIXED_HP, "mb": a.mb}
-        if a.objective == "farm":
-            hp.update(FARM_HP, farm_players=a.p)
+        farm = FARM_HP if a.objective == "farm" else {}
+        # farming defaults sit below the genome (its genes may override them: lambda, split exploration,
+        # start sizes, epochs), the arena layout of the farm objective above it
+        hp = {**DEFAULT_HP, "lam": 0.95, **farm, **m["genome"]["hp"], **FIXED_HP, "mb": a.mb}
+        if farm:
+            hp.update({k: FARM_HP[k] for k in ("farm_frac", "hunt_frac", "flee_frac", "giant_frac", "league_frac",
+                                               "bot_frac", "kill_reward", "virus_reward", "growth", "action_bonus")},
+                      farm_players=a.p)
         model = new_model(**m["genome"]["arch"]).to(self.dev)
         parent = from_checkpoint(m["ckpt"], self.dev)
         teacher = None

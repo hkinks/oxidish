@@ -69,6 +69,10 @@ class EntityPolicy(nn.Module):
     def forward(self, ent, scal):
         h, tokens, valid = self.enc(ent, scal)
         ptr = torch.einsum("nd,ntd->nt", self.query(h), self.key(tokens)) / math.sqrt(self.d)
+        # an own cell at (about) our centre is no target: heading toward it means standing still (that
+        # is what "stay" is for), and the exploration floor kept picking it - farmers stalled
+        own_here = (ent[..., 3] > 0.5) & (ent[..., 8] < 0.01)
+        valid = valid & ~own_here
         ptr = ptr.float().masked_fill(~valid, -1e9)
         moves = torch.cat([self.move(h).float(), ptr], -1)
         self._move_ok = torch.cat([torch.ones_like(valid[:, :17]), valid], -1)
