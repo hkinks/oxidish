@@ -22,7 +22,7 @@ from pathlib import Path
 import torch
 
 from rl.common import ROOT
-from rl.ppo_sim import from_checkpoint
+from rl.ppo_sim import from_checkpoint, obs_for, obs_kind
 from sim.bots import scripted_actions
 from sim.engine import EJECT_R2, FOOD_R2
 from sim.env import SimEnv
@@ -35,7 +35,8 @@ class Watcher:
     def __init__(self, run: str, players: int, bots: int, past: int, vram_gb: float):
         total = torch.cuda.get_device_properties(0).total_memory
         torch.cuda.set_per_process_memory_fraction(min(1.0, vram_gb * 2 ** 30 / total))
-        self.dir = ROOT / "runs" / "rl" / run
+        self.dirs = [ROOT / "runs" / "rl" / r for r in run.split(",")]   # several runs share the arena
+        self.dir = self.dirs[0]
         self.env = SimEnv(B=1, P=players, episode_steps=10 ** 9, curriculum_p=0.0)
         self.bots, self.past = bots, past
         self.groups, self.names, self.ver, self.ready, self.title = [], [], None, False, ""
@@ -53,32 +54,38 @@ class Watcher:
         return (self.dir / "evo.json").exists()
 
     def lineup(self) -> list[tuple[str, Path]]:
-        """(name, checkpoint) per model."""
-        if self.evo:
-            out = []
-            for m in json.loads((self.dir / "evo.json").read_text())["members"]:
-                ck = self.dir / m["id"] / "latest.pt"
-                out.append((m["id"], ck if ck.exists() else Path(m["ckpt"])))
-            hof = sorted((self.dir / "hof").glob("*.pt"))
-            if hof:
-                out.append((f"hof {hof[-1].stem}", hof[-1]))
-            return out
-        ck = self.dir / "latest.pt"
-        if not ck.exists():
-            return []
-        out = [(f"{self.dir.name} now", ck)]
-        snaps = sorted((self.dir / "league").glob("it*.pt"))
-        if snaps and self.past:      # the oldest, a middle one and the newest but one
-            for f in sorted({snaps[0], snaps[len(snaps) // 2], snaps[max(0, len(snaps) - 2)]}):
-                out.append((f"{self.dir.name} it{int(f.stem[2:])}", f))
+        """(name, checkpoint) per model, over all runs."""
+        out = []
+        for d in self.dirs:
+            pre = f"{d.name}/" if len(self.dirs) > 1 else ""
+            if (d / "evo.json").exists():
+                for m in json.loads((d / "evo.json").read_text())["members"]:
+                    ck = d / m["id"] / "latest.pt"
+                    out.append((pre + m["id"], ck if ck.exists() else Path(m["ckpt"])))
+                hof = sorted((d / "hof").glob("*.pt"))
+                if hof:
+                    out.append((f"{pre}hof {hof[-1].stem}", hof[-1]))
+                continue
+            ck = d / "latest.pt"
+            if not ck.exists():
+                continue
+            out.append((f"{d.name} now", ck))
+            snaps = sorted((d / "league").glob("it*.pt"))
+            if snaps and self.past and len(self.dirs) == 1:   # the oldest, a middle one and the newest but one
+                for f in sorted({snaps[0], snaps[len(snaps) // 2], snaps[max(0, len(snaps) - 2)]}):
+                    out.append((f"{d.name} it{int(f.stem[2:])}", f))
         return out
 
     def version(self) -> tuple:
-        """Evolution: the generation; plain run: the latest checkpoint's time."""
-        if self.evo:
-            return ("gen", json.loads((self.dir / "evo.json").read_text())["gen"])
-        ck = self.dir / "latest.pt"
-        return ("ckpt", ck.stat().st_mtime if ck.exists() else 0)
+        """Per run: an evolution's generation, a plain run's latest checkpoint time."""
+        v = []
+        for d in self.dirs:
+            if (d / "evo.json").exists():
+                v.append(("gen", json.loads((d / "evo.json").read_text())["gen"]))
+            else:
+                ck = d / "latest.pt"
+                v.append(("ckpt", ck.stat().st_mtime if ck.exists() else 0))
+        return tuple(v)
 
     def check(self) -> None:
         """Note newer models (lights the button); load models if none are loaded yet."""
@@ -106,9 +113,16 @@ class Watcher:
             self.groups.append((m, lo, lo + n))
             self.names += [name] * n
             lo += n
+        kinds = {obs_kind(m) for m, _, _ in self.groups}
+        want = "both" if len(kinds) > 1 else kinds.pop()
+        if want != self.env.obs:       # entity nets need entity observations
+            self.env = SimEnv(B=1, P=self.env.P, episode_steps=10 ** 9, curriculum_p=0.0, obs=want)
+            self.held = None
         self.names += ["bot"] * self.bots
-        if self.evo:
-            self.title = f"{self.dir.name} generation {self.ver[1]}: {len(lu)} models"
+        if len(self.dirs) > 1:
+            self.title = f"{' + '.join(d.name for d in self.dirs)}: {len(lu)} models"
+        elif self.evo:
+            self.title = f"{self.dir.name} generation {self.ver[0][1]}: {len(lu)} models"
         else:
             it = torch.load(lu[0][1], map_location="cpu", weights_only=False).get("it", "?")
             self.title = f"{self.dir.name} it {it}"
@@ -152,7 +166,7 @@ class Watcher:
         a = self.held
         for m, lo, hi in self.groups:
             if self.round_step % m.skip == 0:     # frame-skip nets decide every m.skip steps
-                a[lo:hi] = m.act(g[lo:hi], s[lo:hi], amp=True)[0]
+                a[lo:hi] = m.act(obs_for(m, self.env, g)[lo:hi], s[lo:hi], amp=True)[0]
             else:                                 # ... holding the move; split / eject fire once
                 a[lo:hi, 1:] = 0
         if self.bots:
@@ -229,7 +243,8 @@ class Watcher:
 
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--run", default="e1", help="an rl.evo population (e.g. e1) or a ppo_sim run (e.g. s1)")
+    p.add_argument("--run", default="e1", help="an rl.evo / rl.pbt population (e.g. p1) or a ppo_sim run (e.g. s1); "
+                   "several comma-separated (e.g. fp1,fe1) share the arena")
     p.add_argument("--port", type=int, default=8096)
     p.add_argument("--players", type=int, default=50, help="training arenas have 50")
     p.add_argument("--bots", type=int, default=6, help="slots played by the scripted sim bot")

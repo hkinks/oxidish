@@ -51,12 +51,32 @@ HEADS = (17, 2, 2)
 ROLE_LEARN, ROLE_LEAGUE, ROLE_BOT, ROLE_OFF = 0, 1, 2, 3
 
 
+ENTITY_KEYS = ("kind", "d", "layers", "heads", "width")
+
+
 def new_model(width: int = 256, **arch) -> Policy:
+    if arch.get("kind") == "entity":       # transformer over object tokens (rl.entity_model, sim/entities.py)
+        from sim.entities import FD, N_TOK
+        from .entity_model import EntityPolicy
+        return EntityPolicy(n_tok=N_TOK, fd=FD, s=S_IN, width=width, **{k: v for k, v in arch.items() if k != "kind"})
     return Policy(width=width, c=C_IN, s=S_IN, heads=HEADS, follow=None, g=G_IN, **arch)
 
 
 def arch_of(model: Policy) -> dict:
+    if model.config.get("kind") == "entity":
+        return {k: model.config[k] for k in ENTITY_KEYS}
     return {k: model.config[k] for k in ARCH_KEYS if k in model.config}
+
+
+def obs_kind(model) -> str:
+    return getattr(model, "obs", "grid")
+
+
+def obs_for(model, env, g):
+    """The observation `model` reads: the env's grid (g) or its entity tokens."""
+    if obs_kind(model) == "entity" and env.obs == "both":
+        return env.ent
+    return g
 
 
 def from_checkpoint(path: str, dev: str) -> Policy:
@@ -65,6 +85,8 @@ def from_checkpoint(path: str, dev: str) -> Policy:
     exactly as before and can learn to use them."""
     src = load(path, dev)
     cfg = src.config
+    if cfg.get("kind") == "entity":
+        return src
     if cfg["c"] not in (13, C_IN) or cfg["s"] != S_IN:
         raise SystemExit(f"{path}: needs c=13/{C_IN} s=16, got c={cfg['c']} s={cfg['s']}")
     model = new_model(**arch_of(src)).to(dev)
@@ -320,18 +342,23 @@ class Learner:
     def act(self, t: int, g, s, v, acts):
         """Sample the learners' actions (stored for training) and the league's; write them to acts."""
         ix = self.learn_idx
-        gl, sl = g[ix], s[ix]
+        gl, sl = obs_for(self.model, self.env, g)[ix], s[ix]
         a, logp, val = act_sampled(self.model, gl, sl)
         self.G[t], self.Sc[t], self.Act[t], self.Logp[t], self.Val[t] = gl, sl, a, logp, val
         vl = v[ix]
         self.Valid[t] = vl.float()
         self.splits = self.splits + (a[:, 1] * vl).sum()
         if self.it < self.bc_until:
-            self.TAct[t] = farmer_actions(self.env)[ix]
+            ta = farmer_actions(self.env)[ix]
+            if obs_kind(self.model) == "entity":     # the same target as a pointer: the nearest pellet token
+                k0 = 16 + self.env.ent_enc.k["cell"]
+                near = self.env.ent[ix, k0, 0] > 0.5
+                ta[:, 0] = torch.where(near, torch.full_like(ta[:, 0], 17 + k0), ta[:, 0])
+            self.TAct[t] = ta
         self.ejects = self.ejects + (a[:, 2] * vl).sum()
         acts[ix] = a
         for m, lx in zip(self.league_models, self.league_idx):
-            acts[lx] = act_sampled(m, g[lx], s[lx])[0]
+            acts[lx] = act_sampled(m, obs_for(m, self.env, g)[lx], s[lx])[0]
 
     def record(self, t: int, r, d):
         self.Rew[t] = r[self.learn_idx]
@@ -339,7 +366,7 @@ class Learner:
 
     def finish(self, g, s, v):
         ix = self.learn_idx
-        self.Val[self.T] = act_sampled(self.model, g[ix], s[ix])[2]
+        self.Val[self.T] = act_sampled(self.model, obs_for(self.model, self.env, g)[ix], s[ix])[2]
         self.Valid[self.T] = v[ix].float()
         self.collect_s = time.time() - self.t0
 
@@ -455,7 +482,7 @@ def collect(env: SimEnv, learners: list[Learner], obs, T: int, skip: int):
     A, dev = env.n_agents, env.dev
     bot_idx = torch.cat([L.bot_idx for L in learners]) if learners else None
     for L in learners:
-        L.begin(T, g.shape[1:])
+        L.begin(T, obs_for(L.model, env, g).shape[1:])
     for t in range(T):
         acts = torch.zeros(A, 3, dtype=torch.long, device=dev)
         for L in learners:
@@ -576,12 +603,13 @@ def main() -> None:
     hp.update(virus_reward=floats(args.virus_reward), kill_reward=floats(args.kill_reward),
               action_bonus=floats(args.action_bonus), growth=args.growth)
     B, P, T = args.b, args.p, args.steps
-    env = SimEnv(B=B, P=P, seed=args.seed, episode_steps=args.episode_steps, curriculum_p=args.curriculum_p,
-                 obs_dtype=torch.float16, skip=args.skip)
     hof = []
     if args.hof:
         hof = [frozen(from_checkpoint(str(f), dev)) for f in sorted(Path(args.hof).glob("*.pt"))]
         print(f"hall of fame: {len(hof)} opponents from {args.hof}", flush=True)
+    kinds = {obs_kind(m) for m in [model, *hof]}
+    env = SimEnv(B=B, P=P, seed=args.seed, episode_steps=args.episode_steps, curriculum_p=args.curriculum_p,
+                 obs_dtype=torch.float16, skip=args.skip, obs="both" if len(kinds) > 1 else kinds.pop())
     L = Learner(args.run, model, env, 0, B, hp, out, hof=hof, teacher=teacher,
                 distill_iters=args.distill_iters if teacher is not None else 0, start_it=args.start_it,
                 skip=args.skip)

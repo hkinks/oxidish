@@ -28,6 +28,7 @@ import torch
 
 from .bots import scripted_actions
 from .engine import MIN_SPLIT_R2, START_R2, World
+from .entities import EntityEncoder
 from .obs import Encoder
 
 DIRS = 16
@@ -49,12 +50,18 @@ class SimEnv:
                  bot_split_prob: float = 0.5, obs_dtype: torch.dtype = torch.float32,
                  virus_reward: tuple = (0.0, 0.0, 0.0), explore_reward: float = 0.0,
                  kill_reward: tuple = (0.0, 0.0), growth: dict | None = None,
-                 action_bonus: tuple = (0.0, 0.0), skip: int = 1, max_player_mass: float = 100_000.0):
+                 action_bonus: tuple = (0.0, 0.0), skip: int = 1, max_player_mass: float = 100_000.0,
+                 obs: str = "grid"):
         self.w = World(B, P, device, map_size, food_mult, max_eject, seed)
         self.B, self.P = B, P
         self.NL = P if n_learn is None else n_learn
         self.dev = self.w.dev
-        self.enc = Encoder(self.w, list(range(self.NL)), call_steps=skip)
+        # observations: "grid" (sim/obs.py), "entity" (sim/entities.py) or "both" (step returns the
+        # grid; the entity tokens are in self.ent). Entity nets' pointer moves aim at self.tokpos.
+        self.obs = obs
+        self.enc = Encoder(self.w, list(range(self.NL)), call_steps=skip) if obs in ("grid", "both") else None
+        self.ent_enc = EntityEncoder(self.w, list(range(self.NL)), call_steps=skip) if obs in ("entity", "both") else None
+        self.ent = self.tokpos = None
         self.episode_steps = episode_steps   # may be tens of thousands for very long lives
         # an arena where one player passed this restarts: respawned mass (curriculum) piles up in
         # one player until its 16 max-size cells cover the map and eat every respawn on its first tick
@@ -127,9 +134,18 @@ class SimEnv:
 
     # ------------------------------------------------------------------ helpers
     def _observe(self):
+        if self.ent_enc is not None:
+            self.ent, scal, frame, alive, self.tokpos, mass = self.ent_enc.encode(self.obs_dtype)
+            self.frame = frame
+            if self.enc is None:
+                return self.ent, scal, alive, mass
         grid, scal, frame, alive, mass = self.enc.encode(self.obs_dtype)
         self.frame = frame
         return grid, scal, alive, mass
+
+    def _reset_enc(self, mask):
+        if self.enc is not None:
+            self.enc.reset_agents(mask)
 
     def _drop_inactive(self, arenas: torch.Tensor | None = None):
         sel = torch.ones(self.B, 1, dtype=torch.bool, device=self.dev) if arenas is None else arenas[:, None]
@@ -159,7 +175,7 @@ class SimEnv:
         self.w.reset(arenas)
         self._drop_inactive(arenas)
         m = arenas[:, None].expand(self.B, self.NL)
-        self.enc.reset_agents(m)
+        self._reset_enc(m)
         self._clear_lives(m)
         self.prev_vstat.masked_fill_(m[None], 0)
         self.prev_kstat.masked_fill_(m[None], 0)
@@ -169,7 +185,7 @@ class SimEnv:
         self.w.reset()
         self._drop_inactive()
         ones = torch.ones(self.B, self.NL, dtype=torch.bool, device=self.dev)
-        self.enc.reset_agents(ones)
+        self._reset_enc(ones)
         self.py_steps = 0
         self._clear_lives(ones)
         self.prev_vstat.zero_()
@@ -184,9 +200,18 @@ class SimEnv:
         cx, cy, ext = self.frame
         move = actions[:, 0].view(self.B, self.NL)
         a = 2 * math.pi * move.clamp(max=DIRS).float() / DIRS
-        stay = move >= DIRS
-        tx = cx + torch.where(stay, torch.zeros_like(cx), torch.cos(a) * ext)
-        ty = cy + torch.where(stay, torch.zeros_like(cy), torch.sin(a) * ext)
+        stay = move == DIRS
+        ux, uy = torch.cos(a), torch.sin(a)
+        if self.tokpos is not None and bool((move > DIRS).any()):
+            # pointer moves (entity nets): head toward token move - 17 at full speed
+            j = (move - DIRS - 1).clamp(min=0, max=self.tokpos.shape[2] - 1)
+            tp = self.tokpos.gather(2, j[..., None, None].expand(*j.shape, 1, 2))[:, :, 0]
+            dx, dy = tp[..., 0] - cx, tp[..., 1] - cy
+            n = (dx * dx + dy * dy).sqrt().clamp(min=1e-3)
+            ptr = move > DIRS
+            ux, uy = torch.where(ptr, dx / n, ux), torch.where(ptr, dy / n, uy)
+        tx = cx + torch.where(stay, torch.zeros_like(cx), ux * ext)
+        ty = cy + torch.where(stay, torch.zeros_like(cy), uy * ext)
         return torch.stack([tx, ty], -1)
 
     def pop_stats(self, arenas=slice(None)) -> dict:
@@ -300,7 +325,7 @@ class SimEnv:
         self.l_pops = self.l_pops + dv[1]
         self.l_kills = self.l_kills + dk[0]
         self.l_stuck = self.l_stuck + stuck.float()
-        self.enc.reset_agents(died)
+        self._reset_enc(died)
         self._finish(died, died)
         # episode truncation: lives in progress count as finished, the arenas restart
         self.py_steps += 1
@@ -310,7 +335,7 @@ class SimEnv:
             w.reset()
             self._drop_inactive()
             ones = torch.ones(B, NL, dtype=torch.bool, device=dev)
-            self.enc.reset_agents(ones)
+            self._reset_enc(ones)
             self.py_steps = 0
             self._clear_lives(ones)
             self.prev_vstat.zero_()

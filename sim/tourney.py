@@ -15,7 +15,7 @@ import math
 
 import torch
 
-from rl.ppo_sim import from_checkpoint
+from rl.ppo_sim import from_checkpoint, obs_for, obs_kind
 from sim.bots import farmer_actions, scripted_actions
 from sim.env import SimEnv
 
@@ -27,7 +27,9 @@ def run(nets: dict[str, str], B: int = 16, P: int = 50, steps: int = 3000, bots:
     models = [from_checkpoint(path, dev).eval() for path in nets.values()]
     for m in models:
         m.binary_eps = 0.0
-    env = SimEnv(B=B, P=P, seed=seed, episode_steps=10 ** 9, curriculum_p=0.0)
+    kinds = {obs_kind(m) for m in models}
+    env = SimEnv(B=B, P=P, seed=seed, episode_steps=10 ** 9, curriculum_p=0.0,
+                 obs="both" if len(kinds) > 1 else kinds.pop())
     M, n_play = len(models), P - bots
     owner = torch.full((B, P), -1, dtype=torch.long, device=dev)        # net index per slot, -1 = bot
     for b in range(B):
@@ -43,7 +45,7 @@ def run(nets: dict[str, str], B: int = 16, P: int = 50, steps: int = 3000, bots:
     for step in range(steps):
         for m, ix in zip(models, idx):
             if step % m.skip == 0:          # a frame-skip net decides every m.skip steps
-                a[ix] = m.act(g[ix], s[ix], amp=True)[0]
+                a[ix] = m.act(obs_for(m, env, g)[ix], s[ix], amp=True)[0]
             else:                           # ... and holds its move; split / eject fire once
                 a[ix, 1:] = 0
         if bots:
@@ -80,7 +82,8 @@ def farm(nets: dict[str, str], B: int = 16, steps: int = 1500, seed: int = 5, de
         if path != "script":                # "script": the scripted bot (sim.bots) as the reference
             m = from_checkpoint(path, dev).eval()
             m.binary_eps = 0.0
-        env = SimEnv(B=B, P=1, seed=seed, episode_steps=10 ** 9, curriculum_p=0.0)
+        env = SimEnv(B=B, P=1, seed=seed, episode_steps=10 ** 9, curriculum_p=0.0,
+                     obs=obs_kind(m) if m is not None else "grid")
         g, s, _, _, _ = env.reset()
         for step in range(steps):
             if m is None:

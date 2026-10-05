@@ -54,7 +54,12 @@ def save(model: Policy, path: Path, **meta) -> None:
 
 def load(path: str | Path, device: str = "cpu") -> Policy:
     ckpt = torch.load(path, map_location=device, weights_only=False)
-    model = Policy(**ckpt.get("config", {})).to(device)  # old checkpoints: plain defaults
+    cfg = ckpt.get("config", {})
+    if cfg.get("kind") == "entity":                          # transformer over object tokens (rl.entity_model)
+        from .entity_model import EntityPolicy
+        model = EntityPolicy(**cfg).to(device)
+    else:
+        model = Policy(**cfg).to(device)  # old checkpoints: plain defaults
     # strict=False: older checkpoints (e.g. bc.pt) predate the separate critic, which then
     # starts fresh; the policy weights must all be present.
     missing, _ = model.load_state_dict(ckpt["model"], strict=False)
