@@ -89,6 +89,64 @@ This resumes with the run's saved league snapshots. `--arch JSON` builds a diffe
   Taking the most likely move instead of sampling doesn't change this (92). **The nets farm at about 1/3 of a trivial routine**: in crowded arenas the per-pellet reward drowns in the noise of fights and deaths. Farming drills (`--farm-frac`) are the fix being tested.
 - **Splitting stays rare (0.1-0.6% of steps):** a random split usually gets you eaten, so the net learned "don't". The kill reward, the split exploration floor (`--explore`) and the `killable`/`density` inputs aim at this, and evolution tunes them.
 
+## Population training in one process (`rl/pbt.py`, 2026-10-05)
+
+Replaces the generation loop of rl/evo.py (whose genome and `mutate` it reuses).
+
+```
+uv run python -m rl.pbt --name p1 --from-evo e1 --b 12 --skip 2 --vram-gb 20 --hof-extra runs/rl/e1/hof >> logs/pbt-p1.txt 2>&1
+```
+
+- **One simulator for everyone:** every member owns `--b` arenas of one SimEnv, with its own drills and reward weights (`SimEnv.set_reward` is per arena), and learns there with `rl.ppo_sim.Learner`.
+- **Continuous evolution:** every `--eval-minutes` the members are snapshotted. A side process (`--eval-job`) runs the tournament plus the farming and 10-minute checks while training continues.
+  - When the results come back, the best member goes to the hall of fame.
+  - The bottom half are replaced by mutated copies of the top half. The ranking includes the last hall-of-fame net, so a member that regressed below it is replaced by a copy of the better old net.
+  - Replaced members' arenas restart.
+- **State and logs:** state is in `runs/rl/<name>/evo.json`, in rl/evo.py's layout, so `sim.watch --run p1` works. Logs are `logs/pbt-p1.txt` (rounds, results) and `logs/pbt-p1-<member>.txt`.
+
+**Speed, measured on the RTX 5090:**
+
+| Setup | Training samples/s |
+|---|---|
+| 4 rl/evo.py processes | ~1,600 in total |
+| rl.pbt | ~11,000 |
+
+Where the speed came from:
+1. **No cuDNN re-tuning.** PPO used a leftover minibatch whose size changed every iteration, and `cudnn.benchmark` re-tuned every convolution for each new size. That cost 5 s of CPU per update against 0.4 s of GPU work. Updates now use full minibatches only.
+2. **Acting as CUDA graphs** (`GraphedAct`): one launch per network call instead of dozens of small kernels. Acting was launch-bound.
+3. **One simulator for all members**, and distribution argument checks off (they sync the GPU).
+
+**Frame skip (`--skip 2`):**
+- Nets decide every 2 env steps (160 ms) and hold their move in between; a split or eject fires once.
+- `gamma` keeps its per-step meaning.
+- The encoder scales velocities and merge timers by the decision interval.
+- The skip is saved in the checkpoint, and rl.policy, sim.tourney and sim.watch hold the move accordingly.
+- Farming test: nearest pellet with 16 headings gets 256 mass when deciding every step, **303** every 2 steps and 245 every 4.
+
+**Simulator fix: map-sized players (2026-10-05).**
+- **The bug:** in long episodes, the size curriculum's respawned mass (50% of learner respawns at 50-5000) piled up in one player. Its 16 cells at max size (~360k mass) covered the 7000x7000 map and ate every respawn on its first tick. Food and viruses ran out too.
+- **The effect:** after ~30 minutes, most training slots were dead. Valid samples fell from 8,850 to ~1,300 per iteration, and the old evolution runs show the same symptom (about a third valid).
+- **The fix:** `SimEnv(max_player_mass=100_000)` restarts an arena when a player passes 100k mass, and rl.pbt uses curriculum 0.15. With these, players stay ~100% alive in 6000-step tests.
+
+## Farming specialist (f1)
+
+```
+uv run python -m rl.ppo_sim --run f1 --init runs/rl/e1/hof/g003_m9.pt --b 128 --p 8 --farm-frac 1 --farm-players 8     --league-frac 0 --bot-frac 0 --skip 2 --bc-farmer-iters 150 --bc-lr 1e-3 --farm-eval-every 20 --curriculum-p 0.3     --explore 0 --vf-warmup 0 --ent 0.003 --vram-gb 12
+```
+
+- **The teacher:** the scripted sim bot farms only 33 alone (it gets stuck), so the teacher is `sim.bots.farmer_actions`: the heading to the nearest pellet, ~300 mass.
+- **Imitation (DAgger):** the net plays, and the farmer labels its states. It runs at lr 1e-3; at the PPO rate of 1e-4 imitation barely moves (35% accuracy after 600 steps offline).
+- **Results** (2 minutes alone):
+
+  | Net | Mass |
+  |---|---|
+  | f1 after imitation | **250-284** |
+  | the farmer | ~300 |
+  | every earlier net | 20-60 |
+
+  PPO afterwards holds ~250-260.
+- **CoordConv** (`coords` gene: x/y input channels) made no difference to imitation (62% vs 61%).
+
 ## Evolution (`rl/evo.py`)
 
 Weights are learned by PPO. Evolution searches over the **design**.
