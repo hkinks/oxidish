@@ -373,9 +373,10 @@ class Learner:
             self.Done = torch.zeros((T, N), device=dev)
             self.Trunc = torch.zeros((T, N), device=dev)
             self.Valid = torch.zeros((T + 1, N), device=dev)
-        if self.it < self.fade_until and getattr(self, "TAct", None) is None:
+        farm_imit = self.hp.get("farm_imitate", 0.0) > 0
+        if (self.it < self.fade_until or farm_imit) and getattr(self, "TAct", None) is None:
             self.TAct = torch.zeros((T, N, 3), dtype=torch.long, device=dev)
-        elif self.it >= self.fade_until:
+        elif self.it >= self.fade_until and not farm_imit:
             self.TAct = None
         lr = self.hp.get("bc_lr", 1e-3) if self.it < self.bc_until else self.hp.get("lr", 1e-4)
         for pg_ in self.opt.param_groups:
@@ -392,7 +393,7 @@ class Learner:
         vl = v[ix]
         self.Valid[t] = vl.float()
         self.splits = self.splits + (a[:, 1] * vl).sum()
-        if self.it < self.fade_until:
+        if self.it < self.fade_until or self.hp.get("farm_imitate", 0.0) > 0:
             ta = farmer_actions(self.env)[ix]
             if obs_kind(self.model) == "entity":     # the same target as a pointer: the nearest pellet token
                 k0 = 16 + self.env.ent_enc.k["cell"]
@@ -453,6 +454,12 @@ class Learner:
         # kickstarting: pull toward each situation's specialist, fading from kick_lambda to kick_min
         prog = (it - self.start_it) / max(hp.get("kick_iters", 1), 1)
         kick_w = max(hp.get("kick_min", 0.0), hp.get("kick_lambda", 0.0) * (1 - prog)) if self.kick else 0.0
+        # farm imitation (farm_imitate): fades from farm_imitate to farm_imitate_min over farm_imitate_iters
+        farm_w = 0.0
+        if hp.get("farm_imitate", 0.0) > 0 and self.TAct is not None:
+            fp = (it - self.start_it) / max(hp.get("farm_imitate_iters", 300), 1)
+            farm_w = max(hp.get("farm_imitate_min", 0.0), hp["farm_imitate"] * (1 - fp))
+        TAf_farm = self.TAct.view(T * N, 3) if farm_w > 0 else None
         stats = {"pg": [], "vf": [], "ent": [], "kl": [], "clip": [], "maxlogr": []}
         nmb = max(n // mb, 1)
         distill = self.teacher is not None and it <= self.distill_until
@@ -501,6 +508,10 @@ class Learner:
                                 tdists, _ = teacher.dists(gx, Sf[ix], amp=AMP)
                             kl_s = sum(torch.distributions.kl_divergence(td, sd_) for td, sd_ in zip(tdists, dists))
                             loss = loss + kick_w * (kl_s * w_).sum() / len(ix)
+                    if farm_w > 0:   # the nearest-pellet farmer, on solo farming drill samples only
+                        fm = (Tyf[ix] == ARENA_FARM).float()
+                        if fm.sum() > 0:
+                            loss = loss - farm_w * (dists[0].log_prob(TAf_farm[ix][:, 0]) * fm).sum() / fm.sum()
                     if self.human is not None:
                         hw = max(hp.get("human_min", 0.0), hp.get("human_lambda", 0.0) * (1 - prog * hp.get("kick_iters", 1)
                                                                                           / max(hp.get("human_iters", 1), 1)))

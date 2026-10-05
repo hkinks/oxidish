@@ -116,9 +116,10 @@ def farm(nets: dict[str, str], B: int = 16, steps: int = 1500, seed: int = 5, de
 
 @torch.no_grad()
 def farm_batch(nets: dict[str, str], B: int = 64, steps: int = 1500, seed: int = 5, dev: str = "cuda",
-               free: bool = False, start: float = 10.0, gain: bool = False) -> dict:
+               free: bool = False, start: float = 10.0, gain: bool = False, guard: int = 0) -> dict:
     """farm() for many nets at once: one simulator, `B` solo arenas per net (one pass instead of one
-    per net; same numbers up to the arenas' random draws)."""
+    per net; same numbers up to the arenas' random draws). guard: play under the play-time guards
+    (sim.bots.guard_mouse; 1+ = no virus pops), as the nets are deployed."""
     names = list(nets)
     models = [from_checkpoint(path, dev).eval() for path in nets.values()]
     for m in models:
@@ -126,6 +127,9 @@ def farm_batch(nets: dict[str, str], B: int = 64, steps: int = 1500, seed: int =
     kinds = {obs_kind(m) for m in models}
     env = SimEnv(B=B * len(models), P=1, seed=seed, episode_steps=10 ** 9, curriculum_p=0.0,
                  obs="both" if len(kinds) > 1 else kinds.pop())
+    if guard:
+        env.guard = torch.ones(env.B, env.NL, dtype=torch.bool, device=dev)
+        env.guard_level = guard
     if start > 10:
         env.spawn_mass[:] = torch.tensor([start, start], device=dev)
     g, s, _, _, _ = env.reset()

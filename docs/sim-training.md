@@ -391,3 +391,16 @@ Run: see `ffa1` (pop 4, b 32, `--vram-gb 18`). Keep total GPU memory under ~26 G
 **The growth gap is farming without virus pops** (real server, alone, 2 game-min, 8 seeds, peak mass): net 258, + virus guard 187, + both guards 174, champ 240, farmM4 214. The nets farm partly by popping on viruses, which only pays when nobody can eat the pieces.
 
 **Imitating the champions failed** (`rl/champ_data.py`: 72k real-server frames of champ / r2g9 in the entity format; `rl/champ_bc.py`: move + split likelihood with a KL anchor). Held-out heading accuracy reached 90% (from 0%: the net moves by pointer only). On the real server it lost badly (log-mass 4.49 vs 5.18 for the net it started from; deaths 2.5 vs 1.2). The champion's precise steering squeezed into 16 headings, plus compounding errors, does not make a player.
+
+**Round 5: plateau at about -0.3, and the cause is growth.** The guarded nets now lose *less* mass per match than champ (116-145 vs 291) and kill as often (7.2), but they stay smaller. Farming under the guards, the sim matches the real server (g002_m3: sim 179, real 174-187):
+
+| farmer (2 min alone, guarded) | mass |
+|---|---|
+| ffa nets | 168-179 |
+| nearest-pellet farmer (`sim.bots.farmer_actions`) | 222 |
+| champ (real) | 240 |
+
+**Fix:**
+- The ffa layout has solo farm drills again (20%, 2 farmers each), now under the guards, so virus eating is impossible.
+- There, `farm_imitate` pulls the move toward the farmer's nearest pellet (as a pointer), only on farm-drill samples, fading from 1.0 to 0.1 over 300 iterations.
+- `sim.tourney.farm_batch(guard=2)` is the fast check.

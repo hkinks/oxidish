@@ -87,9 +87,10 @@ GENERAL_HP = dict(farm_frac=0.3, hunt_frac=0.35, flee_frac=0.35, giant_frac=0.0,
 # fitness = a real MultiOgar tournament every round (fresh seeds): members (with the play-time guards,
 # rl.policy.virus_guard / threat_guard) vs champ / r2g9 and the server's bots, scored as log-mass
 # margin over the rule-based champions in the same matches
-# no solo farming drills (and no farm teacher): there, eating viruses pays (fp2 found it), but in a real
-# game popping leaves pieces that the server's bots eat - the round-0 nets lost most mass that way
-FFA_HP = dict(bot_frac=0.5, league_frac=0.25, farm_frac=0.0, hunt_frac=0.1, flee_frac=0.15, giant_frac=0.0,
+# solo farming drills under the guards (no virus eating possible: fp2's trick, deadly in a real game),
+# with imitation of the nearest-pellet farmer there (222 mass in 2 min under the guards vs the nets'
+# ~175; champ ~240): the nets' remaining gap to the champions is growth, i.e. farming
+FFA_HP = dict(bot_frac=0.4, league_frac=0.15, farm_frac=0.2, hunt_frac=0.1, flee_frac=0.15, giant_frac=0.0,
               farm_players=2, farm_spawn=[10.0, 3000.0], hunt_players=3, hunt_spawn=[300.0, 3000.0],
               prey_spawn=[20.0, 300.0], prey_nets=0.5, prey_net_spawn=[300.0, 5000.0], flee_players=10,
               flee_hunters=6, flee_spawn=[10.0, 3000.0], flee_hunter_spawn=[1500.0, 6000.0], flee_hunter_nets=0.5,
@@ -97,7 +98,8 @@ FFA_HP = dict(bot_frac=0.5, league_frac=0.25, farm_frac=0.0, hunt_frac=0.1, flee
               growth=None, action_bonus=[0.0, 0.0], adv_per_type=True, kick_lambda=1.0, kick_iters=300,
               kick_min=0.1, split_explore_min_mass=150.0,
               pop_penalty=0.5,    # popping on a virus costs half our mass (the pieces the bots would eat)
-              guard=2)            # train under the play-time guards (sim.bots.guard_mouse), as deployed
+              guard=2,            # train under the play-time guards (sim.bots.guard_mouse), as deployed
+              farm_imitate=1.0, farm_imitate_min=0.1, farm_imitate_iters=300)
 FFA_HP_KINDS = ["lr", "ent", "gamma", "explore", "explore", "epochs", "lam", "lam", "split_min"]
 FFA_REFS = ["champ=runs/final_champion.json:2", "r2g9=runs/r2/champion_009.json:2"]   # the rule-based yardsticks
 GENERAL_REFS = {"farm10": 288.0, "farm1000": 889.0, "hunt": 1000.0, "evade": 494.0}   # the specialists' scores
