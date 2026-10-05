@@ -62,7 +62,7 @@ HUNT_HP = dict(hunt_frac=1.0, farm_frac=0.0, flee_frac=0.0, giant_frac=0.0, leag
 EVADE_HP = dict(flee_frac=1.0, farm_frac=0.0, hunt_frac=0.0, giant_frac=0.0, league_frac=0.0, bot_frac=0.0,
                 flee_players=12, flee_hunters=6, flee_spawn=[10.0, 3000.0], flee_hunter_spawn=[1500.0, 6000.0],
                 flee_hunter_nets=0.5, league_pool="hof", league_models=4,
-                death_scale=1.0, kill_reward=[0.0, 0.0], virus_reward=[0.0, 0.0, 0.0], growth=None,
+                death_scale=2.0, kill_reward=[0.0, 0.0], virus_reward=[0.0, 0.0, 0.0], growth=None,
                 action_bonus=[0.0, 0.0], eject_explore=False, split_explore_min_mass=300.0)
 # --objective general: one net for every situation, all of them in every batch (interleaved): solo
 # farming (2 per arena, 10-3000 mass), hunting (prey bots + prey nets), escaping (hunter bots + hunter nets);
@@ -117,7 +117,9 @@ def eval_job(path: str) -> None:
     if job.get("objective") == "evade":
         ev = evade_batch(nets, B=32)
         small = farm_batch(nets, B=64, free=True)
-        res = {k: {"log_mass": (math.log(max(v["mass"], 1.0) / 200) + math.log(max(small[k], 1.0) / 300)) / 2,
+        # survival first (deaths per minute under threat), mass under threat and farming alone secondary
+        res = {k: {"log_mass": -math.log(v["deaths_per_min"] + 0.05) + 0.25 * math.log(max(v["mass"], 1.0) / 200)
+                   + 0.25 * math.log(max(small[k], 1.0) / 300),
                    "ci": 0.0, "avg_mass": v["mass"], "deaths": v["deaths_per_min"], "farm10": small[k], "kills": 0.0}
                for k, v in ev.items()}
         Path(job["out"]).write_text(json.dumps({"results": res, "farm": small, "long": {}}, indent=1))
@@ -317,7 +319,7 @@ class Population:
         """The "--- round N results" block of the log (other tools grep its lines)."""
         log(f"--- round {rnd} results" + {"farm": " (fitness: free farming, 2 min alone, split / eject allowed)",
                                            "hunt": " (fitness: hunting test, 1000 mass among 15 prey - half scripted, half the evaders' newest nets - 2 min)",
-                                           "evade": " (fitness: 200 mass among 7 big hunters x farming alone, 2 min each)",
+                                           "evade": " (fitness: survival first - deaths/min among 7 big hunters; mass under threat and farming alone secondary)",
                                            "general": " (fitness: farm 10 / farm 1000 / hunt / evade vs the specialists: 288 / +889 / +1000 / 494)"
                                            }.get(self.args.objective, ""))
         for name, r in sorted(res.items(), key=lambda kv: -kv[1]["log_mass"]):
