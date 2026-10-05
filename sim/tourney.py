@@ -138,6 +138,45 @@ def farm_batch(nets: dict[str, str], B: int = 64, steps: int = 1500, seed: int =
     return {n: (end[k] - (m0[k] if gain else 0.0)).item() for k, n in enumerate(names)}
 
 
+@torch.no_grad()
+def hunt_batch(nets: dict[str, str], B: int = 32, P: int = 16, steps: int = 1500, start: float = 1000.0,
+               prey: tuple = (20.0, 300.0), seed: int = 6, dev: str = "cuda") -> dict:
+    """Hunting test: per net `B` arenas, each with that net as one hunter starting at `start` mass among
+    P - 1 scripted prey (sim.bots: they flee threats) that start and respawn at `prey` mass. Per net:
+    mass gained in `steps` (1500 = 2 min), kills and splits per minute. One simulator for all nets."""
+    names = list(nets)
+    models = [from_checkpoint(path, dev).eval() for path in nets.values()]
+    for m in models:
+        m.binary_eps = 0.0
+    M = len(models)
+    kinds = {obs_kind(m) for m in models}
+    env = SimEnv(B=B * M, P=P, seed=seed, episode_steps=10 ** 9, curriculum_p=0.0, max_player_mass=0,
+                 obs="both" if len(kinds) > 1 else kinds.pop())
+    env.spawn_mass[:, 0] = torch.tensor([start, start], device=dev)
+    env.spawn_mass[:, 1:] = torch.tensor(list(prey), device=dev)
+    g, s, _, _, _ = env.reset()
+    hunters = torch.arange(B * M, device=dev) * P                 # slot 0 of every arena
+    m0 = env.prev_mass[:, 0].view(M, B).mean(1)
+    a = torch.zeros(B * M * P, 3, dtype=torch.long, device=dev)
+    splits = torch.zeros(M, device=dev)
+    for step in range(steps):
+        a.view(B * M, P, 3)[:, 1:] = scripted_actions(env.w, env.bot_split_prob)[:, 1:]
+        for k, m in enumerate(models):
+            ix = hunters[k * B:(k + 1) * B]
+            if step % m.skip == 0:
+                a[ix] = m.act(obs_for(m, env, g)[ix], s[ix], amp=True)[0]
+                a[ix, 2] = 0
+                splits[k] += ((a[ix, 1] > 0) & env.prev_alive.reshape(-1)[ix]).sum()
+            else:
+                a[ix, 1:] = 0
+        g, s, _, _, _ = env.step(a)
+    end = env.prev_mass[:, 0].view(M, B).mean(1)
+    kills = env.w.kstat[0][:, 0].view(M, B).mean(1)
+    mins = steps * 0.08 / 60
+    return {n: {"gain": (end[k] - m0[k]).item(), "kills_per_min": kills[k].item() / mins,
+                "splits_per_min": splits[k].item() / B / mins} for k, n in enumerate(names)}
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--nets", nargs="+", required=True, help="name=checkpoint")

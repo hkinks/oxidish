@@ -41,12 +41,23 @@ import torch
 
 from rl.common import ROOT
 
-from rl.evo import DEFAULT_ARCH, DEFAULT_HP, FARM_HP_KINDS, HP_KINDS, mutate
+from rl.evo import DEFAULT_ARCH, DEFAULT_HP, FARM_HP_KINDS, HP_KINDS, HUNT_HP_KINDS, mutate
 from rl.ppo_sim import Learner, collect, from_checkpoint, frozen, new_model, setup_cuda
 from sim.env import SimEnv
 
 FIXED_HP = dict(league_frac=0.3, bot_frac=0.1, league_models=2, league_every=25, league_size=8,
                 save_every=20, vf_warmup=0, clip=0.2, target_kl=0.02, vf=0.5)
+# --objective hunt: hunting arenas only - a few hunters (learners, 300-3000 mass) among respawning prey
+# (20-300): 75% scripted bots (they flee: splitting is how to catch them), 25% frozen hall-of-fame nets
+# (farmers: they move but never flee - the easy first meals); mass is the
+# only reward and death costs nothing (fearless); fitness is the hunting test (sim.tourney.hunt_batch)
+HUNT_HP = dict(hunt_frac=1.0, farm_frac=0.0, flee_frac=0.0, giant_frac=0.0, league_frac=0.0, bot_frac=0.0,
+               hunt_players=3, hunt_spawn=[300.0, 3000.0], prey_spawn=[20.0, 300.0], prey_nets=0.25,
+               league_pool="hof", league_models=4, death_scale=0.0, kill_reward=[0.0, 0.0],
+               virus_reward=[0.0, 0.0, 0.0], growth=None, action_bonus=[0.0, 0.0], eject_explore=False)
+LAYOUT_KEYS = ("farm_frac", "hunt_frac", "flee_frac", "giant_frac", "league_frac", "bot_frac", "kill_reward",
+               "virus_reward", "growth", "action_bonus", "hunt_players", "hunt_spawn", "prey_spawn", "prey_nets",
+               "league_pool", "death_scale")
 # --objective farm: farming arenas only (every slot a learner), mass is the only reward; fitness is
 # the free farming check (alone for 2 min, split / eject allowed: whatever farms fastest)
 FARM_HP = dict(farm_frac=1.0, hunt_frac=0.0, flee_frac=0.0, giant_frac=0.0, league_frac=0.0, bot_frac=0.0,
@@ -60,11 +71,17 @@ def log(msg: str):
 
 def eval_job(path: str) -> None:
     """Side process: tournament + checks on frozen snapshots; writes the JSON result."""
-    from sim.tourney import farm, farm_batch, run
+    from sim.tourney import farm, farm_batch, hunt_batch, run
     job = json.loads(Path(path).read_text())
     setup_cuda(job.get("vram_gb", 5.0))
     nets = job["nets"]
     mem = {k: v for k, v in nets.items() if k != "hof_last"}
+    if job.get("objective") == "hunt":
+        hb = hunt_batch(nets, B=32)
+        res = {k: {"log_mass": v["gain"] / 1000, "ci": 0.0, "avg_mass": v["gain"], "kills": v["kills_per_min"],
+                   "splits_per_min": v["splits_per_min"], "deaths": 0.0} for k, v in hb.items()}
+        Path(job["out"]).write_text(json.dumps({"results": res, "farm": {}, "long": {}}, indent=1))
+        return
     if job.get("objective") == "farm":
         # fitness: both farming tests (split / eject allowed), each relative to its routine:
         # from 10 mass (routines ~300) and the gain from 1000 mass (routine +374; split-farming +467)
@@ -97,7 +114,7 @@ class Population:
         kinds = {m["genome"]["arch"].get("kind", "grid") for m in self.state["members"]}
         self.env = SimEnv(B=pop * args.b, P=args.p, seed=args.rng, episode_steps=20000, curriculum_p=args.curriculum_p,
                           curriculum_mass=tuple(float(x) for x in args.curriculum_mass.split(",")),
-                          obs="both" if len(kinds) > 1 or args.hof_extra else kinds.pop(),
+                          obs="both" if len(kinds) > 1 else kinds.pop(),
                           arena_steps=args.arena_steps,
                           obs_dtype=torch.float16, skip=args.skip)
         self.hof_files = [f for d in [self.root / "hof", *map(Path, args.hof_extra)] for f in sorted(d.glob("*.pt"))]
@@ -127,7 +144,7 @@ class Population:
                 raise SystemExit("--seed or --from-evo is required for a new population")
             base = {"arch": json.loads(a.arch) if a.arch else DEFAULT_ARCH, "hp": DEFAULT_HP}
             members = []
-            kinds = FARM_HP_KINDS if a.objective == "farm" else HP_KINDS
+            kinds = {"farm": FARM_HP_KINDS, "hunt": HUNT_HP_KINDS}.get(a.objective, HP_KINDS)
             for k in range(a.pop):
                 g, note = (copy.deepcopy(base), "seed") if k == 0 else mutate(base, self.rng, hp_kinds=kinds)
                 members.append({"id": f"m{k}", "genome": g, "ckpt": a.seed, "it": 0, "seed": 100 + k,
@@ -147,14 +164,12 @@ class Population:
     def make_learner(self, m: dict, k: int) -> Learner:
         """Learner for member `m` owning arenas [k*b, (k+1)*b) of the shared env; its genome supplies hyper-parameters."""
         a = self.args
-        farm = FARM_HP if a.objective == "farm" else {}
+        farm = {"farm": FARM_HP, "hunt": HUNT_HP}.get(a.objective, {})
         # farming defaults sit below the genome (its genes may override them: lambda, split exploration,
         # start sizes, epochs), the arena layout of the farm objective above it
         hp = {**DEFAULT_HP, "lam": 0.95, **farm, **m["genome"]["hp"], **FIXED_HP, "mb": a.mb}
         if farm:
-            hp.update({k: FARM_HP[k] for k in ("farm_frac", "hunt_frac", "flee_frac", "giant_frac", "league_frac",
-                                               "bot_frac", "kill_reward", "virus_reward", "growth", "action_bonus")},
-                      farm_players=a.p)
+            hp.update({k: farm[k] for k in LAYOUT_KEYS if k in farm}, farm_players=a.p)
         model = new_model(**m["genome"]["arch"]).to(self.dev)
         parent = from_checkpoint(m["ckpt"], self.dev)
         teacher = None
@@ -239,16 +254,20 @@ class Population:
 
     def log_results(self, rnd: int, res: dict, ev: dict):
         """The "--- round N results" block of the log (other tools grep its lines)."""
-        log(f"--- round {rnd} results" + (" (fitness: free farming, 2 min alone, split / eject allowed)"
-                                          if self.args.objective == "farm" else ""))
+        log(f"--- round {rnd} results" + {"farm": " (fitness: free farming, 2 min alone, split / eject allowed)",
+                                           "hunt": " (fitness: hunting test, 1000 mass among 15 fleeing prey, 2 min)"
+                                           }.get(self.args.objective, ""))
         for name, r in sorted(res.items(), key=lambda kv: -kv[1]["log_mass"]):
+            if self.args.objective == "hunt":
+                log(f"  {name:<9} gain {r['avg_mass']:+6.0f}  kills/min {r['kills']:.2f}  splits/min {r['splits_per_min']:.2f}")
+                continue
             if "gain_1000" in r:
                 log(f"  {name:<9} fitness {r['log_mass']:+.3f}  from 10 -> {r['avg_mass']:.0f}  "
                     f"from 1000: {r['gain_1000']:+.0f}  (routines ~300 / +374, split-farming +467)")
                 continue
             log(f"  {name:<9} log_mass {r['log_mass']:.3f} +-{r['ci']:.3f}  mass {r['avg_mass']:.0f}  "
                 f"deaths {r['deaths']:.2f}  kills {r['kills']:.2f}  splits/min {r.get('splits_per_min', 0):.2f}")
-        if self.args.objective != "farm":
+        if ev["farm"] and self.args.objective != "farm":
             log("  farming alone, mass after 2 min (routines ~300): " +
                 "  ".join(f"{k} {v:.0f}" for k, v in sorted(ev["farm"].items(), key=lambda kv: -kv[1])))
         if ev["long"]:
@@ -284,7 +303,7 @@ class Population:
         """Swap `dead` for a mutated child of `par`: new learner, its arenas restarted."""
         members = self.state["members"]
         g, note = mutate(par["genome"], self.rng,
-                         hp_kinds=FARM_HP_KINDS if self.args.objective == "farm" else HP_KINDS)
+                         hp_kinds={"farm": FARM_HP_KINDS, "hunt": HUNT_HP_KINDS}.get(self.args.objective, HP_KINDS))
         cid = f"m{self.state['next_id']}"
         self.state["next_id"] += 1
         same = g["arch"] == par["genome"]["arch"]
@@ -349,7 +368,7 @@ def main() -> None:
     p.add_argument("--curriculum-mass", default="50,5000", help="their start mass range (log-uniform)")
     p.add_argument("--arena-steps", type=int, default=0, help="per-arena restart clock in steps (staggered; 0: off)")
     p.add_argument("--arch", help="genome architecture of a new population (JSON), e.g. '{\"kind\": \"entity\"}'")
-    p.add_argument("--objective", choices=("arena", "farm"), default="arena",
+    p.add_argument("--objective", choices=("arena", "farm", "hunt"), default="arena",
                    help="farm: farming arenas only, mass reward, fitness = free farming check")
     p.add_argument("--rng", type=int, default=1)
     p.add_argument("--vram-gb", type=float, default=20.0)

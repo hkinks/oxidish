@@ -77,6 +77,7 @@ class SimEnv:
         self.r_bonus = torch.zeros(2, B, 1, device=d)
         self.r_growth = torch.zeros(B, 1, dtype=torch.bool, device=d)
         self.r_par = torch.zeros(3, B, 1, device=d)       # par step, par mass, death cost
+        self.r_death = torch.ones(B, 1, device=d)          # scale of the (linear) death penalty: 0 = fearless
         self.set_reward(slice(None), virus_reward, explore_reward, kill_reward, growth, action_bonus)
         self.n_agents = B * self.NL
         self.py_steps = 0
@@ -108,7 +109,7 @@ class SimEnv:
         self.trunc = torch.zeros(B * self.NL, dtype=torch.bool, device=self.w.dev)
 
     def set_reward(self, arenas, virus_reward=(0.0, 0.0, 0.0), explore_reward=0.0, kill_reward=(0.0, 0.0),
-                   growth: dict | None = None, action_bonus=(0.0, 0.0)):
+                   growth: dict | None = None, action_bonus=(0.0, 0.0), death_scale: float = 1.0):
         """Reward weights for `arenas` (a slice over B): virus_reward (shot, pop, popmass),
         explore_reward per new map square, kill_reward (per enemy cell eaten, per 200 enemy mass
         eaten), action_bonus (per split, per eject the game carries out).
@@ -121,6 +122,7 @@ class SimEnv:
         self.r_kill[:, arenas] = vec(kill_reward)
         self.r_explore[arenas] = float(explore_reward)
         self.r_bonus[:, arenas] = vec(action_bonus)
+        self.r_death[arenas] = float(death_scale)
         self.r_growth[arenas] = bool(growth)
         if growth:
             par_step = math.log(2) / (growth.get("par_doubling_min", 4.0) * 60 / 0.08)
@@ -303,7 +305,7 @@ class SimEnv:
         pa, pm = self.prev_alive, self.prev_mass
         died = pa & ~alive_now
         rew = torch.where(alive_now & pa, (mass_now - pm) * REWARD_SCALE, torch.zeros_like(mass_now))
-        rew = torch.where(died, -pm * REWARD_SCALE, rew)
+        rew = torch.where(died, -pm * REWARD_SCALE * self.r_death, rew)
         if self._any_growth:
             lg = lambda m: torch.log(m.clamp(min=SPAWN_MASS))
             par = self.r_par[0] * (mass_now > self.r_par[1]).float()

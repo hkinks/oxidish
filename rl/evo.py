@@ -40,6 +40,7 @@ CH_MINE = 2   # our own cells: always visible to the net
 
 HP_KINDS = ["lr", "ent", "gamma", "explore", "kill", "virus", "explore_reward", "epochs", "farm", "hunt", "hunt",
             "flee", "giant", "growth", "growth", "bonus", "bonus"]
+HUNT_HP_KINDS = ["lr", "ent", "gamma", "explore", "explore", "epochs", "lam", "lam", "split_min"]
 FARM_HP_KINDS = ["lr", "ent", "gamma", "explore", "explore", "explore_reward", "epochs", "lam", "lam",
                  "split_min", "split_min", "farm_spawn"]
 

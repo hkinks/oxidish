@@ -181,7 +181,8 @@ def act_sampled(model: Policy, g: torch.Tensor, s: torch.Tensor):
 # ---- arena layout ------------------------------------------------------------------------------
 LAYOUT_DEFAULTS = dict(league_frac=0.2, bot_frac=0.1, farm_frac=0.0, farm_players=8, hunt_frac=0.0,
                        hunt_players=10, flee_frac=0.0, flee_players=20, flee_hunters=10, giant_frac=0.0,
-                       giants=4, giant_learners=2, farm_spawn=None)
+                       giants=4, giant_learners=2, farm_spawn=None, hunt_spawn=(400.0, 2000.0),
+                       prey_spawn=(20.0, 200.0), prey_nets=0.0)
 
 
 def layout(env: SimEnv, lo: int, nb: int, cfg: dict) -> torch.Tensor:
@@ -219,8 +220,10 @@ def layout(env: SimEnv, lo: int, nb: int, cfg: dict) -> torch.Tensor:
     for i in range(a, a + n_hunt):
         k = c["hunt_players"]
         role[i, k:] = ROLE_BOT
-        env.spawn_mass[lo + i, :k] = t(400.0, 2000.0)
-        env.spawn_mass[lo + i, k:] = t(20.0, 200.0)
+        n_net = round((P - k) * c["prey_nets"])    # prey played by frozen nets (league / hall of fame): they
+        role[i, P - n_net:] = ROLE_LEAGUE          # don't flee, so eating others pays from the first meeting
+        env.spawn_mass[lo + i, :k] = t(*map(float, c["hunt_spawn"]))
+        env.spawn_mass[lo + i, k:] = t(*map(float, c["prey_spawn"]))
     a += n_hunt
     for i in range(a, a + n_flee):
         k, hn = c["flee_players"], c["flee_hunters"]
@@ -277,7 +280,7 @@ class Learner:
         self.opt = torch.optim.Adam(model.parameters(), lr=hp.get("lr", 1e-4), eps=1e-5, fused=True)
         env.set_reward(slice(lo, lo + nb), hp.get("virus_reward", (0, 0, 0)), hp.get("explore_reward", 0.0),
                        hp.get("kill_reward", (0, 0)), parse_growth(hp.get("growth")),
-                       hp.get("action_bonus", (0, 0)))
+                       hp.get("action_bonus", (0, 0)), hp.get("death_scale", 1.0))
         role = layout(env, lo, nb, hp)
         flat = role.reshape(-1)
         base = lo * P
@@ -314,7 +317,8 @@ class Learner:
         return slice(self.lo, self.lo + self.nb)
 
     def assign_league(self):
-        pool = self.snaps + self.hof
+        # league_pool "hof": only the hall of fame plays the league slots (e.g. prey nets for hunters)
+        pool = self.hof if self.hp.get("league_pool") == "hof" and self.hof else self.snaps + self.hof
         for i in range(len(self.league_models)):
             self.league_models[i] = pool[np.random.randint(len(pool))]
 
