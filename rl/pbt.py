@@ -63,7 +63,8 @@ EVADE_HP = dict(flee_frac=1.0, farm_frac=0.0, hunt_frac=0.0, giant_frac=0.0, lea
                 flee_players=12, flee_hunters=6, flee_spawn=[10.0, 3000.0], flee_hunter_spawn=[1500.0, 6000.0],
                 flee_hunter_nets=0.5, league_pool="hof", league_models=4,
                 death_scale=2.0, kill_reward=[0.0, 0.0], virus_reward=[0.0, 0.0, 0.0], growth=None,
-                action_bonus=[0.0, 0.0], eject_explore=False, split_explore_min_mass=300.0)
+                action_bonus=[0.0, 0.0], eject_explore=False,
+                split_explore_min_mass=70.0)   # split escapes: evaders are mostly 100-600 mass when hunted
 # --objective general: one net for every situation, all of them in every batch (interleaved): solo
 # farming (2 per arena, 10-3000 mass), hunting (prey bots + prey nets), escaping (hunter bots + hunter nets);
 # full death penalty; per-situation advantage normalisation; kickstarting from the specialists (--teachers
