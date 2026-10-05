@@ -86,7 +86,8 @@ GENERAL_HP = dict(farm_frac=0.3, hunt_frac=0.35, flee_frac=0.35, giant_frac=0.0,
 # drills against forgetting; no split bonus, no imitation; kickstarting (--teachers) fades as in general.
 # fitness = a real MultiOgar tournament every round (fresh seeds): members (with the play-time guards,
 # rl.policy.virus_guard / threat_guard) vs champ / r2g9 and the server's bots, scored as log-mass
-# margin over the rule-based champions in the same matches
+# margin over the rule-based champions in the same matches (x 0.3), plus a guarded sim free-for-all
+# with MultiOgar bots relative to hof_last (x 0.7: the same ranking at a third of the noise)
 # solo farming drills under the guards (no virus eating possible: fp2's trick, deadly in a real game),
 # with imitation of the nearest-pellet farmer there (222 mass in 2 min under the guards vs the nets'
 # ~175; champ ~240): the nets' remaining gap to the champions is growth, i.e. farming
@@ -210,6 +211,18 @@ def ffa_eval(nets: dict, job: dict) -> dict:
                   "avg_mass": statistics.fmean(math.exp(mean[k][s]) for s in seeds),
                   "deaths": statistics.fmean(dead[k]), "kills": 0.0, "popped": statistics.fmean(pops[k]),
                   "wins": sum(m > 0 for m in margin) / len(margin), "matches": len(seeds)}
+    # + a guarded sim free-for-all with MultiOgar bots: ranks nets like the real server (round 6: same
+    # bottom two, same top group) at a third of its noise (+-0.09 vs +-0.25 log-mass); scored relative
+    # to hof_last in the same games. fitness = 0.3 x real margin + 0.7 x sim margin.
+    from sim.tourney import run as sim_run
+    sim = sim_run(nets, B=64, P=20, steps=3000, bots=8, seed=job["seed"] + 500, bot_kind="multiogar", guard=2)
+    base = sim["hof_last"]["log_mass"] if "hof_last" in sim else statistics.fmean(v["log_mass"] for k, v in sim.items() if k != "bots")
+    for k in nets:
+        if k in res and k in sim:
+            res[k]["real_margin"] = res[k]["log_mass"]
+            res[k]["sim_margin"] = sim[k]["log_mass"] - base
+            res[k]["sim_mass"] = sim[k]["avg_mass"]
+            res[k]["log_mass"] = 0.3 * res[k]["real_margin"] + 0.7 * res[k]["sim_margin"]
     return {"results": res, "farm": {}, "long": {}, "rows": rows}
 
 
@@ -326,7 +339,7 @@ class Population:
             nets["hof_last"] = str(hof_files[-1])
         self.eval_nets = nets
         job = {"nets": nets, "eval_b": a.eval_b, "p": a.p, "steps": a.eval_steps, "seed": 7000 + rnd,
-               "long_steps": a.long_steps, "out": str(self.root / "eval" / f"g{rnd:03d}.json"), "vram_gb": 5.0,
+               "long_steps": a.long_steps, "out": str(self.root / "eval" / f"g{rnd:03d}.json"), "vram_gb": 6.0 if a.objective == "ffa" else 5.0,
                "objective": a.objective, "matches": a.eval_matches,
                # hunting test: half the prey = the first --hof-extra population's newest nets (the evaders)
                "prey_nets": [str(f) for f in sorted(Path(a.hof_extra[0]).glob("*.pt"))[-3:]]
@@ -398,7 +411,8 @@ class Population:
                     f"evade {r['evade']:.0f} ({r['deaths']:.2f} deaths/min)")
                 continue
             if self.args.objective == "ffa":
-                log(f"  {name:<9} margin {r['log_mass']:+.3f} +-{r['ci']:.3f}  beats the rule bots in {r.get('wins', 0):.0%} "
+                log(f"  {name:<9} fitness {r['log_mass']:+.3f} (sim {r.get('sim_margin', 0):+.3f}, mass {r.get('sim_mass', 0):.0f})  "
+                    f"real margin {r.get('real_margin', r['log_mass']):+.3f} +-{r['ci']:.3f}  beats the rule bots in {r.get('wins', 0):.0%} "
                     f"of {r.get('matches', 0)} matches  avg mass {r['avg_mass']:.0f}  deaths/match {r['deaths']:.2f}  "
                     f"virus pops/match {r.get('popped', 0):.1f}")
                 continue

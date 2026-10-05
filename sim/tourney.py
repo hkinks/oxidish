@@ -22,7 +22,7 @@ from sim.env import SimEnv
 
 @torch.no_grad()
 def run(nets: dict[str, str], B: int = 16, P: int = 50, steps: int = 3000, bots: int = 5,
-        seed: int = 123, dev: str = "cuda", bot_kind: str = "scripted") -> dict:
+        seed: int = 123, dev: str = "cuda", bot_kind: str = "scripted", guard: int = 0) -> dict:
     """Shared tournament: the nets (name -> checkpoint) and `bots` scripted bots per arena fill B arenas of P
     slots; returns per-net mass statistics (fitness = mean log of average mass)."""
     names = list(nets)
@@ -33,6 +33,10 @@ def run(nets: dict[str, str], B: int = 16, P: int = 50, steps: int = 3000, bots:
     env = SimEnv(B=B, P=P, seed=seed, episode_steps=10 ** 9, curriculum_p=0.0,
                  obs="both" if len(kinds) > 1 else kinds.pop(), bot_kind=bot_kind)
     M, n_play = len(models), P - bots
+    if guard:                                  # the nets play under the play-time guards (bots don't)
+        env.guard = torch.zeros(B, P, dtype=torch.bool, device=dev)
+        env.guard[:, :n_play] = True
+        env.guard_level = guard
     owner = torch.full((B, P), -1, dtype=torch.long, device=dev)        # net index per slot, -1 = bot
     for b in range(B):
         for j in range(n_play):

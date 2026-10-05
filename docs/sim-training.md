@@ -404,3 +404,7 @@ Run: see `ffa1` (pop 4, b 32, `--vram-gb 18`). Keep total GPU memory under ~26 G
 - The ffa layout has solo farm drills again (20%, 2 farmers each), now under the guards, so virus eating is impossible.
 - There, `farm_imitate` pulls the move toward the farmer's nearest pellet (as a pointer), only on farm-drill samples, fading from 1.0 to 0.1 over 300 iterations.
 - `sim.tourney.farm_batch(guard=2)` is the fast check.
+
+**Round 6:** no gain (best -0.36). Members differ by less than the real evaluation's noise (+-0.25), so selection was close to random.
+- A guarded sim free-for-all with MultiOgar bots (`sim.tourney.run(..., bot_kind="multiogar", guard=2)`, 64 arenas) ranks round 6's nets like the real server (same bottom two, same top group) at +-0.09.
+- ffa fitness is now `0.3 x real margin + 0.7 x sim margin vs hof_last`. The eval job's VRAM is 6 GB, so the total stays at ~23 of 32 GB.
