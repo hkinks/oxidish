@@ -70,6 +70,9 @@ def parse_lineup(specs: list[str]) -> list[tuple[str, dict]]:
                 policy = {"kind": "jev", **json.loads(Path(path[4:]).read_text())}
             elif path.startswith("greedy:"):   # "nng=greedy:runs/rl/x.pt": always the most likely action
                 policy = {"kind": "nn", "ckpt": path[7:], "greedy": True}
+            elif path.startswith("hybrid:"):   # "hyb=hybrid:runs/rl/x.pt": champion when alone, guarded net near others
+                policy = {"kind": "hybrid", "ckpt": path[7:],
+                          "params": json.loads(Path("runs/final_champion.json").read_text()).get("params")}
             elif path.startswith("guard:"):    # "nnv=guard:runs/rl/x.pt": the net plus the virus detour
                 policy = {"kind": "nn", "ckpt": path[6:], "guard": 1}
             elif path.startswith("guard2:"):   # ... plus the champion's threat push

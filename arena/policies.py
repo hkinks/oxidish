@@ -113,7 +113,41 @@ def hunter_spec(base: dict) -> dict:
     return {"farm": "route", "params": params}
 
 
+class HybridPolicy:
+    """The champion's routines while no other player is near, a guarded net once one is: the champion
+    farms along planned pellet routes far better than the sim nets (real server, alone: 240 vs 174),
+    the guarded net survives fights about as well (1.2 vs 0.8-1.0 deaths per 4 min) and can learn more.
+    Both run every step (their trackers and memories stay current); only the output is switched."""
+
+    def __init__(self, ckpt: str, params: dict | None = None, near: float = 1000.0, guard: int = 2):
+        from rl.policy import NNPolicy
+        self.champ = HeuristicPolicy("route", params)
+        self.net = NNPolicy(ckpt, guard=guard)
+        self.near = near
+        self.counters = {"steps": 0, "net": 0}
+
+    def act(self, s: Snapshot):
+        a_champ = self.champ.act(s)
+        a_net = self.net.act(s)
+        if not s.mine:
+            return a_champ
+        me = max(s.mine, key=lambda c: c.size)
+        mine = {c.id for c in s.mine}
+        near = any(c.kind == "player" and c.id not in mine
+                   and ((c.x - me.x) ** 2 + (c.y - me.y) ** 2) ** 0.5 - c.size - me.size < self.near
+                   for c in s.others)
+        self.counters["steps"] += 1
+        self.counters["net"] += near
+        return a_net if near else a_champ
+
+    def reset(self) -> None:
+        self.champ.reset()
+        self.net.reset()
+
+
 def build(spec: dict):
+    if spec.get("kind") == "hybrid":   # {"kind": "hybrid", "ckpt": net, "params": champion Params}
+        return HybridPolicy(spec["ckpt"], spec.get("params"), spec.get("near", 1000.0))
     if spec.get("kind") == "jev":  # {"kind": "jev", "params": {...champion Params...}}
         return JevPolicy(spec.get("params"), spec.get("farm", "route"))
     if spec.get("kind") == "nn":  # {"kind": "nn", "ckpt": "runs/rl/p1/latest.pt"}
