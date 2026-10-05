@@ -261,6 +261,8 @@ class Learner:
         self.teacher, self.distill_until = teacher, start_it + distill_iters
         # imitate the nearest-pellet farmer (sim.bots.farmer_actions) first: DAgger on our own states
         self.bc_until = start_it + hp.get("bc_farmer_iters", 0)
+        # then the imitation term fades out linearly over bc_fade_iters while the mass reward takes over
+        self.fade_until = self.bc_until + (hp.get("bc_fade_iters", 0) if hp.get("bc_farmer_iters", 0) else 0)
         self.it = self.start_it = start_it
         self.log_f = log
         dev = self.dev = env.dev
@@ -329,9 +331,9 @@ class Learner:
             self.Rew = torch.zeros((T, N), device=dev)
             self.Done = torch.zeros((T, N), device=dev)
             self.Valid = torch.zeros((T + 1, N), device=dev)
-        if self.it < self.bc_until and getattr(self, "TAct", None) is None:
+        if self.it < self.fade_until and getattr(self, "TAct", None) is None:
             self.TAct = torch.zeros((T, N, 3), dtype=torch.long, device=dev)
-        elif self.it >= self.bc_until:
+        elif self.it >= self.fade_until:
             self.TAct = None
         lr = self.hp.get("bc_lr", 1e-3) if self.it < self.bc_until else self.hp.get("lr", 1e-4)
         for pg_ in self.opt.param_groups:
@@ -348,7 +350,7 @@ class Learner:
         vl = v[ix]
         self.Valid[t] = vl.float()
         self.splits = self.splits + (a[:, 1] * vl).sum()
-        if self.it < self.bc_until:
+        if self.it < self.fade_until:
             ta = farmer_actions(self.env)[ix]
             if obs_kind(self.model) == "entity":     # the same target as a pointer: the nearest pellet token
                 k0 = 16 + self.env.ent_enc.k["cell"]
@@ -398,7 +400,8 @@ class Learner:
         nmb = max(n // mb, 1)
         distill = self.teacher is not None and it <= self.distill_until
         bc = it <= self.bc_until
-        TAf = self.TAct.view(T * N, 3) if bc else None
+        fade = 0.0 if bc or it > self.fade_until else 1 - (it - self.bc_until) / max(self.fade_until - self.bc_until, 1)
+        TAf = self.TAct.view(T * N, 3) if bc or fade > 0 else None
         for ep in range(hp.get("epochs", 3)):
             if not bc and stats["kl"] and statistics.fmean(stats["kl"][-nmb:]) > hp.get("target_kl", 0.02):
                 break
@@ -414,8 +417,8 @@ class Learner:
                 ratio = (logp - Lf[ix]).exp()
                 pg = -torch.min(ratio * advn[ix], ratio.clamp(1 - clip, 1 + clip) * advn[ix]).mean()
                 vf = 0.5 * (value - retf[ix]).pow(2).mean()
-                if bc:        # imitate the farmer's move (and its never splitting / ejecting)
-                    loss = -sum(d.log_prob(TAf[ix][:, j]).mean() for j, d in enumerate(dists)) + hp.get("vf", 0.5) * vf
+                if bc:        # imitate the farmer's move only: split / eject are left to the reward to discover
+                    loss = -dists[0].log_prob(TAf[ix][:, 0]).mean() + hp.get("vf", 0.5) * vf
                 elif distill:   # new architecture: imitate the parent (DAgger: our states, its actions)
                     with torch.no_grad():
                         tdists, _ = self.teacher.dists(gx, Sf[ix], amp=AMP)
@@ -425,6 +428,8 @@ class Learner:
                     loss = hp.get("vf", 0.5) * vf
                 else:
                     loss = pg + hp.get("vf", 0.5) * vf - hp.get("ent", 0.001) * ent
+                    if fade > 0:   # fading imitation of the move
+                        loss = loss - fade * dists[0].log_prob(TAf[ix][:, 0]).mean()
                 self.opt.zero_grad(set_to_none=True)
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
@@ -556,6 +561,7 @@ def main() -> None:
     p.add_argument("--virus-reward", default="0,0,0", help="shot,pop,popmass weights")
     p.add_argument("--explore-reward", type=float, default=0.0, help="bonus per new 500x500 square in a life")
     p.add_argument("--curriculum-p", type=float, default=0.5, help="share of respawns that start big")
+    p.add_argument("--curriculum-mass", default="50,5000", help="their start mass range (log-uniform)")
     p.add_argument("--width", type=int, default=256)
     p.add_argument("--arch", help="architecture genes as JSON (rl.model.Policy kwargs: width, convs, pool, "
                    "in_mask, s_mask, shared); differs from --init's -> fresh net distilled from it")
@@ -571,6 +577,8 @@ def main() -> None:
                    help="first imitate the nearest-pellet farmer (sim.bots.farmer_actions; no splits) for this "
                         "many iterations: DAgger on the net's own states")
     p.add_argument("--bc-lr", type=float, default=1e-3, help="learning rate while imitating")
+    p.add_argument("--bc-fade-iters", type=int, default=0,
+                   help="after imitating: the imitation term fades out linearly over this many PPO iterations")
     p.add_argument("--farm-eval-every", type=int, default=0,
                    help="every N iterations: the farming-alone check (sim.tourney.farm), printed and in TensorBoard")
     p.add_argument("--seed", type=int, default=7)
@@ -598,7 +606,7 @@ def main() -> None:
     floats = lambda x: [float(v) for v in x.split(",")]
     hp = {k: getattr(args, k) for k in ("lr", "ent", "gamma", "lam", "clip", "epochs", "mb", "target_kl", "vf",
                                          "vf_warmup", "explore", "league_every", "league_size", "league_models",
-                                         "save_every", "explore_reward", "bc_farmer_iters", "bc_lr",
+                                         "save_every", "explore_reward", "bc_farmer_iters", "bc_lr", "bc_fade_iters",
                                          *LAYOUT_DEFAULTS)}
     hp.update(virus_reward=floats(args.virus_reward), kill_reward=floats(args.kill_reward),
               action_bonus=floats(args.action_bonus), growth=args.growth)
@@ -609,6 +617,7 @@ def main() -> None:
         print(f"hall of fame: {len(hof)} opponents from {args.hof}", flush=True)
     kinds = {obs_kind(m) for m in [model, *hof]}
     env = SimEnv(B=B, P=P, seed=args.seed, episode_steps=args.episode_steps, curriculum_p=args.curriculum_p,
+                 curriculum_mass=tuple(float(x) for x in args.curriculum_mass.split(",")),
                  obs_dtype=torch.float16, skip=args.skip, obs="both" if len(kinds) > 1 else kinds.pop())
     L = Learner(args.run, model, env, 0, B, hp, out, hof=hof, teacher=teacher,
                 distill_iters=args.distill_iters if teacher is not None else 0, start_it=args.start_it,
@@ -627,9 +636,13 @@ def main() -> None:
         L.update()
         if args.farm_eval_every and L.it % args.farm_eval_every == 0:
             L.save(out / "latest.pt")
-            fm = farm({"net": str(out / "latest.pt")})["net"]
+            net = {"net": str(out / "latest.pt")}
+            fm = farm(net, B=64, free=True)["net"]
+            fb = farm(net, B=64, free=True, start=1000.0, gain=True)["net"]
             L.tb.add_scalar("eval/farm_mass", fm, L.it)
-            print(f"farm check at it {L.it}: {fm:.0f} mass after 2 min alone (nearest-pellet routine ~320)", flush=True)
+            L.tb.add_scalar("eval/farm_gain_from_1000", fb, L.it)
+            print(f"farm check at it {L.it}: from 10 -> {fm:.0f} mass in 2 min (routines 283-310); "
+                  f"from 1000: +{fb:.0f} in 2 min (routine +374, split-farming routine +467)", flush=True)
     L.save(out / "latest.pt")
     print(f"done at iteration {L.it}", flush=True)
 

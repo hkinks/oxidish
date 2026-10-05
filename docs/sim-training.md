@@ -170,6 +170,38 @@ uv run python -m rl.pbt --name fp1 --objective farm --seed runs/rl/f1_seed.pt --
 - **Mutations** (`rl.evo.FARM_HP_KINDS`): lr, entropy, gamma, exploration floor, explore reward, epochs, and architecture.
 - **Stopping rule:** it runs until the best free-farming score stops improving.
 
+### Farming tests, split-farming and imitation (2026-10-05, later)
+
+**The farming test** (`sim.tourney.farm`): one player alone on the map plays 1,500 steps (2 minutes of game time) from a snapshot of the net, averaged over 16-64 arenas.
+- "300" means growing from 10 to ~300 mass in those 2 minutes. It's a skill test, not a training total.
+- `free=True` allows split and W. `start=1000, gain=True` measures the mass gained in 2 minutes starting from 1,000 mass.
+- `--farm-eval-every` runs both parts (from 10, and from 1,000) on 64 arenas.
+
+**Routines:** the cluster-routine sweep (lam 80-200, cos^1-3) gives 283-310 from 10, so every routine tops out at ~300.
+
+**Split-farming only pays for big cells** (scripted: the cluster routine plus "split when the largest cell is >= X, up to N cells"):
+
+| Start | No split | Best split variant |
+|---|---|---|
+| 10 | +296 | +197 (splitting costs a third) |
+| 300 | +311 | +284 |
+| 1000 | +374 | **+467** (split at >= 300, up to 16 cells: +25%) |
+
+So a test from 10 mass can never reward split-farming, and a net never experiences it paying unless it trains at big sizes. fe3 trains solo with half of its respawns at 50-3000 mass.
+
+**Imitation vs pure RL:** the same entity net, alone on the map, mass reward only.
+
+| Net | Farming score from 10 |
+|---|---|
+| fe2, pure RL from scratch | 117 after 20 iterations, then **stalls at ~92-117** |
+| fe1, imitating the nearest-pellet farmer | ~270 within 20 iterations |
+
+Random discovery doesn't just take longer: it settles into a much worse habit.
+
+**The imitation rule now:** imitation covers only the move head (the teacher never splits, and copying that would train against splitting). It fades out linearly into the plain mass reward (`--bc-fade-iters`). Split and W are left to the reward to discover.
+
+**fe1's setup didn't work:** with 4 players per arena, PPO swung between 112 and 251 between checks, because they eat each other and blur the farming signal. Solo arenas (P=1) are the clean setup.
+
 ## Evolution (`rl/evo.py`)
 
 Weights are learned by PPO. Evolution searches over the **design**.
