@@ -157,7 +157,7 @@ class GraphedAct:
 
 _graphs: "OrderedDict[tuple, GraphedAct]" = OrderedDict()   # (model id, batch, eps) -> graph, LRU
 _graph_owner = weakref.WeakValueDictionary()                 # model id -> model (drop graphs of dead models)
-MAX_GRAPHS = 32   # each keeps its own activation memory; league snapshots come and go
+MAX_GRAPHS = 24   # each keeps its own activation memory; league snapshots come and go
 
 
 def act_sampled(model: Policy, g: torch.Tensor, s: torch.Tensor):
@@ -171,6 +171,10 @@ def act_sampled(model: Policy, g: torch.Tensor, s: torch.Tensor):
             del _graphs[k]
         _graph_owner[id(model)] = model
     if key not in _graphs:
+        # graphs of models that no longer exist (replaced members, retired league snapshots) still hold
+        # their activation memory: drop them first (they used to pile up until MAX_GRAPHS -> OOM)
+        for k in [k for k in _graphs if k[0] not in _graph_owner]:
+            del _graphs[k]
         while len(_graphs) >= MAX_GRAPHS:
             _graphs.popitem(last=False)
         _graphs[key] = GraphedAct(model, g, s)
