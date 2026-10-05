@@ -215,6 +215,7 @@ def evade_batch(nets: dict[str, str], B: int = 32, P: int = 8, steps: int = 1500
     me = torch.arange(B * M, device=dev) * P
     a = torch.zeros(B * M * P, 3, dtype=torch.long, device=dev)
     deaths = torch.zeros(M, device=dev)
+    splits = torch.zeros(M, device=dev)
     for step in range(steps):
         a.view(B * M, P, 3)[:, 1:] = scripted_actions(env.w, env.bot_split_prob)[:, 1:]
         for k, m in enumerate(models):
@@ -222,13 +223,15 @@ def evade_batch(nets: dict[str, str], B: int = 32, P: int = 8, steps: int = 1500
             if step % m.skip == 0:
                 a[ix] = m.act(obs_for(m, env, g)[ix], s[ix], amp=True)[0]
                 a[ix, 2] = 0
+                splits[k] += ((a[ix, 1] > 0) & env.prev_alive.reshape(-1)[ix]).sum()
             else:
                 a[ix, 1:] = 0
         g, s, _, d, _ = env.step(a)
         deaths += d[me].view(M, B).float().sum(1)
     end = env.prev_mass[:, 0].view(M, B).mean(1)
     mins = steps * 0.08 / 60
-    return {n: {"mass": end[k].item(), "deaths_per_min": deaths[k].item() / B / mins} for k, n in enumerate(names)}
+    return {n: {"mass": end[k].item(), "deaths_per_min": deaths[k].item() / B / mins,
+                "splits_per_min": splits[k].item() / B / mins} for k, n in enumerate(names)}
 
 
 def main() -> None:

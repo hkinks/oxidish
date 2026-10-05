@@ -121,7 +121,8 @@ def eval_job(path: str) -> None:
         # survival first (deaths per minute under threat), mass under threat and farming alone secondary
         res = {k: {"log_mass": -math.log(v["deaths_per_min"] + 0.05) + 0.25 * math.log(max(v["mass"], 1.0) / 200)
                    + 0.25 * math.log(max(small[k], 1.0) / 300),
-                   "ci": 0.0, "avg_mass": v["mass"], "deaths": v["deaths_per_min"], "farm10": small[k], "kills": 0.0}
+                   "ci": 0.0, "avg_mass": v["mass"], "deaths": v["deaths_per_min"], "farm10": small[k], "kills": 0.0,
+                   "splits_per_min": v["splits_per_min"]}
                for k, v in ev.items()}
         Path(job["out"]).write_text(json.dumps({"results": res, "farm": small, "long": {}}, indent=1))
         return
@@ -331,7 +332,8 @@ class Population:
                 continue
             if self.args.objective == "evade":
                 log(f"  {name:<9} fitness {r['log_mass']:+.3f}  under threat: mass {r['avg_mass']:.0f} "
-                    f"deaths/min {r['deaths']:.2f}  farming alone from 10 -> {r['farm10']:.0f}")
+                    f"deaths/min {r['deaths']:.2f} splits/min {r.get('splits_per_min', 0):.2f}  "
+                    f"farming alone from 10 -> {r['farm10']:.0f}")
                 continue
             if self.args.objective == "hunt":
                 log(f"  {name:<9} gain {r['avg_mass']:+6.0f}  kills/min {r['kills']:.2f}  splits/min {r['splits_per_min']:.2f}")
