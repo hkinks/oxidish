@@ -85,7 +85,10 @@ def from_checkpoint(path: str, dev: str) -> Policy:
     exactly as before and can learn to use them."""
     src = load(path, dev)
     cfg = src.config
-    if cfg.get("kind") == "entity":
+    if cfg.get("kind") == "entity":   # the token count may have grown (e.g. food-cluster tokens): weights are per token
+        from sim.entities import N_TOK
+        src.n_tok = N_TOK
+        src.config.update(n_tok=N_TOK, heads_out=(17 + N_TOK, 2, 2))
         return src
     if cfg["c"] not in (13, C_IN) or cfg["s"] != S_IN:
         raise SystemExit(f"{path}: needs c=13/{C_IN} s=16, got c={cfg['c']} s={cfg['s']}")

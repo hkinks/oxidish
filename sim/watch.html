@@ -151,19 +151,26 @@ function draw() {
 function panels() {
   const rows = F.mass.map((m, i) => [i, m]).filter(r => r[1] > 0).sort((a, b) => b[1] - a[1]);
   $("title").textContent = `Players by mass (${rows.length} alive) · click to follow` + (follow >= 0 ? ", again to stop" : "");
-  $("rows").innerHTML = rows.map(([i, m], r) =>
-    `<div data-i="${i}" class="${i === follow ? "sel" : ""}"><span>${r + 1}. <span class="sw" style="background:${colorOf(i)}"></span>${name(i)}</span><b>${m}</b></div>`).join("");
+  // mass gained per minute of the current life (from the spawn mass of 10); shown after 10 s alive
+  const rate = i => { const t = (F.life_s || [])[i] || 0; return t >= 10 ? Math.max(0, F.mass[i] - 10) / (t / 60) : null; };
+  $("rows").innerHTML = rows.map(([i, m], r) => {
+    const q = rate(i);
+    return `<div data-i="${i}" class="${i === follow ? "sel" : ""}"><span>${r + 1}. <span class="sw" style="background:${colorOf(i)}"></span>${name(i)}</span>` +
+      `<span><b>${m}</b> <small style="opacity:.7">${q === null ? "" : Math.round(q) + "/min"}</small></span></div>`;
+  }).join("");
   const agg = {};
   F.mass.forEach((m, i) => {
-    const a = agg[modelOf(i)] || (agg[modelOf(i)] = {n: 0, alive: 0, mass: 0, best: 0, splits: 0, ejects: 0, deaths: 0, i});
+    const a = agg[modelOf(i)] || (agg[modelOf(i)] = {n: 0, alive: 0, mass: 0, best: 0, splits: 0, ejects: 0, deaths: 0, rsum: 0, rn: 0, i});
+    const q = rate(i);
+    if (q !== null) { a.rsum += q; a.rn++; }
     a.n++; a.alive += m > 0; a.mass += m; a.best = Math.max(a.best, m); a.splits += (F.splits || [])[i] || 0;
     a.ejects += (F.ejects || [])[i] || 0; a.deaths += (F.deaths || [])[i] || 0;
   });
   const mins = Math.max(F.round_s / 60, 1 / 60);
-  $("mrows").innerHTML = `<table><tr><th>model</th><th>players</th><th>alive</th><th>avg mass</th><th>best</th><th>splits/min</th><th>W/min</th><th>deaths</th></tr>` +
+  $("mrows").innerHTML = `<table><tr><th>model</th><th>players</th><th>alive</th><th>avg mass</th><th>best</th><th title="mass gained per minute of the current life (players alive 10 s+)">mass/min</th><th>splits/min</th><th>W/min</th><th>deaths</th></tr>` +
     Object.entries(agg).sort((a, b) => b[1].mass / b[1].n - a[1].mass / a[1].n).map(([k, a]) =>
       `<tr><td><span class="sw" style="background:${colorOf(a.i)}"></span>${k}</td><td>${a.n}</td><td>${a.alive}</td>` +
-      `<td><b>${Math.round(a.mass / a.n)}</b></td><td>${a.best}</td><td>${(a.splits / a.n / mins).toFixed(2)}</td>` +
+      `<td><b>${Math.round(a.mass / a.n)}</b></td><td>${a.best}</td><td>${a.rn ? Math.round(a.rsum / a.rn) : "-"}</td><td>${(a.splits / a.n / mins).toFixed(2)}</td>` +
       `<td>${(a.ejects / a.n / mins).toFixed(2)}</td><td>${a.deaths}</td></tr>`).join("") +
     `</table>`;
   $("pause").classList.toggle("on", F.paused);

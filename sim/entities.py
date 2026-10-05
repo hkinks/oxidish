@@ -8,7 +8,10 @@
 
 Visibility is the server's view box, as in sim/obs.py (what a client would be sent). Tokens per
 agent: all own cells (16 slots), the `k_cell` nearest enemy cells, `k_food` nearest pellets,
-`k_virus` viruses, `k_eject` ejected blobs; each kind sorted by distance, nearest first.
+`k_virus` viruses, `k_eject` ejected blobs; each kind sorted by distance, nearest first. Then one
+token per region of the view (4 x 4): the food in it as one pellet-type token at its centre of
+mass with mass = its pellet count (so far-away clusters, invisible among the 32 nearest pellets, can
+be seen and pointed at: a split cell can be sent through a whole cluster).
 
 Token features (FD = 20):
   0 valid | 1-5 type: pellet, enemy cell, own cell, virus, ejected | 6, 7 relative x, y / 1000 |
@@ -31,7 +34,8 @@ from .obs import EAT_RATIO, MIN_SCALE, S, SPLIT_KILL_RATIO, VEL_SCALE, VIEW_X, V
 FD = 20
 T_FOOD, T_CELL, T_OWN, T_VIRUS, T_EJECT = range(5)
 K_FOOD, K_CELL, K_VIRUS, K_EJECT = 32, 32, 8, 8
-N_TOK = 16 + K_FOOD + K_CELL + K_VIRUS + K_EJECT        # 96 tokens per agent
+REGIONS = 4                                             # food clusters: the view split into 4 x 4 regions
+N_TOK = 16 + K_FOOD + K_CELL + K_VIRUS + K_EJECT + REGIONS * REGIONS   # 112 tokens per agent
 
 
 class EntityEncoder:
@@ -43,7 +47,7 @@ class EntityEncoder:
             torch.as_tensor(slots, device=world.dev, dtype=torch.long)
         self.NA = len(self.slots)
         self.k = dict(food=k_food, cell=k_cell, virus=k_virus, eject=k_eject)   # fixed: padded if fewer objects
-        self.NT = world.K + sum(self.k.values())
+        self.NT = world.K + sum(self.k.values()) + REGIONS * REGIONS
         self.call_steps = call_steps
         d = world.dev
         # last encode's positions and ids per object slot: velocities
@@ -195,9 +199,25 @@ class EntityEncoder:
         evx, evy = vel("e", w.ex, w.ey, w.eid, ei)
         f_ej = rows(T_EJECT, eok, edx, edy, edd, torch.full_like(edx, math.floor(ES) ** 2 / 100), evx, evy, {})
 
-        ent = torch.cat([f_own, f_cell, f_food, f_vir, f_ej], 2)                    # [B,NA,NT,FD]
-        dxs = torch.cat([odx, cdx, fdx, vdx, edx], 2)
-        dys = torch.cat([ody, cdy, fdy, vdy, edy], 2)
+        # food clusters: visible pellets binned into REGIONS x REGIONS regions of the view box
+        R = REGIONS
+        fdx_all = torch.trunc(w.fx)[:, None, :] - cx[..., None]
+        fdy_all = torch.trunc(w.fy)[:, None, :] - cy[..., None]
+        bx = ((fdx_all + hx) / (2 * hx) * R).floor().clamp(0, R - 1)
+        by = ((fdy_all + hy) / (2 * hy) * R).floor().clamp(0, R - 1)
+        reg = (by * R + bx).long()                                                  # [B,NA,F]
+        wf = vis_f.float()
+        cnt = torch.zeros(B, NA, R * R, device=dev).scatter_add_(-1, reg, wf)
+        sx = torch.zeros(B, NA, R * R, device=dev).scatter_add_(-1, reg, wf * fdx_all)
+        sy = torch.zeros(B, NA, R * R, device=dev).scatter_add_(-1, reg, wf * fdy_all)
+        rok = cnt > 0
+        rdx, rdy = sx / cnt.clamp(min=1), sy / cnt.clamp(min=1)
+        zr = torch.zeros_like(rdx)
+        f_reg = rows(T_FOOD, rok, rdx, rdy, (rdx * rdx + rdy * rdy).sqrt(), cnt, zr, zr, {})
+
+        ent = torch.cat([f_own, f_cell, f_food, f_vir, f_ej, f_reg], 2)            # [B,NA,NT,FD]
+        dxs = torch.cat([odx, cdx, fdx, vdx, edx, rdx], 2)
+        dys = torch.cat([ody, cdy, fdy, vdy, edy, rdy], 2)
         tokpos = torch.stack([cx[..., None] + dxs, cy[..., None] + dys], -1)        # world positions
         # remember positions for the next call's velocities
         for name, (x, y, ids) in (("c", (w.cx, w.cy, w.cid)), ("e", (w.ex, w.ey, w.eid)), ("v", (w.vx, w.vy, w.vid))):

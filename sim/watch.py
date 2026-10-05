@@ -43,8 +43,9 @@ class Watcher:
         self.paused, self.new_round = False, False
         self.held = None                   # the last actions (frame-skip nets hold theirs)
         self.round, self.round_step, self.rate = 0, 0, 0.0
-        # per slot this round, kept on the GPU (no sync per step): splits, ejects (W), deaths
-        self.counts = torch.zeros(3, players, device="cuda")
+        # per slot this round, kept on the GPU (no sync per step): splits, ejects (W), deaths, and the
+        # current life's length in steps (mass/min = mass gained / life time)
+        self.counts = torch.zeros(4, players, device="cuda")
         self.last_view = 0.0       # time of the last /frame request
         self.frame = "{}"
         self.lock = threading.Lock()
@@ -140,7 +141,7 @@ class Watcher:
             host.append(flat[i:i + t[0].numel()])
             i += t[0].numel()
         cal, cx, cy, cr2, fal, fx, fy, eal, ex, ey, val, vx, vy, vr2, counts = host
-        counts = counts.view(3, -1)
+        counts = counts.view(4, -1)
         al, fa, ea, va = cal > 0, fal > 0, eal > 0, val > 0
         r = cr2.sqrt()
         mass = torch.zeros(self.env.P).index_add_(0, torch.arange(len(cr2)) // K, cr2 / 100 * al)
@@ -157,6 +158,7 @@ class Watcher:
             "mass": [round(float(m)) for m in mass],
             "splits": counts[0].int().tolist(), "ejects": counts[1].int().tolist(),
             "deaths": counts[2].int().tolist(),
+            "life_s": [round(float(x) * STEP_S, 1) for x in counts[3]],
         }, separators=(",", ":"))
 
     def actions(self, g: torch.Tensor, s: torch.Tensor) -> torch.Tensor:
@@ -178,6 +180,8 @@ class Watcher:
         self.counts[0] += ((a[:, 1] > 0) & alive).float()
         self.counts[1] += ((a[:, 2] > 0) & alive).float()
         self.counts[2] += died.float()
+        alive_now = self.env.prev_alive.reshape(-1)
+        self.counts[3] = torch.where(alive_now, self.counts[3] + 1, torch.zeros_like(self.counts[3]))
 
     def loop(self) -> None:
         g, s, _, _, _ = self.env.reset()
