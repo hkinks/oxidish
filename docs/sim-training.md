@@ -386,3 +386,4 @@ Run: see `ffa1` (pop 4, b 32, `--vram-gb 18`). Keep total GPU memory under ~26 G
 - With the virus guard on, most remaining deaths are cells under 30 mass, right after spawning, split-killed by MultiOgar bots (90 of 164). Champ has 9 such deaths.
 - The threat guard brings deaths close to champ's. The remaining gap is growth (avg 192 vs 314, peak 543 vs 863).
 - ffa's real-server evaluation now plays the members with both guards (`guard2:`), the way they will be deployed.
+- **Training under the guards:** `sim.bots.guard_mouse` is the same two guards vectorised. They give identical headings to `rl.policy`'s on 64 random scenes. ffa sets `guard=2`, so learners and league nets move under them, and the net learns what pays within them (growth, hunting).

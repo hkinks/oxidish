@@ -306,6 +306,11 @@ class Learner:
         track = env.track
         track[lo:lo + nb] = role == ROLE_LEARN
         env.set_tracked(track)
+        if hp.get("guard", 0):       # nets (learners and league) move under the play-time guards
+            if env.guard is None:
+                env.guard = torch.zeros(env.B, env.NL, dtype=torch.bool, device=dev)
+            env.guard[lo:lo + nb] = (role == ROLE_LEARN) | (role == ROLE_LEAGUE)
+            env.guard_level = max(env.guard_level, int(hp["guard"]))
         # league: own snapshots (resumed from disk) + hall of fame, split over a few groups of arenas
         self.snaps = [frozen(model)]
         old = sorted((self.out / "league").glob("it*.pt")) if resume_league else []

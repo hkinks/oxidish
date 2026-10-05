@@ -210,3 +210,66 @@ class MultiOgarBots:
         still = (dirx.abs() + diry.abs()) < 1e-9
         move = torch.where(alive & ~still, move, torch.full_like(move, 16))
         return torch.stack([move, split.long(), torch.zeros_like(move)], -1)
+
+
+# ---- play-time guards (rl/policy.py virus_guard / threat_guard), vectorised for the learners -------
+G_DANGER_MARGIN, G_SPLIT_RANGE, G_FLEE_WEIGHT, G_VIRUS_AVOID = 177.0, 842.0, 3.0, 227.5
+G_EAT_RATIO, G_SPLIT_KILL_RATIO, G_VIRUS_EAT_MULT = 1.3, 2.6, 1.1576
+
+
+@torch.no_grad()
+def guard_mouse(w: World, mouse: torch.Tensor, level: int) -> torch.Tensor:
+    """mouse [B,N,2] targets of players 0..N-1 -> guarded targets, as rl.policy does on the real server:
+    level >= 2 adds the champion's threat push (bigger cells inside their danger radius), level >= 1
+    steers around the nearest virus our largest cell would pop on that lies across the path."""
+    B, P, K, C = w.B, w.P, w.K, w.C
+    N, dev = mouse.shape[1], w.dev
+    al = w.calive.view(B, P, K)[:, :N]
+    r2 = w.cr2.view(B, P, K)[:, :N] * al
+    big_r2, bi = r2.max(-1)
+    ms = big_r2.sqrt()                                          # our largest cell: radius, mass, position
+    mm = big_r2 / 100
+    ci = bi + torch.arange(N, device=dev)[None, :] * K
+    mx, my = w.cx.view(B, C).gather(1, ci), w.cy.view(B, C).gather(1, ci)
+    alive = al.any(-1)
+    tx, ty = mouse[..., 0], mouse[..., 1]
+    dx, dy = tx - mx, ty - my
+    n = (dx * dx + dy * dy).sqrt()
+    ux, uy = dx / n.clamp(min=1e-6), dy / n.clamp(min=1e-6)
+    ux, uy = torch.where(n > 1e-6, ux, 0.0), torch.where(n > 1e-6, uy, 0.0)
+    if level >= 2:
+        owner = torch.arange(C, device=dev) // K
+        other = (owner[None, None, :] != torch.arange(N, device=dev)[None, :, None]) & w.calive.view(B, C)[:, None, :]
+        cs = w.cr2.view(B, C).sqrt()[:, None, :]
+        cm = (w.cr2.view(B, C) / 100)[:, None, :]
+        ox, oy = mx[..., None] - w.cx.view(B, C)[:, None, :], my[..., None] - w.cy.view(B, C)[:, None, :]
+        dist = (ox * ox + oy * oy).sqrt().clamp(min=1.0)
+        d = dist - cs - ms[..., None]
+        r = cs + ms[..., None] + torch.where(cm > mm[..., None] * G_SPLIT_KILL_RATIO, G_SPLIT_RANGE, 0.0) + G_DANGER_MARGIN
+        act = other & (cm > mm[..., None] * G_EAT_RATIO) & (d < r)
+        wgt = torch.where(act, (r - d) / r, torch.zeros_like(d))
+        fx, fy = (ox / dist * wgt).sum(-1), (oy / dist * wgt).sum(-1)
+        push = act.any(-1)
+        gx, gy = ux + G_FLEE_WEIGHT * fx, uy + G_FLEE_WEIGHT * fy
+        gn = (gx * gx + gy * gy).sqrt().clamp(min=1e-6)
+        ux, uy = torch.where(push, gx / gn, ux), torch.where(push, gy / gn, uy)
+        n = torch.where(push, n.clamp(min=600.0), n)
+    # virus detour
+    vs = w.vr2.sqrt()[:, None, :]
+    vx, vy = w.vx[:, None, :] - mx[..., None], w.vy[:, None, :] - my[..., None]
+    t = vx * ux[..., None] + vy * uy[..., None]
+    h = vx * uy[..., None] - vy * ux[..., None]
+    clear = vs + ms[..., None] + G_VIRUS_AVOID * 0.2
+    block = (w.valive[:, None, :] & (ms[..., None] >= G_VIRUS_EAT_MULT * vs) & (t > 0)
+             & (t < torch.minimum(clear + G_VIRUS_AVOID + 200, n[..., None] + clear)) & (h.abs() < clear))
+    tb, vi = torch.where(block, t, torch.full_like(t, 1e9)).min(-1)
+    hit = (tb < 1e8) & (n > 1e-6)
+    g = lambda z: z.gather(-1, vi[..., None])[..., 0]
+    side = torch.where(g(h) > 0, 1.0, -1.0)
+    cl = g(clear)
+    px = g(vx) - uy * side * cl * 1.15
+    py = g(vy) + ux * side * cl * 1.15
+    pn = (px * px + py * py).sqrt().clamp(min=1.0)
+    ux, uy = torch.where(hit, px / pn, ux), torch.where(hit, py / pn, uy)
+    out = torch.stack([mx + ux * n, my + uy * n], -1)
+    return torch.where((alive & (n > 1e-6))[..., None], out, mouse)

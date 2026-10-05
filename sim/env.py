@@ -26,7 +26,7 @@ import math
 import numpy as np
 import torch
 
-from .bots import MultiOgarBots, scripted_actions
+from .bots import MultiOgarBots, guard_mouse, scripted_actions
 from .engine import MIN_SPLIT_R2, START_R2, World
 from .entities import EntityEncoder
 from .obs import Encoder
@@ -72,6 +72,9 @@ class SimEnv:
         self.bot_kind = bot_kind
         self._mo_bots = MultiOgarBots(self.w) if bot_kind == "multiogar" else None
         self._bot_acts, self._bot_t = None, -1
+        # play-time guards on these slots' moves (sim.bots.guard_mouse; 0 off, 1 virus, 2 + threats)
+        self.guard_level = 0
+        self.guard = None
         self.obs_dtype = obs_dtype   # float16 halves the (large) grid tensor
         d = self.w.dev
         # per-arena reward weights, [.., B, 1] (set_reward)
@@ -293,6 +296,9 @@ class SimEnv:
         split = torch.zeros(B, P, dtype=torch.bool, device=dev)
         eject = torch.zeros(B, P, dtype=torch.bool, device=dev)
         mouse[:, :NL] = self._mouse(actions)
+        if self.guard_level and self.guard is not None:
+            mouse[:, :NL] = torch.where(self.guard[..., None], guard_mouse(w, mouse[:, :NL], self.guard_level),
+                                        mouse[:, :NL])
         split[:, :NL] = actions[:, 1].view(B, NL) > 0
         eject[:, :NL] = actions[:, 2].view(B, NL) > 0
         if NL < P:  # scripted bots aim at a far point along their heading
