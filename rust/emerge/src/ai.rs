@@ -27,6 +27,7 @@ struct Ctx {
     min_ask: f32,
     max_ask: f32,
     n_stations: usize,
+    counts: [usize; 4],
 }
 
 pub fn think(w: &mut World, dt: f32) {
@@ -66,6 +67,7 @@ pub fn think(w: &mut World, dt: f32) {
         min_ask: live.iter().map(|s| s.plate_ask).fold(1e9, f32::min),
         max_ask: live.iter().map(|s| s.plate_ask).fold(0.0, f32::max),
         n_stations: n_st,
+        counts: w.role_counts(),
     };
     let World { agents, food, veins, stations, clans, rng, autoplay, .. } = w;
     for a in agents.iter_mut() {
@@ -134,11 +136,11 @@ fn drifter(a: &mut Agent, snaps: &[Snap], rng: &mut Rng, dt: f32) {
 
 fn choose_role(a: &mut Agent, c: &Ctx, veins: &[Vein], clans: &[Clan]) {
     let mut sc = [-9.0f32; 4];
-    sc[0] = 1.0 + a.bias[0] + 0.25 * a.skill[0] + 0.6 * (c.food_frac - 0.4).min(0.0).abs() * -1.0 + 0.3 * c.food_frac;
+    sc[0] = 1.0 + a.bias[0] + 0.15 * a.skill[0] + 0.6 * (c.food_frac - 0.4).min(0.0).abs() * -1.0 + 0.3 * c.food_frac;
     let rel = (a.mass / c.avg_mass - 1.0).clamp(-1.0, 1.5);
-    sc[1] = 0.65 + a.bias[1] + 0.3 * rel + 0.25 * a.skill[1] + 0.5 * (1.0 - (c.food_frac * 2.0).min(1.0)) + if c.stage >= 5 { 0.12 * c.bounty } else { 0.0 };
+    sc[1] = 0.65 + a.bias[1] + 0.3 * rel + 0.15 * a.skill[1] + 0.5 * (1.0 - (c.food_frac * 2.0).min(1.0)) + if c.stage >= 5 { 0.12 * c.bounty } else { 0.0 };
     if c.stage >= 2 && veins.iter().any(|v| v.stock > 20.0) {
-        sc[2] = 0.8 + a.bias[2] + 0.25 * a.skill[2];
+        sc[2] = 0.8 + a.bias[2] + 0.15 * a.skill[2];
         if c.stage >= 4 && c.n_stations > 0 {
             sc[2] += 0.25;
         }
@@ -156,8 +158,14 @@ fn choose_role(a: &mut Agent, c: &Ctx, veins: &[Vein], clans: &[Clan]) {
             }
         }
     }
-    if c.stage >= 5 && c.n_stations >= 2 && c.max_ask > c.min_ask * 1.5 {
-        sc[3] = 0.4 + a.bias[3] + 0.3 * a.skill[3] + 1.2 * (c.max_ask / c.min_ask - 1.5).min(1.5);
+    if c.stage >= 5 && c.n_stations >= 2 && c.max_ask > c.min_ask * 1.5 && (a.credits > c.min_ask * 1.2 || a.plates > 0) {
+        sc[3] = 0.4 + a.bias[3] + 0.15 * a.skill[3] + 1.2 * (c.max_ask / c.min_ask - 1.5).min(1.5);
+    }
+    for k in 0..4 {
+        if a.role as usize == k {
+            sc[k] += 0.05; // inertia
+        }
+        sc[k] -= 0.05 * c.counts[k] as f32; // crowding: niches saturate
     }
     let mut best = 0;
     for k in 1..4 {
@@ -176,6 +184,7 @@ fn choose_role(a: &mut Agent, c: &Ctx, veins: &[Vein], clans: &[Clan]) {
 #[allow(clippy::too_many_arguments)]
 fn bot(a: &mut Agent, c: &Ctx, rl: &Rules, snaps: &[Snap], food: &[Food], veins: &[Vein], stations: &[Station], clans: &[Clan], rng: &mut Rng, dt: f32) {
     a.act_cd -= dt;
+    a.dock_t -= dt;
     a.goal_t -= dt;
     a.role_t -= dt;
     a.social_t -= dt;
@@ -223,8 +232,8 @@ fn bot(a: &mut Agent, c: &Ctx, rl: &Rules, snaps: &[Snap], food: &[Food], veins:
     }
 
     // --- betrayal: a hunter in a pact may defect when a rich, smaller pact-mate is close
-    if a.role == Role::Hunter && a.clan.is_some() && rng.chance(0.012 * dt) {
-        let tempt = snaps.iter().any(|s| s.id != a.id && s.clan == a.clan && a.mass > 1.4 * s.eff && s.cargo > 60.0 && a.pos.distance(s.pos) < 450.0);
+    if a.role == Role::Hunter && a.clan.is_some() && rng.chance(0.03 * dt) {
+        let tempt = snaps.iter().any(|s| s.id != a.id && s.clan == a.clan && a.mass > 1.4 * s.eff && s.cargo > 10.0 && a.pos.distance(s.pos) < 450.0);
         if tempt {
             a.acts.push(Act::Leave);
         }
@@ -235,8 +244,8 @@ fn bot(a: &mut Agent, c: &Ctx, rl: &Rules, snaps: &[Snap], food: &[Food], veins:
         if a.armor < 6 && a.plates > 0 && a.role != Role::Trader {
             a.acts.push(Act::Equip);
         }
-        if my_haven && a.act_cd <= 0.0 {
-            a.act_cd = 0.8;
+        if my_haven && a.dock_t <= 0.0 {
+            a.dock_t = 0.8;
             if a.ore >= 1.0 && a.role != Role::Trader {
                 a.acts.push(Act::SellOre);
             }

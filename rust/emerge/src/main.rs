@@ -20,11 +20,12 @@ struct Args {
     speed: f32,
     autoplay: bool,
     help: bool,
+    dump: bool,
     zoom: f32,
 }
 
 fn parse_args() -> Args {
-    let mut a = Args { sim: None, bots: 27, seed: 7, stage: 0, warm: 0.0, screenshot: None, shot_at: 3.0, speed: 1.0, autoplay: false, help: false, zoom: 1.0 };
+    let mut a = Args { sim: None, bots: 27, seed: 7, stage: 0, warm: 0.0, screenshot: None, shot_at: 3.0, speed: 1.0, autoplay: false, help: false, dump: false, zoom: 1.0 };
     let mut it = std::env::args().skip(1);
     while let Some(k) = it.next() {
         let num = |it: &mut std::iter::Skip<std::env::Args>| it.next().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0);
@@ -39,6 +40,7 @@ fn parse_args() -> Args {
             "--speed" => a.speed = num(&mut it) as f32,
             "--zoom" => a.zoom = num(&mut it) as f32,
             "--autoplay" => a.autoplay = true,
+            "--dump" => a.dump = true,
             "--help-open" => a.help = true,
             "-h" | "--help" => {
                 println!("emerge [--sim TICKS] [--bots N] [--seed S] [--stage N --warm SECS] [--screenshot out.png --shot-at SECS] [--speed X] [--autoplay]");
@@ -118,6 +120,9 @@ fn run_sim(args: &Args, ticks: u64) {
             report(&w);
         }
     }
+    if args.dump {
+        dump(&w);
+    }
     println!("--- final ---");
     report(&w);
     let s = &w.stats;
@@ -139,6 +144,16 @@ fn run_sim(args: &Args, ticks: u64) {
         );
     }
     println!("wall time {:.1}s ({:.0} ticks/s)", t0.elapsed().as_secs_f32(), ticks as f32 / t0.elapsed().as_secs_f32());
+}
+
+fn dump(w: &World) {
+    for a in w.agents.iter().filter(|a| a.kind != Kind::Drifter) {
+        let nv = w.veins.iter().map(|v| (v.pos.distance(a.pos) as i32, v.stock as i32)).min().unwrap_or((0, 0));
+        println!(
+            "  {:<8} {:<7} m={:>5.0} ore={:>5.0}/{:>4.0} want={:.2} goalD={:>5.0} nearestVein={:?} clan={:?} haven={} mining={}",
+            a.name, ROLE_NAMES[a.role as usize], a.mass, a.ore, a.cargo_cap(), a.want.length(), a.pos.distance(a.goal), nv, a.clan, w.in_haven(a.pos), a.mining
+        );
+    }
 }
 
 fn window_conf() -> Conf {

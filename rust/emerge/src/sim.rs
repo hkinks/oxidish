@@ -96,6 +96,7 @@ pub struct Agent {
     pub wander: Vec2,
     pub act_cd: f32,
     pub social_t: f32,
+    pub dock_t: f32,
     pub acts: Vec<Act>,
     pub mining: bool,
     pub kills: u32,
@@ -347,6 +348,7 @@ impl World {
             wander: Vec2::from_angle(self.rng.range(0.0, 6.28)),
             act_cd: 0.0,
             social_t: 0.0,
+            dock_t: 0.0,
             acts: vec![],
             mining: false,
             kills: 0,
@@ -560,7 +562,7 @@ impl World {
     }
 
     fn spawn_drifters(&mut self, rl: &Rules) {
-        if rl.drifters == 0 {
+        if rl.drifters == 0 || self.tick % 180 != 0 {
             return;
         }
         let alive = self.agents.iter().filter(|a| a.kind == Kind::Drifter && a.alive).count();
@@ -710,16 +712,16 @@ impl World {
                 } else {
                     self.scarce_t = 0.0;
                 }
-                self.scarce_t >= 5.0 || self.stage_t >= 80.0
+                (self.scarce_t >= 5.0 && self.stage_t >= 35.0) || self.stage_t >= 80.0
             }
-            2 => self.stats.ore_mined >= 250.0 || self.stage_t >= 70.0,
+            2 => (self.stats.ore_mined >= 250.0 && self.stage_t >= 40.0) || self.stage_t >= 70.0,
             3 => {
                 let (n, m) = self.best_clan_mass();
-                n >= 2 && m >= 400.0
+                n >= 2 && m >= 400.0 && self.stage_t >= 30.0
             }
             4 => {
                 let live = self.stations.iter().any(|s| s.alive);
-                live && (self.stats.ore_delivered >= 150.0 || self.t - self.first_station_t.unwrap_or(self.t) >= 50.0)
+                live && self.stage_t >= 40.0 && (self.stats.ore_delivered >= 150.0 || self.t - self.first_station_t.unwrap_or(self.t) >= 50.0)
             }
             _ => false,
         };
@@ -1019,7 +1021,7 @@ impl World {
         let att_clan = att.clan;
         // bounty: money printing
         if rl.market && vic.kind == Kind::Drifter && att_kind != Kind::Drifter {
-            let b = vic.mass * 0.5 * self.bounty_mult;
+            let b = vic.mass * 0.25 * self.bounty_mult;
             self.agents[a].credits += b;
             self.agents[a].earned += b;
             self.stats.money_faucet_bounty += b;
