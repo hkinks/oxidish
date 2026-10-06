@@ -62,6 +62,10 @@ class Params:
     caution_mass: float = 0.0
     flee_margin_big: float = 1.0
     split_safety_big: float = 2.0
+    # flee by planning (bot/steer.flee_heading): try headings, keep the one that stays out of every
+    # threat's reach longest, with walls clamping our path. Pushing straight away from a threat pinned
+    # us on walls: 82% of the rule bots' lost mass was lost at a wall (2026-10-06 loss mining).
+    flee_plan: float = 0.0
 
     def cautious(self) -> "Params":
         """These genes with the big-cell caution applied (caution ramp)."""
@@ -95,6 +99,7 @@ BOUNDS = {
     "big_hunt": (0, 1), "big_mass": (300, 6000),
     "half_split_safety": (0, 1), "piece_threats": (0, 1),
     "caution_mass": (0, 3000), "flee_margin_big": (0.2, 2.5), "split_safety_big": (0.5, 4),
+    "flee_plan": (0, 1),
 }
 
 DEFAULT = Params()

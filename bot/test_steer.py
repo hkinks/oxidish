@@ -55,6 +55,38 @@ def test_hunt_target_away_from_wall():
     assert ux < 0, f"aim x {ux:.2f}: no push off the right wall"
 
 
+FLEE = Params.from_dict({"border_margin": 30.0, "flee_plan": 1.0})
+
+
+def test_flee_slides_along_wall():
+    """Pressed on the right wall with a bigger chaser coming from the open side, up-left: pushing
+    straight away from it pins us on the wall (48% of the rule bots' mass lost, 2026-10-06 mining).
+    The flee planner slides along the wall, away from the chaser."""
+    me = cell(1, 3500 - 260, 0, 2500, "mine")
+    chaser = cell(2, 3500 - 260 - 700, -350, 3800)
+    s = Snapshot([me], [chaser], {}, 0, 0, BORDER, False)
+    ux, uy = aim_dir(s, Plan("flee"), FLEE)
+    assert uy > 0.8, f"aim ({ux:.2f}, {uy:.2f}) does not slide down the wall, away from the chaser"
+
+
+def test_flee_open_field_runs_straight():
+    me = cell(1, 0, 0, 500, "mine")
+    chaser = cell(2, -600, 0, 900)
+    s = Snapshot([me], [chaser], {}, 0, 0, BORDER, False)
+    ux, uy = aim_dir(s, Plan("flee"), FLEE)
+    assert ux > 0.9, f"aim ({ux:.2f}, {uy:.2f}) is not straight away from the chaser"
+
+
+def test_flee_out_of_corner():
+    """Top-right corner, chaser coming along the top wall: escape down the right wall. (With the
+    chaser on the diagonal every heading is caught and staying put lasts longest: no test.)"""
+    me = cell(1, 3500 - 260, -3500 + 260, 2500, "mine")
+    chaser = cell(2, 3500 - 1000, -3500 + 300, 3800)
+    s = Snapshot([me], [chaser], {}, 0, 0, BORDER, False)
+    ux, uy = aim_dir(s, Plan("flee"), FLEE)
+    assert uy > 0.8, f"aim ({ux:.2f}, {uy:.2f}) does not escape down the right wall"
+
+
 def main() -> int:
     tests = [v for k, v in globals().items() if k.startswith("test_")]
     failed = 0

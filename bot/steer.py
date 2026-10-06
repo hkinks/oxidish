@@ -58,6 +58,49 @@ def danger_radius(threat: Cell, me: Cell, p: Params = DEFAULT) -> float:
     return reach + p.danger_margin
 
 
+FLEE_HEADINGS = 32
+FLEE_CHECKS = (6, 12, 18)    # look-ahead points, in steps of 2 ticks (18 steps = 1.44 s)
+
+
+def tick_speed(size: float) -> float:
+    """Distance a cell moves per server tick (PlayerCell.getSpeed, full mouse distance)."""
+    return 88.0 * max(size, 1.0) ** -0.439
+
+
+def flee_heading(s: Snapshot, me: Cell, threats: list[Cell], poppers: list[Cell], p: Params,
+                 pref: tuple[float, float]) -> tuple[float, float]:
+    """Heading that keeps us out of every threat's reach longest over the next ~1.5 s.
+
+    Our path is clamped where the server holds a cell (centre >= size/2 from a wall); each threat
+    closes in at its own speed; reach = its eating range (centre within size - our size / 3), plus
+    its split lunge when it could split onto us. A heading's score is its worst margin over the
+    look-ahead points; paths through a virus we'd pop on are ruled out. Ties go to `pref` (the
+    potential field's heading)."""
+    b = s.border
+    lo_x, hi_x = b["left"] + me.size / 2, b["right"] - me.size / 2
+    lo_y, hi_y = b["top"] + me.size / 2, b["bottom"] - me.size / 2
+    v_me = 2 * tick_speed(me.size)
+    th = [(t.x, t.y, 2 * tick_speed(t.size),
+           t.size - me.size / 3 + (p.split_range if t.mass > me.mass * SPLIT_KILL_RATIO else 0.0))
+          for t in threats]
+    best, best_score = pref, -math.inf
+    for k in range(FLEE_HEADINGS):
+        a = 2 * math.pi * k / FLEE_HEADINGS
+        ux, uy = math.cos(a), math.sin(a)
+        score = math.inf
+        for n in FLEE_CHECKS:
+            x = min(max(me.x + ux * v_me * n, lo_x), hi_x)
+            y = min(max(me.y + uy * v_me * n, lo_y), hi_y)
+            for tx, ty, v, reach in th:
+                score = min(score, math.hypot(x - tx, y - ty) - v * n - reach)
+            if any(math.hypot(x - v.x, y - v.y) < v.size + me.size for v in poppers):
+                score = -math.inf
+        score += 1e-3 * (ux * pref[0] + uy * pref[1])
+        if score > best_score:
+            best, best_score = (ux, uy), score
+    return best
+
+
 def steer(s: Snapshot, plan: Plan, router: FoodRouter | None = None,
           p: Params = DEFAULT) -> tuple[float, float, bool]:
     """Return world aim point and whether to split this tick.
@@ -151,11 +194,14 @@ def steer(s: Snapshot, plan: Plan, router: FoodRouter | None = None,
     if norm < 1e-6:
         fx, fy, norm = 1.0, 0.0, 1.0  # nothing visible: wander
     ux, uy = fx / norm, fy / norm
+    planned = plan.mode == "flee" and p.flee_plan > 0.5 and bool(threats)
+    if planned:
+        ux, uy = flee_heading(s, me, threats, poppers, p, (ux, uy))
     # Viruses as obstacles: if the nearest one we'd pop on lies across our path, head
     # for the point beside it on the side we were already leaning to. Pushing straight
     # away from it (as before) balanced against the food pull and froze the cell.
     blocking = []
-    for v in poppers:
+    for v in (() if planned else poppers):
         vx, vy = v.x - me.x, v.y - me.y
         t = vx * ux + vy * uy                        # distance ahead along our path
         clear = v.size + me.size + p.virus_avoid * 0.2
