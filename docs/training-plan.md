@@ -192,3 +192,27 @@ Its remaining leaks: ~1.5 own virus pops per 15 min, and 36% of its big losses a
 - Per-candidate scores are too noisy for CMA to make headway.
 - Re-checking the top 6, the mean genome and safe on 14 fresh seeds, nobody beat safe clearly: best cand +0.52, safe +0.39, mean genome +0.10 (margin over the field).
 - `long1` (the best, `runs/champ_long1.json`) in the full field (28 matches): 6.65, the top score with the fewest deaths, but only 46% vs r2g9 in that run.
+
+### Duels (one on one, long games)
+
+The full field mixes interactions: cautious bots profit from reckless ones feeding each other. So each candidate x2 now plays one opponent x2, plus the 8 MultiOgar bots, for 28 fresh-seed 15-min matches.
+
+**safe** (`bot/champ_safe.json`):
+
+| vs | wins | 95% interval |
+|---|---|---|
+| champ | 75% | 55-88% |
+| nnbest | 79% | 60-90% |
+| g4net | 86% | 65-95% |
+| r2g9 | 44% | 27-63% |
+
+r2g9 kills 67 per match to safe's 37: its hunting out-grows safe's survival.
+
+**Caution on r2g9's genome**, vs r2g9:
+
+| variant | wins | 95% interval |
+|---|---|---|
+| `safe_r2` (always cautious) | 54% | 36-70% |
+| `ramp_r2` (`bot/r2g9_ramp800.json`: r2g9's genes, cautious above 800 mass) | **75%** | 57-87% |
+
+ramp_r2 is now dueling champ, nnbest, g4net and safe.
