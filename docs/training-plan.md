@@ -160,3 +160,9 @@ runs/final_champion.json** (r3 champion_008). PPO state kept at runs/rl/p4_final
 safe's head-to-head wins over both runs: champ 75%, r2g9 64%, nnbest 75%, g4net 79%. Its average mass is ~1400, against at most ~1070 for the others.
 
 In long games, dying is what costs: each death throws away accumulated mass, and the rule bots were tuned in 4-min matches where recklessness pays. A half-way variant (`flee_margin` 0.6, `split_safety` 1.2) did not help (6.22).
+
+**Update: not consistent.** A third run in the same field (seeds 79000) tied: safe 6.54, champ 6.71, g4net 6.73.
+- Pooled over 42 matches, safe still leads (~6.76 vs 6.38-6.52; head to head 67% champ, 62% r2g9, 69% nnbest, 57% g4net), but a single 14-match run can go either way.
+- In a field of three cautious variants, the aggressive r2g9 won (71% over safe): caution pays most against reckless opponents.
+- `r2g9_safe` (r2g9's genome with the same caution changes, 28 matches): 6.48, a tie (field 6.40-6.71).
+- Long games are very noisy (+-0.3 per 14 matches), and all champion-family bots tie within it. A consistent winner needs a qualitatively different player, not gene tweaks.
