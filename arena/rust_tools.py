@@ -71,6 +71,72 @@ def dump(path: str, agents: list[str], ticks: int, seed: int, food_mult: float, 
     print(f"{len(sink)} records -> {path}")
 
 
+def fuzz(path: str, specs: list[str], steps: int, seed: int) -> None:
+    """Synthetic but varied snapshots (many pieces, viruses, big players near us) so every tactic and gene
+    fires; Python decisions recorded in the same dump format. Cells persist and drift between steps."""
+    import random
+    rng = random.Random(seed)
+    lineup = parse_lineup(specs)
+    sink: list[str] = []
+    for i, (name, spec) in enumerate(lineup):
+        sink.append(json.dumps({"t": "agent", "a": i, "spec": spec}))
+    pols = [DumpPolicy(i, build(spec), sink) for i, (_, spec) in enumerate(lineup)]
+    border = {"left": -3500.0, "top": -3500.0, "right": 3500.0, "bottom": 3500.0}
+    nid = 1
+    for i, pol in enumerate(pols):
+        cx, cy = rng.uniform(-3000, 3000), rng.uniform(-3000, 3000)
+        others: list[Cell] = []
+        mine: list[Cell] = []
+        for step in range(steps):
+            if step % 400 == 0 or not mine:   # new scenario / respawn
+                if step:
+                    pol.reset()
+                cx, cy = rng.uniform(-3300, 3300), rng.uniform(-3300, 3300)
+                size = rng.choice([30, 60, 120, 200, 300, 450, 700])
+                mine = [Cell(nid := nid + 1, cx, cy, size, "mine", "")]
+                for _ in range(rng.choice([0, 0, 1, 2, 3])):
+                    mine.append(Cell(nid := nid + 1, cx + rng.uniform(-150, 150), cy + rng.uniform(-150, 150),
+                                     size * rng.uniform(0.3, 1.0), "mine", ""))
+                others = []
+                for _ in range(rng.randint(10, 50)):
+                    others.append(Cell(nid := nid + 1, cx + rng.uniform(-1500, 1500), cy + rng.uniform(-1500, 1500), 10, "food", ""))
+                for _ in range(rng.randint(0, 4)):
+                    others.append(Cell(nid := nid + 1, cx + rng.uniform(-1200, 1200), cy + rng.uniform(-1200, 1200), rng.choice([100, 110, 130]), "virus", ""))
+                for _ in range(rng.randint(0, 6)):
+                    others.append(Cell(nid := nid + 1, cx + rng.uniform(-1800, 1800), cy + rng.uniform(-1800, 1800),
+                                       size * rng.choice([0.2, 0.4, 0.7, 1.0, 1.2, 1.5, 2.5, 4.0]), "player", "p"))
+                if rng.random() < 0.6:   # a virus between us and a big player: the virus-shot setup
+                    import math
+                    a = rng.uniform(0, 6.283)
+                    others.append(Cell(nid := nid + 1, cx + 350 * math.cos(a), cy + 350 * math.sin(a), 100, "virus", ""))
+                    others.append(Cell(nid := nid + 1, cx + 800 * math.cos(a + rng.uniform(-0.1, 0.1)),
+                                       cy + 800 * math.sin(a + rng.uniform(-0.1, 0.1)), rng.choice([300, 450]), "player", "p"))
+                for _ in range(rng.randint(0, 3)):
+                    others.append(Cell(nid := nid + 1, cx + rng.uniform(-600, 600), cy + rng.uniform(-600, 600), 38, "ejected", ""))
+            for c in others:     # players and viruses drift; some food gets eaten and respawns
+                if c.kind in ("player", "ejected"):
+                    c.x += rng.uniform(-20, 20)
+                    c.y += rng.uniform(-20, 20)
+            for k in range(len(others)):
+                if others[k].kind == "food" and rng.random() < 0.03:
+                    others[k] = Cell(nid := nid + 1, mine[0].x + rng.uniform(-1500, 1500), mine[0].y + rng.uniform(-1500, 1500), 10, "food", "")
+            snap = Snapshot([Cell(c.id, c.x, c.y, c.size, "mine", "") for c in mine],
+                            [Cell(c.id, c.x, c.y, c.size, c.kind, "") for c in others], {}, 0, 0, dict(border), False)
+            out = pol.act(snap)
+            for c in mine:      # move toward the aim point like a cell would
+                dx, dy = out[0] - c.x, out[1] - c.y
+                d = max((dx * dx + dy * dy) ** 0.5, 1.0)
+                v = min(60.0, d)
+                c.x = min(max(c.x + dx / d * v, -3490), 3490)
+                c.y = min(max(c.y + dy / d * v, -3490), 3490)
+            if out[2] and len(mine) < 4:   # a split halves the cell
+                m = mine[0]
+                m.size /= 2 ** 0.5
+                mine.append(Cell(nid := nid + 1, m.x, m.y, m.size, "mine", ""))
+    Path(path).write_text("\n".join(sink) + "\n")
+    print(f"{len(sink)} records -> {path}")
+
+
 def bench(path: str, repeat: int) -> None:
     agents: dict[int, dict] = {}
     events = []
@@ -107,12 +173,19 @@ def main() -> None:
     d.add_argument("--seed", type=int, default=1)
     d.add_argument("--food-mult", type=float, default=2.0)
     d.add_argument("--bots", type=int, default=8)
+    f = sub.add_parser("fuzz")
+    f.add_argument("path")
+    f.add_argument("--agents", nargs="+", required=True)
+    f.add_argument("--steps", type=int, default=2000)
+    f.add_argument("--seed", type=int, default=1)
     b = sub.add_parser("bench")
     b.add_argument("path")
     b.add_argument("--repeat", type=int, default=3)
     args = p.parse_args()
     if args.cmd == "dump":
         dump(args.path, args.agents, args.ticks, args.seed, args.food_mult, args.bots)
+    elif args.cmd == "fuzz":
+        fuzz(args.path, args.agents, args.steps, args.seed)
     else:
         bench(args.path, args.repeat)
 
