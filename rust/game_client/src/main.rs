@@ -498,8 +498,24 @@ impl Game {
     }
 }
 
+#[cfg(windows)]
+extern "system" {
+    fn GetCurrentProcess() -> isize;
+    fn SetPriorityClass(process: isize, class: u32) -> i32;
+}
+
+/// Above-normal priority: with background jobs keeping the CPU at 80-90%, a normal-priority client got
+/// preempted and missed vsync frames (choppy). Rendering itself costs well under a millisecond a frame.
+fn raise_priority() {
+    #[cfg(windows)]
+    unsafe {
+        SetPriorityClass(GetCurrentProcess(), 0x0000_8000); // ABOVE_NORMAL_PRIORITY_CLASS
+    }
+}
+
 #[macroquad::main(window_conf)]
 async fn main() {
+    raise_priority();
     let args = parse_args();
     let mut game = Game {
         world: World::new(),
