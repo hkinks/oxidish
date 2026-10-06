@@ -29,7 +29,7 @@ struct Args {
 }
 
 fn parse_args() -> Args {
-    let mut a = Args { server: "ws://127.0.0.1:9500".into(), name: String::new(), selftest: false, screenshot: None, shot_at: 9.0 };
+    let mut a = Args { server: "ws://127.0.0.1:9600".into(), name: String::new(), selftest: false, screenshot: None, shot_at: 9.0 };
     let mut it = std::env::args().skip(1);
     while let Some(k) = it.next() {
         match k.as_str() {
@@ -40,7 +40,7 @@ fn parse_args() -> Args {
             "--screenshot" => a.screenshot = it.next(),
             "--shot-at" => a.shot_at = it.next().and_then(|v| v.parse().ok()).unwrap_or(9.0),
             "-h" | "--help" => {
-                println!("game_client [--server ws://127.0.0.1:9500] [--name NICK] [--selftest] [--screenshot out.png [--shot-at SECS]]");
+                println!("game_client [--server ws://127.0.0.1:9600 (Rust server; Node showcase: 9500)] [--name NICK] [--selftest] [--screenshot out.png [--shot-at SECS]]");
                 std::process::exit(0);
             }
             other => eprintln!("ignoring unknown argument {other}"),
