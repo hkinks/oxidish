@@ -165,7 +165,7 @@ struct Game {
     last_repeat: f64,
     last_score: i64,
     fonts: Fonts,
-    q_down: bool,
+    whole_map: bool,
 }
 
 impl Game {
@@ -188,6 +188,7 @@ impl Game {
         self.send(vec![1]);
         self.mode = Mode::Spectating;
         self.had_cells = false;
+        self.whole_map = false;   // the server's free roam is off after a spawn
     }
 
     fn pump_net(&mut self, now: f64) {
@@ -302,6 +303,11 @@ impl Game {
                         self.spawn();
                     } else if is_key_pressed(KeyCode::Tab) && self.mode != Mode::Spectating {
                         self.spectate();
+                    } else if is_key_pressed(KeyCode::Q) && self.mode == Mode::Spectating {
+                        // the server's free roam: the whole map (arena.js), or back to following the largest
+                        self.send(vec![18]);
+                        self.send(vec![19]);
+                        self.whole_map = !self.whole_map;
                     }
                 }
             }
@@ -319,25 +325,9 @@ impl Game {
                     self.send(vec![205]);
                 }
                 let repeat = now - self.last_repeat >= REPEAT_SECS;
-                for (key, op) in [(KeyCode::W, 21u8), (KeyCode::E, 22), (KeyCode::R, 23)] {
-                    if is_key_pressed(key) || (is_key_down(key) && repeat) {
-                        self.send(vec![op]);
-                        self.last_repeat = now;
-                    }
-                }
-                if is_key_pressed(KeyCode::T) {
-                    self.send(vec![24]);
-                }
-                if is_key_pressed(KeyCode::P) {
-                    self.send(vec![25]);
-                }
-                if is_key_pressed(KeyCode::Q) {
-                    self.send(vec![18]);
-                    self.q_down = true;
-                }
-                if self.q_down && is_key_released(KeyCode::Q) {
-                    self.send(vec![19]);
-                    self.q_down = false;
+                if is_key_pressed(KeyCode::W) || (is_key_down(KeyCode::W) && repeat) {
+                    self.send(vec![21]);
+                    self.last_repeat = now;
                 }
             }
         }
@@ -462,7 +452,8 @@ impl Game {
         let (w, h) = (screen_width(), screen_height());
         if self.mode == Mode::Playing || self.mode == Mode::Spectating {
             if self.mode == Mode::Spectating {
-                self.fonts.outlined("Spectating - follows the largest player.  Enter: play", w / 2.0, h - 30.0, 24.0, Color::new(1.0, 1.0, 1.0, 1.0), 1.0);
+                let what = if self.whole_map { "Spectating the whole map.  Q: follow the largest player" } else { "Spectating the largest player.  Q: whole map" };
+                self.fonts.outlined(&format!("{what}.  Enter: play"), w / 2.0, h - 30.0, 24.0, Color::new(1.0, 1.0, 1.0, 1.0), 1.0);
             }
             return;
         }
@@ -490,7 +481,7 @@ impl Game {
         f.outlined(&self.status, w / 2.0, h / 2.0 + 56.0, 20.0, dim, 1.0);
         let help = [
             "Mouse: steer    Space: split    W: eject (hold)    Wheel: zoom",
-            "+ : add 500 mass (cheat, tags your name)    E R Q T P: minion keys    Esc: quit",
+            "+ : add 500 mass    Tab: spectate (Q: whole map)    Esc: quit",
         ];
         for (i, l) in help.iter().enumerate() {
             f.outlined(l, w / 2.0, h / 2.0 + 110.0 + 28.0 * i as f32, 20.0, dim, 1.0);
@@ -532,7 +523,7 @@ async fn main() {
         last_repeat: 0.0,
         last_score: 0,
         fonts: Fonts::load(),
-        q_down: false,
+        whole_map: false,
     };
     let mut auto = if args.selftest || args.screenshot.is_some() {
         if game.nick.is_empty() {

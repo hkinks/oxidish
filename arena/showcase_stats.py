@@ -39,8 +39,10 @@ def main() -> None:
         for name, m in prev.items():
             if name not in now or now[name] < 0.3 * m:
                 deaths[name] += 1
+        boosted = {pl["n"] for pl in rec["p"] if pl.get("b")}   # lives that used "+": no benchmark mass
         for name, m in now.items():
-            masses[name].append(m)
+            if name not in boosted:
+                masses[name].append(m)
         prev = now
 
     groups = defaultdict(lambda: {"m": [], "d": 0})

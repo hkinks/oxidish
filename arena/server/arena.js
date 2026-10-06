@@ -16,7 +16,7 @@ const path = require("path");
 
 const args = {port: 9001, bots: 8, map: 7000, sync: 2, seed: 0, agents: 0, "max-tps": 0,
               realtime: false, food: 0, verbose: false, follow: "", "log-players": 0,
-              "food-mult": 1, minions: 0, record: ""};
+              "food-mult": 1, record: ""};
 for (let i = 2; i < process.argv.length; i++) {
     const key = process.argv[i].replace(/^--/, "");
     if (!(key in args)) throw new Error(`unknown option --${key}`);
@@ -47,7 +47,7 @@ const PlayerTracker = require(path.join(SRC, "PlayerTracker"));
 process.stdout.on("error", () => process.exit(0)); // parent closed the pipe: match is over
 
 const OP_AGENT = 0xC8, OP_STEP = 0xC9, OP_FOLLOW = 0xCA, OP_SPAWN_SIZE = 0xCB, OP_FOOD = 0xCC;
-const OP_GROW = 0xCD;   // human cheat key (+ in the web client): mass onto our biggest cell
+const OP_GROW = 0xCD;   // human "+" key (web / game client): mass onto our biggest cell
 const GROW_MASS = 500;
 const ACK_TIMEOUT_MS = 2000;
 
@@ -73,6 +73,23 @@ gs.config.foodMinAmount = Math.round(baseFood * args["food-mult"]);
 gs.config.foodMaxAmount = Math.round(gs.config.foodMinAmount * 1.3);
 gs.config.virusMinAmount = Math.max(4, Math.round(50 * area));
 gs.config.virusMaxAmount = Math.max(gs.config.virusMinAmount + 2, Math.round(100 * area));
+
+// Free-roam spectating (Q while spectating, or nobody to follow) shows the whole map: zoomed out until it
+// fits (the view is serverViewBase / scale wide) and centred on it, instead of MultiOgar's mouse-panned
+// 0.4-scale camera. The lower minimum scale only matters for cells far bigger than any player gets.
+gs.config.serverSpecScale = Math.min(gs.config.serverViewBaseX, gs.config.serverViewBaseY) / (args.map * 1.04);
+gs.config.serverMinScale = Math.min(gs.config.serverMinScale, gs.config.serverSpecScale);
+const Packet = require(path.join(SRC, "packet"));
+const origUpdateViewNodes = PlayerTracker.prototype.updateViewNodes;
+PlayerTracker.prototype.updateViewNodes = function (length) {
+    if (this.isSpectating && !length && (this.freeRoam || this.getSpecTarget() == null)) {
+        this._scale = gs.config.serverSpecScale;
+        this.setCenterPos((gs.border.minX + gs.border.maxX) / 2, (gs.border.minY + gs.border.maxY) / 2);
+        this.socket.sendPacket(new Packet.UpdatePos(this, this.centerPos.x, this.centerPos.y, this._scale));
+        return;
+    }
+    return origUpdateViewNodes.call(this, length);
+};
 gs.setBorder(args.map, args.map);
 gs.quadTree = new QuadNode(gs.border, 64, 32);
 
@@ -142,22 +159,10 @@ PacketHandler.prototype.handleMessage = function (message) {
         if (!pt.cells.length) return;
         const cell = pt.cells.reduce((a, b) => (b._size > a._size ? b : a));
         cell.setSize(Math.sqrt(cell._size * cell._size + GROW_MASS * 100));  // mass = size^2 / 100
-        // Tag the name for the rest of this life so showcase stats keep cheated mass apart
-        // from the human benchmark (a respawn sends the plain name again).
-        if (!(pt._name || "").endsWith(" (+)")) pt.setName((pt._name || "") + " (+)");
+        pt.boosted = true;   // this life is flagged (not shown) so showcase stats keep it out of the benchmark
         return;
     }
-    if (message[0] === 0 && !ws.isAgent && args.minions > 0 && !ws.minionsGiven) {
-        // Humans (web client) get minions on their first join; agents never do, since they
-        // announce themselves with OP_AGENT before joining. Keys: E split, R eject, Q follow,
-        // T freeze, P collect food. Minions are named "minion" to keep them out of the
-        // human's showcase stats.
-        origHandle.call(this, message);
-        ws.minionsGiven = true;
-        for (let i = 0; i < args.minions; i++) gs.bots.addMinion(ws.playerTracker, "minion");
-        ws.playerTracker.minion.control = true;
-        return;
-    }
+    if (message[0] === 0 && !ws.isAgent) ws.playerTracker.boosted = false;   // a (re)spawn starts unflagged
     if (message[0] === OP_SPAWN_SIZE && message.length === 3) { // next spawn's cell size (0 = default)
         ws.playerTracker.spawnMass = message.readUInt16LE(1);   // MultiOgar treats it as a size
         return;
@@ -259,15 +264,17 @@ if (args["log-players"] > 0) {
         for (const ws of gs.clients) {
             const pt = ws.playerTracker;
             if (!pt || pt.isRemoved || !pt.cells.length) continue;
-            players.push({n: pt._name || "", m: Math.round(pt.cells.reduce((s, c) => s + c._mass, 0)),
-                          c: pt.cells.length});
+            const row = {n: pt._name || "", m: Math.round(pt.cells.reduce((s, c) => s + c._mass, 0)),
+                         c: pt.cells.length};
+            if (pt.boosted) row.b = 1;   // used "+" this life: not part of the human benchmark
+            players.push(row);
         }
         process.stdout.write(`[players] ${JSON.stringify({t: gs.tickCount, p: players})}\n`);
     };
 }
 
 if (args.record) {
-    // Human players only (not agents, not minions): every step (--sync ticks) one JSON line per human
+    // Human players only (not agents): every step (--sync ticks) one JSON line per human
     // into <record>/humans-<time>.jsonl.gz - the inputs (mouse target, split / eject presses since the
     // last line) and everything the server sends that player (its view nodes), for imitation learning.
     // Line: {t, n: name, m: [mouseX, mouseY], s: splits, w: ejects, mine: [[id, x, y, size]],
@@ -288,10 +295,10 @@ if (args.record) {
         const b = gs.border;
         for (const ws of gs.clients) {
             const pt = ws.playerTracker;
-            if (ws.isAgent || !pt || pt.isRemoved || pt.isMi || pt.isMinion || !pt.cells.length) continue;
+            if (ws.isAgent || !pt || pt.isRemoved || !pt.cells.length) continue;
             const name = pt._name || "";
             // not MultiOgar's own bots, nor our AposBots (they connect like a browser)
-            if (name === "minion" || pt.isBot || /^apos-/.test(name)) continue;
+            if (pt.isBot || /^apos-/.test(name)) continue;
             const mine = pt.cells.map(c => [c.nodeID, r(c.position.x), r(c.position.y), r(c._size)]);
             const o = [];
             for (const c of pt.viewNodes) {

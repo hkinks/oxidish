@@ -1,5 +1,5 @@
 diff --git a/assets/js/main_out.js b/assets/js/main_out.js
-index 4f08f5d..9519b64 100644
+index 4f08f5d..46d777b 100644
 --- a/assets/js/main_out.js
 +++ b/assets/js/main_out.js
 @@ -198,6 +198,7 @@
@@ -15,14 +15,60 @@ index 4f08f5d..9519b64 100644
                      pressed.space = 1;
                      break;
 +                case 107: // numpad +
-+                case 187: // + / = key: arena server cheat, +500 mass on the biggest cell
++                case 187: // + / = key: arena server extra, +500 mass on the biggest cell
 +                    if (isTyping || overlayShown) break;
 +                    wsSend(UINT8[205]);
 +                    break;
                  case 87: // W
                      if (isTyping || overlayShown) break;
                      wsSend(UINT8[21]);
-@@ -1619,5 +1625,21 @@
+@@ -1322,26 +1328,6 @@
+                     wsSend(UINT8[18]);
+                     pressed.q = 1;
+                     break;
+-                case 69: // E
+-                    if (isTyping || overlayShown) break;
+-                    wsSend(UINT8[22]);
+-                    pressed.e = 1;
+-                    break;
+-                case 82: // R
+-                    if (isTyping || overlayShown) break;
+-                    wsSend(UINT8[23]);
+-                    pressed.r = 1;
+-                    break;
+-                case 84: // T
+-                    if (isTyping || overlayShown || pressed.t) break;
+-                    wsSend(UINT8[24]);
+-                    pressed.t = 1;
+-                    break;
+-                case 80: // P
+-                    if (isTyping || overlayShown || pressed.p) break;
+-                    wsSend(UINT8[25]);
+-                    pressed.p = 1;
+-                    break;
+                 case 79: // O
+                     if (isTyping || overlayShown || pressed.o) break;
+                     wsSend(UINT8[26]);
+@@ -1445,18 +1431,6 @@
+                     if (pressed.q) wsSend(UINT8[19]);
+                     pressed.q = 0;
+                     break;
+-                case 69: // E
+-                    pressed.e = 0;
+-                    break;
+-                case 82: // R
+-                    pressed.r = 0;
+-                    break;
+-                case 84: // T
+-                    pressed.t = 0;
+-                    break;
+-                case 80: // P
+-                    pressed.p = 0;
+-                    break;
+                 case 79: // O
+                     pressed.o = 0;
+                     break;
+@@ -1619,5 +1593,21 @@
          sendPlay(arg);
          hideOverlay();
      };
@@ -45,15 +91,20 @@ index 4f08f5d..9519b64 100644
      wHandle.onload = init;
  })(window, window.jQuery);
 diff --git a/index.html b/index.html
-index ad42175..753f0af 100644
+index ad42175..b5d4b13 100644
 --- a/index.html
 +++ b/index.html
-@@ -142,7 +142,7 @@
+@@ -142,11 +142,8 @@
              			Move your <b>Mouse</b> to control your cell<br/>
              			Press <b>Space</b> to split<br/>
              			Press <b>W</b> to eject mass<br/>
 -            			Press <b>E</b> to split minions<br/>
-+            			Press <b>+</b> to add 500 mass (cheat: tags your name with (+))<br/>Press <b>E</b> to split minions<br/>
-             			Press <b>R</b> to make minions eject mass<br/>
-             			Press <b>T</b> to freeze/unfreeze minions<br/>
-             			Press <b>P</b> to make minions collect food<br/>
+-            			Press <b>R</b> to make minions eject mass<br/>
+-            			Press <b>T</b> to freeze/unfreeze minions<br/>
+-            			Press <b>P</b> to make minions collect food<br/>
+-            		    Press <b>Q</b> (in-game) to make minions follow your cell<br/>
++            			Press <b>+</b> to add 500 mass<br/>
++            		    Press <b>Q</b> while spectating to see the whole map<br/>
+                 	</span>
+                 </center>
+             </div>
