@@ -361,6 +361,9 @@ impl World {
 
     pub fn say<S: Into<String>>(&mut self, s: S) {
         let s = s.into();
+        if self.log.back().map_or(false, |(_, last)| *last == s) {
+            return; // the same message again (e.g. a repeated key press): don't stack it
+        }
         self.log.push_back((self.t, s));
         while self.log.len() > 40 {
             self.log.pop_front();

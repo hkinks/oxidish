@@ -277,7 +277,7 @@ pub fn draw_hud(w: &World, ui: &Ui, player: usize, view: &View, fps: i32, speed:
     let sy = 10.0 + ph + 8.0;
     let mut lines: Vec<String> = vec![format!("mass {:.0}", p.mass)];
     if w.stage >= 1 {
-        lines[0].push_str(&format!("   dash {}", if p.dash_cd <= 0.0 { "ready".to_string() } else { format!("{:.1}s", p.dash_cd) }));
+        lines[0].push_str(&format!("   lunge {}", if p.dash_cd <= 0.0 { "ready".to_string() } else { format!("{:.1}s", p.dash_cd) }));
     }
     if w.stage >= 2 {
         lines.push(format!("nutrients {:.0}/{:.0}   chitin {}   shell {}", p.ore, p.cargo_cap(), p.plates, p.armor));
