@@ -67,7 +67,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
     let mut i = 0;
     while i < args.len() {
         let key = args[i].as_str();
-        let mut val = |i: &mut usize| -> Result<String, String> {
+        let val =|i: &mut usize| -> Result<String, String> {
             *i += 1;
             args.get(*i).cloned().ok_or(format!("{key} needs a value"))
         };
@@ -105,6 +105,22 @@ fn print_table(stats: &[AgentStats], wall: f64, ticks: u64) {
              ticks as f64 * 0.04 / 60.0, wall, ticks as f64 * 0.04 / wall);
 }
 
+/// Escape non-ASCII like Python's json.dumps, so readers that open the file with a legacy codec still work.
+fn ascii_json(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        if ch.is_ascii() {
+            out.push(ch);
+        } else {
+            let mut buf = [0u16; 2];
+            for u in ch.encode_utf16(&mut buf) {
+                out.push_str(&format!("\\u{:04x}", u));
+            }
+        }
+    }
+    out
+}
+
 fn run(args: &[String]) -> Result<(), String> {
     let o = parse_opts(args)?;
     let lineup = parse_lineup(&o.agents)?;
@@ -134,7 +150,7 @@ fn run(args: &[String]) -> Result<(), String> {
     print_table(&stats, wall, o.ticks);
     if let Some(path) = o.out {
         let rows: Vec<Value> = stats.iter().map(|s| s.row(o.seed)).collect();
-        std::fs::write(&path, serde_json::to_string(&rows).unwrap()).map_err(|e| e.to_string())?;
+        std::fs::write(&path, ascii_json(&serde_json::to_string(&rows).unwrap())).map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -219,6 +235,11 @@ fn parity(path: &str) -> Result<(), String> {
         }
     }
     println!("parity: {steps} decisions, aim mismatches (>1e-3): {bad_aim}, split/eject mismatches: {bad_flag}, max |aim diff| {max_d:.3e}");
+    let mut ids: Vec<_> = pol.keys().copied().collect();
+    ids.sort();
+    for a in ids {
+        println!("  agent {a} counters: {:?}", pol[&a].counters.0);
+    }
     for l in first_bad {
         println!("  {l}");
     }

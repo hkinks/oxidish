@@ -5,7 +5,6 @@ use crate::game::{Cell, Snapshot};
 const CANDIDATES: usize = 14;
 const ROUTE_DEPTH: usize = 4;
 const BEAM: usize = 24;
-pub const SWITCH_MARGIN: f64 = 1.25;
 const GRID: usize = 8;
 
 /// masks[i][j]: bitmask of pellets k within `reach` of segment start_i -> pellet_j.
