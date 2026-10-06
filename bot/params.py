@@ -115,7 +115,7 @@ BOUNDS = {
     "big_hunt": (0, 1), "big_mass": (300, 6000),
     "half_split_safety": (0, 1), "piece_threats": (0, 1),
     "caution_mass": (0, 3000), "flee_margin_big": (0.2, 2.5), "split_safety_big": (0.5, 4),
-    "flee_plan": (0, 1), "flee_pieces": (0, 1), "contender": (0, 1), "contender_gap": (0, 800), "wall_danger": (0, 800),
+    "flee_plan": (0, 1), "flee_pieces": (0, 1), "contender": (0, 1), "contender_gap": (0, 800),
     "aim_all_cells": (0, 1), "wall_danger": (0, 800),
 }
 
