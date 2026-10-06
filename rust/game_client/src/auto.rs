@@ -120,8 +120,8 @@ impl Auto {
             if t >= 4.0 {
                 aim = hunt();
             }
-            if t >= 14.0 {
-                if let Some(p) = nearest(&|c| c.kind == Kind::Player && c.ns > 1.25 * max_s && !world.mine.contains(&c.id)) {
+            if t >= 8.0 {
+                if let Some(p) = nearest(&|c| c.kind == Kind::Player && c.ns > 1.05 * max_s && !world.mine.contains(&c.id)) {
                     aim = Some(p);
                 }
             }

@@ -18,3 +18,14 @@ uv run python -m arena.autojoin --port 9500 --interval 1200 >> logs/autojoin.txt
 - **Web-client extras** (`vendor/agarian-client`, see client-hook.patch):
   - `+` (or numpad `+`) adds 500 mass to your biggest cell. Your name then gets " (+)" for the rest of that life, which keeps cheated mass out of the benchmark (server opcode 0xCD in `arena/server/arena.js`).
   - `--minions N` on the showcase gives each human N minions (keys E/R/Q/T/P). Bots never get them.
+
+## Native game client (Rust, macroquad)
+Faster alternative to the browser client; same wire protocol (MultiOgar protocol 6), works with the live showcase and with any server speaking it.
+```bash
+cd rust/game_client && cargo build --release -j 2
+./target/release/game_client --server ws://127.0.0.1:9500 --name YourNick     # --novsync uncaps FPS (default: monitor refresh)
+```
+- Start screen: type a nickname, Enter or click to play, Tab to spectate (server follows the largest player). After death: Enter/click respawns, Tab spectates.
+- Mouse steers, Space split, W eject (hold repeats), `+` / numpad `+` adds 500 mass (opcode 0xCD), E/R (hold) / Q (hold) / T / P minion keys, wheel zoom, F11 fullscreen, Esc quits.
+- Rendering interpolates cells over 120 ms like the web client; leaderboard top-right, score bottom-left, FPS top-left.
+- Testing without eyes: `--selftest` (scripted bot: steers, eats, dies, respawns, +500, split, eject; logs `[auto]` lines), `--screenshot out.png [--shot-at SECS]`.

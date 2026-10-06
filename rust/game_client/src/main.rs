@@ -1,4 +1,4 @@
-//! Native agar.io client for the local MultiOgar arena server (protocol 6, same wire format as
+﻿//! Native agar.io client for the local MultiOgar arena server (protocol 6, same wire format as
 //! vendor/agarian-client). See docs/showcase.md for keys.
 
 mod auto;
@@ -36,6 +36,7 @@ fn parse_args() -> Args {
             "--server" => a.server = it.next().unwrap_or_default(),
             "--name" => a.name = it.next().unwrap_or_default(),
             "--selftest" => a.selftest = true,
+            "--novsync" => {}
             "--screenshot" => a.screenshot = it.next(),
             "--shot-at" => a.shot_at = it.next().and_then(|v| v.parse().ok()).unwrap_or(9.0),
             "-h" | "--help" => {
@@ -55,6 +56,11 @@ fn window_conf() -> Conf {
         window_height: 720,
         window_resizable: true,
         sample_count: 4,
+        platform: macroquad::miniquad::conf::Platform {
+            // vsync is on by default (caps FPS at the monitor refresh); --novsync uncaps it
+            swap_interval: if std::env::args().any(|a| a == "--novsync") { Some(0) } else { None },
+            ..Default::default()
+        },
         ..Default::default()
     }
 }
@@ -437,7 +443,8 @@ impl Game {
         let fg = Color::new(0.1, 0.1, 0.12, 0.9);
         f.draw(&format!("FPS {}   cells {}   upd {}   {}", get_fps(), self.world.cells.len(), self.world.updates, self.status), 10.0, 20.0, 18.0, fg);
         if self.mode == Mode::Playing || self.mode == Mode::Dead {
-            f.outlined(&format!("Score: {}", self.last_score), 90.0, h - 34.0, 36.0, Color::new(1.0, 1.0, 1.0, 1.0), 1.0);
+            let s = format!("Score: {}", self.last_score);
+            f.outlined(&s, 16.0 + f.size(&s, 36.0).width / 2.0, h - 34.0, 36.0, Color::new(1.0, 1.0, 1.0, 1.0), 1.0);
         }
         // leaderboard
         let pw = 230.0;
