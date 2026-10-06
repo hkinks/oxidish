@@ -60,7 +60,7 @@ fn wrap(t: &str, max: usize) -> Vec<String> {
 }
 
 fn panel(x: f32, y: f32, w: f32, h: f32) {
-    draw_rectangle(x, y, w, h, Color::new(0.04, 0.05, 0.08, 0.72));
+    draw_rectangle(x, y, w, h, Color::new(0.04, 0.05, 0.08, 0.88));
     draw_rectangle_lines(x, y, w, h, 1.0, Color::new(0.5, 0.6, 0.8, 0.35));
 }
 
@@ -145,7 +145,7 @@ pub fn draw_world(w: &World, v: &View, player: usize) {
             continue;
         }
         let h = ((f.pos.x * 0.013 + f.pos.y * 0.017).sin() * 0.5 + 0.5) * 0.35 + 0.25;
-        draw_circle(p.x, p.y, (4.5 * v.scale).max(2.0), col(h, 0.55, 0.95, 0.9));
+        draw_circle(p.x, p.y, (5.5 * v.scale).max(2.5), col(h, 0.55, 0.95, 0.9));
     }
 
     // pact links (coupling made visible)
@@ -252,7 +252,7 @@ pub fn draw_hud(w: &World, ui: &Ui, player: usize, view: &View, fps: i32, speed:
     let pw = 470.0;
     let desc = wrap(STAGE_DESC[w.stage], 62);
     let gate = w.next_gate();
-    let ph = 62.0 + desc.len() as f32 * 17.0 + if gate.is_some() { 40.0 } else { 0.0 };
+    let ph = 62.0 + desc.len() as f32 * 17.0 + if gate.is_some() { 56.0 } else { 0.0 };
     panel(10.0, 10.0, pw, ph);
     // stage pips
     for s in 0..6 {
@@ -266,8 +266,10 @@ pub fn draw_hud(w: &World, ui: &Ui, player: usize, view: &View, fps: i32, speed:
     if let Some((g, f)) = gate {
         let y = 70.0 + desc.len() as f32 * 17.0 + 6.0;
         bar(20.0, y, pw - 20.0, 7.0, f, Color::new(0.5, 0.8, 1.0, 0.9));
-        let gl = wrap(&format!("Next stage when {}", g), 70);
-        text_shadow(&gl[0], 20.0, y + 22.0, 15.0, Color::new(0.7, 0.8, 0.95, 0.9));
+        let gl = wrap(&format!("Next stage when {}", g), 66);
+        for (k, l) in gl.iter().take(2).enumerate() {
+            text_shadow(l, 20.0, y + 22.0 + k as f32 * 15.0, 15.0, Color::new(0.7, 0.8, 0.95, 0.9));
+        }
     }
 
     // ---- player status
@@ -441,7 +443,7 @@ pub fn draw_hud(w: &World, ui: &Ui, player: usize, view: &View, fps: i32, speed:
         let y = sh / 2.0 - hh / 2.0;
         panel(x, y, hw, hh);
         let mut yy = y + 32.0;
-        text_shadow("EMERGE: eat, grow, and watch an economy grow out of it", x + 20.0, yy, 26.0, Color::new(1.0, 0.9, 0.5, 1.0));
+        text_shadow("EMERGE: eat, grow, and watch an economy grow out of it", x + 20.0, yy, 22.0, Color::new(1.0, 0.9, 0.5, 1.0));
         yy += 30.0;
         let rows = [
             "Mouse: steer (far from your cell = fast, near = slow). Wheel: zoom.",

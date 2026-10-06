@@ -309,7 +309,7 @@ impl World {
             w.agents.push(a);
             id += 1;
         }
-        for _ in 0..900 {
+        for _ in 0..1500 {
             let p = vec2(w.rng.range(20.0, MAP - 20.0), w.rng.range(20.0, MAP - 20.0));
             w.food.push(Food { pos: p, m: FOOD_MASS });
         }
