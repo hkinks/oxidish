@@ -185,7 +185,9 @@ def ffa_eval(nets: dict, job: dict) -> dict:
     every net (2 copies; hof_last 1) with champ and r2g9. Fitness = the net's mean log mass minus the mean
     of champ's and r2g9's in the same matches (paired by seed), so > 0 means it beats the rule bots."""
     import statistics
+    from arena.match import limit_cpus
     from arena.tournament import play_many
+    limit_cpus(job.get("cpus", 11))     # its real-server matches stay inside the 90% CPU budget
     # the nets play as deployed: with the virus detour and the champion's threat push (rl.policy guards)
     specs = [f"{k}=guard2:{v}:{1 if k == 'hof_last' else 2}" for k, v in nets.items()] + FFA_REFS
     rows = play_many(specs, job.get("matches", 24), workers=job.get("workers", 8), seed_base=job["seed"])
