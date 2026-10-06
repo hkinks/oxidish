@@ -119,6 +119,21 @@ def test_contender_is_a_threat():
     assert ux < -0.5, f"aim x {ux:.2f} does not move away from the rival"
 
 
+WALLD = Params.from_dict({"border_margin": 30.0, "wall_danger": 400.0})
+
+
+def test_wall_danger_flees_earlier_at_a_wall():
+    """A 1400 chaser 1700 from a 600 cell: far enough to farm in the open, but pinned on a wall (no room to run)
+    the bot flees. Off (0) it does not; mid-map the gene changes nothing."""
+    from .modes import heuristic_plan
+    base = Params.from_dict({"border_margin": 30.0})
+    at_wall = Snapshot([cell(1, 3500 - 120, 0, 600, "mine")], [cell(2, 3500 - 120 - 1700, 0, 1400)], {}, 0, 0, BORDER, False)
+    mid = Snapshot([cell(1, 0, 0, 600, "mine")], [cell(2, -1700, 0, 1400)], {}, 0, 0, BORDER, False)
+    assert heuristic_plan(at_wall, base).mode == "farm"
+    assert heuristic_plan(at_wall, WALLD).mode == "flee"
+    assert heuristic_plan(mid, WALLD).mode == heuristic_plan(mid, base).mode
+
+
 def main() -> int:
     tests = [v for k, v in globals().items() if k.startswith("test_")]
     failed = 0

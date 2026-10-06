@@ -55,10 +55,24 @@ def split_threats(s: Snapshot, me: Cell, p: Params) -> list[Cell]:
     return [c for c in s.others if c.kind == "player" and c.id not in mine and c.mass > half.mass * EAT_RATIO]
 
 
-def danger_radius(threat: Cell, me: Cell, p: Params = DEFAULT) -> float:
+WALL_ZONE = 700.0        # wall_danger fades out this far from a wall
+
+
+def wall_extra(me: Cell, border: dict, p: Params) -> float:
+    """Extra danger gap when pressed on a wall (wall_danger): there is no room to run, so react earlier.
+    Full at the wall, fading linearly to 0 at WALL_ZONE from it."""
+    if p.wall_danger <= 0:
+        return 0.0
+    wd = min(me.x - border["left"], border["right"] - me.x, me.y - border["top"], border["bottom"] - me.y) - me.size
+    return p.wall_danger * min(1.0, max(0.0, 1.0 - wd / WALL_ZONE))
+
+
+def danger_radius(threat: Cell, me: Cell, p: Params = DEFAULT, border: dict | None = None) -> float:
     reach = threat.size + me.size
     if threat.mass > me.mass * SPLIT_KILL_RATIO:
         reach += p.split_range
+    if border is not None:
+        reach += wall_extra(me, border, p)
     return reach + p.danger_margin
 
 
@@ -154,7 +168,7 @@ def steer(s: Snapshot, plan: Plan, router: FoodRouter | None = None,
     else:
         poppable = [v for v in viruses if me.mass > v.mass * EAT_RATIO and p.virus_detour > 0.5]
         # Unsafe pellets: in a threat's reach, or only reachable by touching a virus we'd pop on.
-        unsafe = lambda c: (any(t.dist(c) < danger_radius(t, me, p) for t in threats)
+        unsafe = lambda c: (any(t.dist(c) < danger_radius(t, me, p, s.border) for t in threats)
                             or any(v.dist(c) < v.size + me.size for v in poppable))
         wx, wy = router.next_waypoint(s, food, unsafe, p.switch_margin)
         pull(Cell(-1, wx, wy, 0, "waypoint", ""), w_food * p.food_pull)
@@ -170,7 +184,7 @@ def steer(s: Snapshot, plan: Plan, router: FoodRouter | None = None,
         pull(ahead(c), w_prey * bonus * c.mass / (me.dist(c) + 50))
     for c in threats:
         d = me.dist(c) - c.size - me.size
-        r = danger_radius(c, me, p)
+        r = danger_radius(c, me, p, s.border)
         if d < r:
             pull(c, -w_threat * p.threat_force * (r - d) / r)
     if p.piece_threats > 0.5 and len(s.mine) > 1:   # our other pieces' threats, by their mass share
@@ -183,7 +197,7 @@ def steer(s: Snapshot, plan: Plan, router: FoodRouter | None = None,
                 if c.kind != "player" or c.id in mine or c.mass <= q.mass * EAT_RATIO:
                     continue
                 d = q.dist(c) - c.size - q.size
-                r = danger_radius(c, q, p)
+                r = danger_radius(c, q, p, s.border)
                 if d < r:
                     dx, dy = q.x - c.x, q.y - c.y
                     n = max(math.hypot(dx, dy), 1)

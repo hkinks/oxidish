@@ -11,7 +11,7 @@ def heuristic_plan(s: Snapshot, p: Params = DEFAULT) -> Plan:
     me = s.main
     _, prey, threats, _ = classify(s, p)
     gap = lambda c: me.dist(c) - c.size - me.size
-    if any(gap(t) < danger_radius(t, me, p) * p.flee_margin for t in threats):
+    if any(gap(t) < danger_radius(t, me, p, s.border) * p.flee_margin for t in threats):
         return Plan("flee")
     if p.flee_pieces > 0.5:     # a threat to one of our bigger pieces (not the main cell) also makes us flee
         for q in guarded_cells(s, p):
