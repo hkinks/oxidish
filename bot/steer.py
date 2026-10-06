@@ -243,7 +243,12 @@ def steer(s: Snapshot, plan: Plan, router: FoodRouter | None = None,
         dx, dy = tx - me.x, ty - me.y
         dn = math.hypot(dx, dy) or 1.0
         ux, uy = dx / dn, dy / dn
-    aim = (me.x + ux * AIM_DISTANCE, me.y + uy * AIM_DISTANCE)
+    # The mouse goes AIM_DISTANCE beyond our farthest cell along the heading: placed from the main cell
+    # only, it fell behind split pieces further ahead, which turned back into the main cell and jammed
+    ahead_of_main = (max((max(0.0, (q.x - me.x) * ux + (q.y - me.y) * uy) for q in s.mine), default=0.0)
+                     if p.aim_all_cells > 0.5 else 0.0)
+    reach = AIM_DISTANCE + ahead_of_main
+    aim = (me.x + ux * reach, me.y + uy * reach)
 
     split = False
     if plan.split_ok and plan.mode == "hunt" and len(s.mine) <= round(p.split_max_cells):

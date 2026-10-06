@@ -119,6 +119,21 @@ def test_contender_is_a_threat():
     assert ux < -0.5, f"aim x {ux:.2f} does not move away from the rival"
 
 
+def test_aim_leads_every_own_piece():
+    """Split, with a 1197 piece 775 ahead (left) of our 1832 main cell, heading left: the mouse 600 ahead of
+    the main cell was behind the piece, so the piece turned back into the main cell and both crawled
+    (ramp300 parked 10+ s like this, 2026-10-06). Every own cell must head the same way."""
+    me = cell(1, 2728, 3053, 1832, "mine")
+    piece = cell(2, 2728 - 775, 3053, 1197, "mine")
+    s = Snapshot([me, piece], [cell(9, 2728 - 300, 3053, 30), cell(10, 2728 - 1500, 3053, 30)], {}, 0, 0, BORDER, False)
+    x, y, _ = steer(s, Plan("hunt", 10), None, CHAMP)
+    d = math.hypot(x - me.x, y - me.y)
+    ux, uy = (x - me.x) / d, (y - me.y) / d
+    assert ux < -0.5, f"heading ({ux:.2f}, {uy:.2f}) is not toward the prey on the left"
+    ahead = (x - piece.x) * ux + (y - piece.y) * uy      # mouse beyond the piece, along the heading
+    assert ahead > 300, f"mouse only {ahead:.0f} ahead of the piece: it turns back into the main cell"
+
+
 def main() -> int:
     tests = [v for k, v in globals().items() if k.startswith("test_")]
     failed = 0
