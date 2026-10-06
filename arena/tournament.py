@@ -15,7 +15,7 @@ import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
-from .match import free_port, parse_lineup, run_match, start_server
+from .match import free_port, limit_cpus, parse_lineup, run_match, start_server
 
 METRICS = ("log_mass", "avg_mass", "peak_mass", "deaths", "kills")
 
@@ -92,7 +92,9 @@ def main() -> None:
     p.add_argument("--food-mult", type=float, default=1.0, help="2 = the showcase's food")
     p.add_argument("--seed-base", type=int, default=1, help="use fresh seeds for unbiased checks")
     p.add_argument("--out", help="also write every agent's per-match stats (incl. losses) to this JSON")
+    p.add_argument("--cpus", type=int, default=11, help="pin to this many CPUs (0 = all): stay under 90% CPU")
     args = p.parse_args()
+    limit_cpus(args.cpus)
 
     started = time.monotonic()
     rows: list[dict] = []

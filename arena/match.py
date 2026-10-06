@@ -29,6 +29,21 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
+def limit_cpus(n: int) -> None:
+    """Pin this process to the first n logical CPUs (Windows); worker and server processes started
+    afterwards inherit it. Keeps long runs under the machine's CPU budget (<= 90% total)."""
+    if n <= 0:
+        return
+    import ctypes
+    import os
+    mask = (1 << min(n, os.cpu_count() or n)) - 1
+    if os.name == "nt":
+        k32 = ctypes.windll.kernel32
+        k32.SetProcessAffinityMask(k32.GetCurrentProcess(), ctypes.c_size_t(mask))
+    else:
+        os.sched_setaffinity(0, set(range(min(n, os.cpu_count() or n))))
+
+
 def start_server(port: int, bots: int, seed: int, agents: int, sync: int, map_size: int,
                  max_tps: int = 0, follow: str = "", food_mult: float = 1.0) -> subprocess.Popen:
     cmd = ["node", str(SERVER_JS), "--port", str(port), "--bots", str(bots), "--seed", str(seed),
@@ -70,8 +85,9 @@ def parse_lineup(specs: list[str]) -> list[tuple[str, dict]]:
                 policy = {"kind": "jev", **json.loads(Path(path[4:]).read_text())}
             elif path.startswith("greedy:"):   # "nng=greedy:runs/rl/x.pt": always the most likely action
                 policy = {"kind": "nn", "ckpt": path[7:], "greedy": True}
-            elif path.startswith("hybrid:"):   # "hyb=hybrid:runs/rl/x.pt": champion when alone, guarded net near others
-                policy = {"kind": "hybrid", "ckpt": path[7:],
+            elif path.startswith("hybrid"):    # "hyb=hybrid:runs/rl/x.pt": champion when alone, guarded net near
+                mode, ck = path.split(":", 1)  # others; hybrid-threat: / hybrid-prey: only near bigger / smaller
+                policy = {"kind": "hybrid", "ckpt": ck, "mode": mode.split("-")[1] if "-" in mode else "any",
                           "params": json.loads(Path("runs/final_champion.json").read_text()).get("params")}
             elif path.startswith("guard:"):    # "nnv=guard:runs/rl/x.pt": the net plus the virus detour
                 policy = {"kind": "nn", "ckpt": path[6:], "guard": 1}

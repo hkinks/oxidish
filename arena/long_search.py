@@ -27,6 +27,7 @@ import cma  # noqa: E402
 
 from bot.params import BOUNDS, Params, from_unit, to_unit
 
+from .match import limit_cpus
 from .tournament import _play
 
 GENES = ["danger_margin", "threat_force", "flee_margin", "farm_threat", "hunt_threat", "flee_threat",
@@ -45,7 +46,9 @@ def main() -> None:
     p.add_argument("--gens", type=int, default=20)
     p.add_argument("--workers", type=int, default=12)
     p.add_argument("--ticks", type=int, default=22500)
+    p.add_argument("--cpus", type=int, default=11, help="pin to this many CPUs (0 = all): stay under 90% CPU")
     args = p.parse_args()
+    limit_cpus(args.cpus)
     root = Path("runs") / args.run
     root.mkdir(parents=True, exist_ok=True)
     init = json.loads(Path(args.init).read_text())
