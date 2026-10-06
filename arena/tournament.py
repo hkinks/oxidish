@@ -100,7 +100,11 @@ def main() -> None:
         futures = [pool.submit(_play, i, args.agents, args.ticks, args.bots,
                                args.map, args.sync, args.seed_base, args.food_mult) for i in range(args.matches)]
         for n, fut in enumerate(as_completed(futures), 1):
-            rows += fut.result()
+            try:
+                rows += fut.result()
+            except Exception as e:     # one broken match (e.g. a dropped socket) must not lose the run
+                print(f"  match {n}/{args.matches} failed: {e!r}", flush=True)
+                continue
             print(f"  match {n}/{args.matches} done", flush=True)
     wall = time.monotonic() - started
 
