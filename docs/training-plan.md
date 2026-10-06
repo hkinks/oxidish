@@ -187,3 +187,8 @@ In long games, dying is what costs: each death throws away accumulated mass, and
 safe consistently beats champ, r2g9 and nnbest in long games, but not yet g4net. In 4-min games it ties the field, with half the deaths.
 
 Its remaining leaks: ~1.5 own virus pops per 15 min, and 36% of its big losses are whole-on-whole (caught by a bigger cell).
+
+**Searching around safe** (`arena.long_search`: CMA-ES over 15 genes; long games vs champ x3 + r2g9 x3; 10 generations of 6 candidates x 6 matches):
+- Per-candidate scores are too noisy for CMA to make headway.
+- Re-checking the top 6, the mean genome and safe on 14 fresh seeds, nobody beat safe clearly: best cand +0.52, safe +0.39, mean genome +0.10 (margin over the field).
+- `long1` (the best, `runs/champ_long1.json`) in the full field (28 matches): 6.65, the top score with the fewest deaths, but only 46% vs r2g9 in that run.
