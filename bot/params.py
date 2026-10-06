@@ -82,6 +82,10 @@ class Params:
     # closer while we are pinned on a wall, so we flee, and stop farming near them, earlier (74% of
     # the rule bots' lost mass is lost fleeing within 400 of a wall, 2026-10-06 mining). 0 = off.
     wall_danger: float = 0.0
+    # wall_wary: extra wall push-back margin while a player heavier than wall_wary_ratio x ours is within 1500
+    # (a wider margin all the time was much worse: it costs the wall pellets when nobody is about). 0 = off.
+    wall_wary: float = 0.0
+    wall_wary_ratio: float = 0.8
 
     def cautious(self) -> "Params":
         """These genes with the big-cell caution applied (caution ramp)."""
@@ -116,7 +120,7 @@ BOUNDS = {
     "half_split_safety": (0, 1), "piece_threats": (0, 1),
     "caution_mass": (0, 3000), "flee_margin_big": (0.2, 2.5), "split_safety_big": (0.5, 4),
     "flee_plan": (0, 1), "flee_pieces": (0, 1), "contender": (0, 1), "contender_gap": (0, 800),
-    "aim_all_cells": (0, 1), "wall_danger": (0, 800),
+    "aim_all_cells": (0, 1), "wall_danger": (0, 800), "wall_wary": (0, 800), "wall_wary_ratio": (0.3, 1.3),
 }
 
 DEFAULT = Params()

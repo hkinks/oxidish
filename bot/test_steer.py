@@ -148,6 +148,18 @@ def test_aim_leads_every_own_piece():
     assert ahead > 300, f"mouse only {ahead:.0f} ahead of the piece: it turns back into the main cell"
 
 
+def test_wall_wary_keeps_off_the_wall_near_a_big_player():
+    """Farming 500 off the right wall: with nobody near the wall margin (30) leaves us alone; with a bigger player
+    within 1500 the widened margin pushes us off the wall."""
+    wary = Params.from_dict({"border_margin": 30.0, "wall_wary": 400.0})
+    me = cell(1, 3500 - 500, 0, 600, "mine")
+    big = cell(2, 3500 - 500 - 1200, 0, 700)
+    alone = Snapshot([me], [], {}, 0, 0, BORDER, False)
+    near = Snapshot([me], [big], {}, 0, 0, BORDER, False)
+    assert aim_dir(alone, Plan("farm"), wary)[0] == 1.0
+    assert aim_dir(near, Plan("farm"), wary)[0] < aim_dir(near, Plan("farm"), CHAMP)[0] - 0.01
+
+
 def main() -> int:
     tests = [v for k, v in globals().items() if k.startswith("test_")]
     failed = 0

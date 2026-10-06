@@ -55,6 +55,7 @@ def split_threats(s: Snapshot, me: Cell, p: Params) -> list[Cell]:
     return [c for c in s.others if c.kind == "player" and c.id not in mine and c.mass > half.mass * EAT_RATIO]
 
 
+WARY_RANGE = 1500.0       # wall_wary: a bigger player within this distance widens the wall margin
 WALL_ZONE = 700.0        # wall_danger fades out this far from a wall
 
 
@@ -218,6 +219,9 @@ def steer(s: Snapshot, plan: Plan, router: FoodRouter | None = None,
 
     b = s.border  # push back from map edges
     margin = me.size + p.border_margin
+    if p.wall_wary > 0 and any(c.mass > me.mass * p.wall_wary_ratio and me.dist(c) < WARY_RANGE
+                               for c in s.others if c.kind == "player"):
+        margin += p.wall_wary     # a big player is about: keep clear of walls we could be pinned on
     # ...but not from a wall our hunt target is closer to than we are: prey tucked into a
     # corner balanced the push against the prey pull and we shook there, never eating it.
     target = next((c for c in prey if c.id == plan.target_id), None) if plan.mode == "hunt" else None
