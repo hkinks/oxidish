@@ -216,3 +216,15 @@ r2g9 kills 67 per match to safe's 37: its hunting out-grows safe's survival.
 | `ramp_r2` (`bot/r2g9_ramp800.json`: r2g9's genes, cautious above 800 mass) | **75%** | 57-87% |
 
 ramp_r2 is now dueling champ, nnbest, g4net and safe.
+
+**ramp_r2 duels** (seeds 88000):
+
+| vs | wins | 95% interval |
+|---|---|---|
+| champ | 79% | 60-90% |
+| r2g9 | 75% | 57-87% |
+| g4net | 68% | 49-82% |
+| nnbest | 54% | 36-70% |
+| safe | 43% | 27-61% |
+
+Neither new bot beats all four existing bots: safe fails against r2g9, ramp_r2 against nnbest. Next: r2g9's genes, cautious from 300 mass (`runs/r2g9_ramp300.json`).
