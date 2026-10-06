@@ -38,8 +38,13 @@ def limit_cpus(n: int) -> None:
     import os
     mask = (1 << min(n, os.cpu_count() or n)) - 1
     if os.name == "nt":
-        k32 = ctypes.windll.kernel32
-        k32.SetProcessAffinityMask(k32.GetCurrentProcess(), ctypes.c_size_t(mask))
+        from ctypes import wintypes
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.GetCurrentProcess.restype = wintypes.HANDLE      # 64-bit handle: the default c_int truncated it
+        k32.SetProcessAffinityMask.argtypes = [wintypes.HANDLE, ctypes.c_size_t]
+        k32.SetProcessAffinityMask.restype = wintypes.BOOL
+        if not k32.SetProcessAffinityMask(k32.GetCurrentProcess(), mask):
+            raise OSError(ctypes.get_last_error(), "SetProcessAffinityMask failed")
     else:
         os.sched_setaffinity(0, set(range(min(n, os.cpu_count() or n))))
 
