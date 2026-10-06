@@ -55,7 +55,7 @@ def main() -> None:
         hud = Hud(page)
         strategist = Strategist(SystemOne(api_key, args.base_url, args.model),
                                 hud.log, hud.show_decision, log_dir)
-        router = FoodRouter() if args.farm == "route" else None
+        router = FoodRouter(step_seconds=args.tick) if args.farm == "route" else None
         lives, best, last_status, was_alive = 0, 0.0, 0.0, False
         try:
             while True:

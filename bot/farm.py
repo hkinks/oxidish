@@ -13,7 +13,6 @@ centroid between clusters and dither when two clusters compete. Instead:
    of the map.
 """
 
-import time
 
 import numpy as np
 
@@ -46,7 +45,11 @@ def _sweep_masks(sx, sy, px, py, reach):
 
 
 class FoodRouter:
-    def __init__(self):
+    def __init__(self, step_seconds: float = 0.08):
+        # exploration memory runs on game time: one call = one decision = step_seconds (arena sync 2:
+        # 2 ticks of 40 ms). Wall time made it depend on how fast the server or simulator ran.
+        self._step_seconds = step_seconds
+        self._clock = 0.0
         self._target_id: int | None = None
         self._visits: dict[tuple[int, int], float] = {}
         self._visit_grid = None  # numpy mirror of _visits for _explore
@@ -96,7 +99,8 @@ class FoodRouter:
     def _explore(self, s: Snapshot, me: Cell) -> tuple[float, float]:
         b = s.border
         w, h = (b["right"] - b["left"]) / GRID, (b["bottom"] - b["top"]) / GRID
-        now = time.monotonic()
+        self._clock += self._step_seconds
+        now = self._clock
         here = (int((me.x - b["left"]) // w), int((me.y - b["top"]) // h))
         self._visits[here] = now
         # Vectorised over the GRID x GRID cells; same scores (and first-max tie-break)
