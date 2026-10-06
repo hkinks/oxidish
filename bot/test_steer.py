@@ -87,6 +87,21 @@ def test_flee_out_of_corner():
     assert uy > 0.8, f"aim ({ux:.2f}, {uy:.2f}) does not escape down the right wall"
 
 
+PIECES = Params.from_dict({"border_margin": 30.0, "flee_plan": 1.0, "flee_pieces": 1.0, "flee_margin": 1.0})
+
+
+def test_threat_to_a_piece_triggers_flee():
+    """Split into a 2000 main cell and an 800 piece; a 1700 hunter (neither prey nor threat to the main cell) closes on
+    the piece. 56% of safe_fp's lost mass was lost while split (2026-10-06 A/B): flee for the piece too."""
+    from .modes import heuristic_plan
+    main_cell, piece = cell(1, 0, 0, 2000, "mine"), cell(2, 0, 700, 800, "mine")
+    hunter = cell(3, 0, 700 + 650, 1700)
+    s = Snapshot([main_cell, piece], [hunter], {}, 0, 0, BORDER, False)
+    assert heuristic_plan(s, PIECES).mode == "flee"
+    ux, uy = aim_dir(s, heuristic_plan(s, PIECES), PIECES)
+    assert uy < -0.8, f"aim ({ux:.2f}, {uy:.2f}) does not take the piece away from the hunter"
+
+
 def main() -> int:
     tests = [v for k, v in globals().items() if k.startswith("test_")]
     failed = 0

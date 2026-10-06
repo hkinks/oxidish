@@ -67,6 +67,22 @@ def tick_speed(size: float) -> float:
     return 88.0 * max(size, 1.0) ** -0.439
 
 
+PIECE_SHARE = 0.15           # flee_pieces: pieces lighter than this share of our mass are not protected
+
+
+def guarded_cells(s: Snapshot, p: Params) -> list[Cell]:
+    """Our cells the flee protects: the main cell, plus (flee_pieces) every piece >= PIECE_SHARE of our mass."""
+    if p.flee_pieces <= 0.5:
+        return [s.main]
+    total = s.total_mass or 1.0
+    return [c for c in s.mine if c is s.main or c.mass >= PIECE_SHARE * total]
+
+
+def eaters_of(s: Snapshot, q: Cell) -> list[Cell]:
+    mine = {c.id for c in s.mine}
+    return [c for c in s.others if c.kind == "player" and c.id not in mine and c.mass > q.mass * EAT_RATIO]
+
+
 def flee_heading(s: Snapshot, me: Cell, threats: list[Cell], poppers: list[Cell], p: Params,
                  pref: tuple[float, float]) -> tuple[float, float]:
     """Heading that keeps us out of every threat's reach longest over the next ~1.5 s.
@@ -77,24 +93,29 @@ def flee_heading(s: Snapshot, me: Cell, threats: list[Cell], poppers: list[Cell]
     look-ahead points; paths through a virus we'd pop on are ruled out. Ties go to `pref` (the
     potential field's heading)."""
     b = s.border
-    lo_x, hi_x = b["left"] + me.size / 2, b["right"] - me.size / 2
-    lo_y, hi_y = b["top"] + me.size / 2, b["bottom"] - me.size / 2
-    v_me = 2 * tick_speed(me.size)
-    th = [(t.x, t.y, 2 * tick_speed(t.size),
-           t.size - me.size / 3 + (p.split_range if t.mass > me.mass * SPLIT_KILL_RATIO else 0.0))
-          for t in threats]
+    guards = []    # per protected cell: position, wall clamp box, speed, its threats
+    for q in guarded_cells(s, p):
+        qt = threats if q is me else eaters_of(s, q)
+        if not qt:
+            continue
+        guards.append((q, (b["left"] + q.size / 2, b["right"] - q.size / 2, b["top"] + q.size / 2,
+                           b["bottom"] - q.size / 2), 2 * tick_speed(q.size),
+                       [(t.x, t.y, 2 * tick_speed(t.size),
+                         t.size - q.size / 3 + (p.split_range if t.mass > q.mass * SPLIT_KILL_RATIO else 0.0))
+                        for t in qt]))
     best, best_score = pref, -math.inf
     for k in range(FLEE_HEADINGS):
         a = 2 * math.pi * k / FLEE_HEADINGS
         ux, uy = math.cos(a), math.sin(a)
         score = math.inf
-        for n in FLEE_CHECKS:
-            x = min(max(me.x + ux * v_me * n, lo_x), hi_x)
-            y = min(max(me.y + uy * v_me * n, lo_y), hi_y)
-            for tx, ty, v, reach in th:
-                score = min(score, math.hypot(x - tx, y - ty) - v * n - reach)
-            if any(math.hypot(x - v.x, y - v.y) < v.size + me.size for v in poppers):
-                score = -math.inf
+        for q, (lo_x, hi_x, lo_y, hi_y), v_q, th in guards:
+            for n in FLEE_CHECKS:
+                x = min(max(q.x + ux * v_q * n, lo_x), hi_x)
+                y = min(max(q.y + uy * v_q * n, lo_y), hi_y)
+                for tx, ty, v, reach in th:
+                    score = min(score, math.hypot(x - tx, y - ty) - v * n - reach)
+                if q is me and any(math.hypot(x - v.x, y - v.y) < v.size + me.size for v in poppers):
+                    score = -math.inf
         score += 1e-3 * (ux * pref[0] + uy * pref[1])
         if score > best_score:
             best, best_score = (ux, uy), score
@@ -194,7 +215,7 @@ def steer(s: Snapshot, plan: Plan, router: FoodRouter | None = None,
     if norm < 1e-6:
         fx, fy, norm = 1.0, 0.0, 1.0  # nothing visible: wander
     ux, uy = fx / norm, fy / norm
-    planned = plan.mode == "flee" and p.flee_plan > 0.5 and bool(threats)
+    planned = plan.mode == "flee" and p.flee_plan > 0.5 and (bool(threats) or p.flee_pieces > 0.5)
     if planned:
         ux, uy = flee_heading(s, me, threats, poppers, p, (ux, uy))
     # Viruses as obstacles: if the nearest one we'd pop on lies across our path, head

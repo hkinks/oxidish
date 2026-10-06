@@ -4,7 +4,7 @@ import math
 
 from .game import Snapshot
 from .params import DEFAULT, Params
-from .steer import EAT_RATIO, Plan, classify, danger_radius, half_of, split_threats
+from .steer import EAT_RATIO, Plan, classify, danger_radius, eaters_of, guarded_cells, half_of, split_threats
 
 
 def heuristic_plan(s: Snapshot, p: Params = DEFAULT) -> Plan:
@@ -13,6 +13,11 @@ def heuristic_plan(s: Snapshot, p: Params = DEFAULT) -> Plan:
     gap = lambda c: me.dist(c) - c.size - me.size
     if any(gap(t) < danger_radius(t, me, p) * p.flee_margin for t in threats):
         return Plan("flee")
+    if p.flee_pieces > 0.5:     # a threat to one of our bigger pieces (not the main cell) also makes us flee
+        for q in guarded_cells(s, p):
+            if q is not me and any(q.dist(t) - t.size - q.size < danger_radius(t, q, p) * p.flee_margin
+                                   for t in eaters_of(s, q)):
+                return Plan("flee")
     rng, floor = p.hunt_range, me.mass * p.min_prey_frac
     if p.big_hunt > 0.5 and me.mass > p.big_mass:
         # Big: food barely offsets decay, so chase players across the whole (wider)
