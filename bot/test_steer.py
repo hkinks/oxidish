@@ -160,6 +160,24 @@ def test_wall_wary_keeps_off_the_wall_near_a_big_player():
     assert aim_dir(near, Plan("farm"), wary)[0] < aim_dir(near, Plan("farm"), CHAMP)[0] - 0.01
 
 
+def test_piece_steers_around_virus():
+    """Split: main cell ahead, a 500 piece behind it with a virus right on the piece's way. 42 of 53 own
+    virus pops happened while split, mostly by pieces (2026-10-07, Node): the detour must cover pieces."""
+    p = Params.from_dict({"border_margin": 30.0, "piece_detour": 1.0})
+    me = cell(1, 0, 0, 1200, "mine")
+    piece = cell(2, -900, 300, 500, "mine")
+    virus = cell(3, -900 + 330, 300 + 5, 100, "virus")
+    food = [cell(10 + i, 900 + 40 * i, 0, 1, "food") for i in range(5)]
+    s = Snapshot([me, piece], [virus] + food, {}, 0, 0, BORDER, False)
+    x, y, _ = steer(s, Plan("farm"), None, p)
+    # the piece heads for the mouse: its line to the mouse must clear the virus
+    dx, dy = x - piece.x, y - piece.y
+    d = math.hypot(dx, dy)
+    t = ((virus.x - piece.x) * dx + (virus.y - piece.y) * dy) / d
+    off = abs((virus.x - piece.x) * dy - (virus.y - piece.y) * dx) / d
+    assert t <= 0 or off > virus.size + piece.size, f"piece passes {off:.0f} from the virus centre (needs > {virus.size + piece.size:.0f})"
+
+
 def main() -> int:
     tests = [v for k, v in globals().items() if k.startswith("test_")]
     failed = 0

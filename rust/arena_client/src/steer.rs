@@ -356,7 +356,8 @@ pub fn steer(s: &Snapshot, plan: &Plan, mut router: Option<&mut FoodRouter>, p: 
         ux = h.0;
         uy = h.1;
     }
-    let mut blocking: Vec<(f64, Cell, f64, f64)> = Vec::new();
+    let mut blocking: Vec<(f64, Cell, f64, f64, Cell)> = Vec::new();
+    let mut piece_aim: Option<(f64, f64)> = None;
     if !planned {
         for v in &poppers {
             let (vx, vy) = (v.x - me.x, v.y - me.y);
@@ -364,7 +365,27 @@ pub fn steer(s: &Snapshot, plan: &Plan, mut router: Option<&mut FoodRouter>, p: 
             let clear = v.size + me.size + p.virus_avoid * 0.2;
             let h = vx * uy - vy * ux;
             if 0.0 < t && t < clear + p.virus_avoid + 200.0 && h.abs() < clear {
-                blocking.push((t, *v, h, clear));
+                blocking.push((t, *v, h, clear, me));
+            }
+        }
+    }
+    if p.piece_detour > 0.5 && !planned {
+        // our other pieces that would pop on a virus in their way
+        for q in &s.mine {
+            if q.id == me.id {
+                continue;
+            }
+            for v in &viruses {
+                if q.mass() <= v.mass() * EAT_RATIO {
+                    continue;
+                }
+                let (vx, vy) = (v.x - q.x, v.y - q.y);
+                let t = vx * ux + vy * uy;
+                let clear = v.size + q.size + p.virus_avoid * 0.2;
+                let h = vx * uy - vy * ux;
+                if 0.0 < t && t < clear + p.virus_avoid + 200.0 && h.abs() < clear {
+                    blocking.push((t, *v, h, clear, *q));
+                }
             }
         }
     }
@@ -375,17 +396,34 @@ pub fn steer(s: &Snapshot, plan: &Plan, mut router: Option<&mut FoodRouter>, p: 
                 bi = i;
             }
         }
-        let (_, v, h, clear) = blocking[bi];
+        let (ux0, uy0) = (ux, uy);
+        let (_, v, h, clear, q) = blocking[bi];
         let side = if h > 0.0 { 1.0 } else { -1.0 };
         let (px, py) = (-uy * side, ux * side);
         let (tx, ty) = (v.x + px * clear * 1.15, v.y + py * clear * 1.15);
-        let (dx, dy) = (tx - me.x, ty - me.y);
+        let (dx, dy) = (tx - q.x, ty - q.y);
         let dn = {
             let d = dx.hypot(dy);
             if d == 0.0 { 1.0 } else { d }
         };
         ux = dx / dn;
         uy = dy / dn;
+        if q.id != me.id {
+            // a blocked piece: tangent past the virus on the side nearer our heading; mouse on that line
+            let (vx, vy) = (v.x - q.x, v.y - q.y);
+            let dv = {
+                let d = vx.hypot(vy);
+                if d == 0.0 { 1.0 } else { d }
+            };
+            let beta = (clear * 1.15 / dv).min(1.0).asin();
+            let base = vy.atan2(vx);
+            let c1 = ((base + beta).cos(), (base + beta).sin());
+            let c2 = ((base - beta).cos(), (base - beta).sin());
+            let (cx, cy) = if c2.0 * ux0 + c2.1 * uy0 > c1.0 * ux0 + c1.1 * uy0 { c2 } else { c1 };
+            ux = cx;
+            uy = cy;
+            piece_aim = Some((q.x + ux * (dv + AIM_DISTANCE), q.y + uy * (dv + AIM_DISTANCE)));
+        }
     }
     let ahead_of_main = if p.aim_all_cells > 0.5 {
         s.mine.iter().map(|q| ((q.x - me.x) * ux + (q.y - me.y) * uy).max(0.0)).fold(0.0, f64::max)
@@ -393,7 +431,7 @@ pub fn steer(s: &Snapshot, plan: &Plan, mut router: Option<&mut FoodRouter>, p: 
         0.0
     };
     let reach = AIM_DISTANCE + ahead_of_main;
-    let mut aim = (me.x + ux * reach, me.y + uy * reach);
+    let mut aim = piece_aim.unwrap_or((me.x + ux * reach, me.y + uy * reach));
 
     let mut split = false;
     if plan.split_ok && plan.mode == Mode::Hunt && (s.mine.len() as f64) <= p.split_max_cells.round_ties_even() {

@@ -244,29 +244,56 @@ def steer(s: Snapshot, plan: Plan, router: FoodRouter | None = None,
     # for the point beside it on the side we were already leaning to. Pushing straight
     # away from it (as before) balanced against the food pull and froze the cell.
     blocking = []
+    piece_aim = None
     for v in (() if planned else poppers):
         vx, vy = v.x - me.x, v.y - me.y
         t = vx * ux + vy * uy                        # distance ahead along our path
         clear = v.size + me.size + p.virus_avoid * 0.2
         h = vx * uy - vy * ux                        # signed sideways offset of the virus
         if 0 < t < clear + p.virus_avoid + 200 and abs(h) < clear:
-            blocking.append((t, v, h, clear))
+            blocking.append((t, v, h, clear, me))
+    if p.piece_detour > 0.5 and not planned:   # our other pieces that would pop on a virus in their way
+        for q in s.mine:
+            if q is me:
+                continue
+            for v in viruses:
+                if q.mass <= v.mass * EAT_RATIO:
+                    continue
+                vx, vy = v.x - q.x, v.y - q.y
+                t = vx * ux + vy * uy
+                clear = v.size + q.size + p.virus_avoid * 0.2
+                h = vx * uy - vy * ux
+                if 0 < t < clear + p.virus_avoid + 200 and abs(h) < clear:
+                    blocking.append((t, v, h, clear, q))
     if blocking:
-        _, v, h, clear = min(blocking, key=lambda b: b[0])
+        ux0, uy0 = ux, uy
+        _, v, h, clear, q = min(blocking, key=lambda b: b[0])
         # h > 0: virus right of our path -> pass it on the left (and vice versa), the
         # smaller turn. (-uy, ux) is our left.
         side = 1.0 if h > 0 else -1.0
         px, py = -uy * side, ux * side
         tx, ty = v.x + px * clear * 1.15, v.y + py * clear * 1.15
-        dx, dy = tx - me.x, ty - me.y
+        dx, dy = tx - q.x, ty - q.y
         dn = math.hypot(dx, dy) or 1.0
         ux, uy = dx / dn, dy / dn
+        if q is not me:
+            # A piece is blocked: from it, take the tangent past the virus (the whole path keeps `clear`, unlike
+            # the point beside it, whose line cuts the corner), on the side nearer our heading, and put the mouse
+            # on that line.
+            vx, vy = v.x - q.x, v.y - q.y
+            dv = math.hypot(vx, vy) or 1.0
+            beta = math.asin(min(1.0, clear * 1.15 / dv))
+            base = math.atan2(vy, vx)
+            hx, hy = ux0, uy0
+            cands = [(math.cos(base + sgn * beta), math.sin(base + sgn * beta)) for sgn in (1.0, -1.0)]
+            ux, uy = max(cands, key=lambda c: c[0] * hx + c[1] * hy)
+            piece_aim = (q.x + ux * (dv + AIM_DISTANCE), q.y + uy * (dv + AIM_DISTANCE))
     # The mouse goes AIM_DISTANCE beyond our farthest cell along the heading: placed from the main cell
     # only, it fell behind split pieces further ahead, which turned back into the main cell and jammed
     ahead_of_main = (max((max(0.0, (q.x - me.x) * ux + (q.y - me.y) * uy) for q in s.mine), default=0.0)
                      if p.aim_all_cells > 0.5 else 0.0)
     reach = AIM_DISTANCE + ahead_of_main
-    aim = (me.x + ux * reach, me.y + uy * reach)
+    aim = piece_aim or (me.x + ux * reach, me.y + uy * reach)
 
     split = False
     if plan.split_ok and plan.mode == "hunt" and len(s.mine) <= round(p.split_max_cells):

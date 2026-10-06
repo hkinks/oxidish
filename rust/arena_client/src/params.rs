@@ -72,6 +72,7 @@ params! {
     wall_danger = 0.0,
     wall_wary = 0.0,
     wall_wary_ratio = 0.8,
+    piece_detour = 0.0,
 }
 
 impl Params {
