@@ -102,6 +102,23 @@ def test_threat_to_a_piece_triggers_flee():
     assert uy < -0.8, f"aim ({ux:.2f}, {uy:.2f}) does not take the piece away from the hunter"
 
 
+CONTEND = Params.from_dict({"border_margin": 30.0, "contender": 0.75, "contender_gap": 200.0})
+
+
+def test_contender_is_a_threat():
+    """Hunting a 1369 prey while overlapping a 2043 near-equal (we are 2275): the neighbour can't eat us,
+    but one meal (that prey) lets it. 30% of r300_fp's lost mass went this way (2026-10-06 mining)."""
+    from .modes import heuristic_plan
+    me = cell(1, 0, 0, 2275, "mine")
+    rival = cell(2, 300, 0, 2043)
+    prey = cell(3, 0, 700, 1369)
+    s = Snapshot([me], [rival, prey], {}, 0, 0, BORDER, False)
+    plan = heuristic_plan(s, CONTEND)
+    assert plan.mode == "flee", plan
+    ux, _ = aim_dir(s, plan, CONTEND)
+    assert ux < -0.5, f"aim x {ux:.2f} does not move away from the rival"
+
+
 def main() -> int:
     tests = [v for k, v in globals().items() if k.startswith("test_")]
     failed = 0

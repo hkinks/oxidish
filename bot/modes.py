@@ -9,7 +9,7 @@ from .steer import EAT_RATIO, Plan, classify, danger_radius, eaters_of, guarded_
 
 def heuristic_plan(s: Snapshot, p: Params = DEFAULT) -> Plan:
     me = s.main
-    _, prey, threats, _ = classify(s)
+    _, prey, threats, _ = classify(s, p)
     gap = lambda c: me.dist(c) - c.size - me.size
     if any(gap(t) < danger_radius(t, me, p) * p.flee_margin for t in threats):
         return Plan("flee")

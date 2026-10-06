@@ -21,8 +21,9 @@ class Plan:
     split_ok: bool = False
 
 
-def classify(s: Snapshot) -> tuple[list[Cell], list[Cell], list[Cell], list[Cell]]:
-    """Split other cells into (food, prey, threats, viruses) relative to our main cell."""
+def classify(s: Snapshot, p: Params | None = None) -> tuple[list[Cell], list[Cell], list[Cell], list[Cell]]:
+    """Split other cells into (food, prey, threats, viruses) relative to our main cell. With `p.contender`,
+    a near-equal player within `p.contender_gap` of us is a threat too (one meal makes it one)."""
     me = s.main
     food, prey, threats, viruses = [], [], [], []
     for c in s.others:
@@ -34,6 +35,9 @@ def classify(s: Snapshot) -> tuple[list[Cell], list[Cell], list[Cell], list[Cell
         elif me.mass > c.mass * EAT_RATIO:
             prey.append(c)
         elif c.mass > me.mass * EAT_RATIO:
+            threats.append(c)
+        elif (p is not None and p.contender > 0 and c.mass > me.mass * p.contender
+              and me.dist(c) - c.size - me.size < p.contender_gap):
             threats.append(c)
     return food, prey, threats, viruses
 
@@ -130,7 +134,7 @@ def steer(s: Snapshot, plan: Plan, router: FoodRouter | None = None,
     every pellet pulls (the original potential-field behaviour).
     """
     me = s.main
-    food, prey, threats, viruses = classify(s)
+    food, prey, threats, viruses = classify(s, p)
     w_food, w_prey, w_threat = {"farm": (1, p.farm_prey, p.farm_threat),
                                 "hunt": (p.hunt_food, 1, p.hunt_threat),
                                 "flee": (0.2, 0, p.flee_threat),
