@@ -12,3 +12,4 @@ runs/*
 runs/r2/*
 !runs/r2/champion_009.json
 target/
+target-*/
