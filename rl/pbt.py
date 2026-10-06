@@ -557,9 +557,13 @@ def main() -> None:
     p.add_argument("--bot-kind", choices=("scripted", "multiogar"),
                    help="the sim's scripted bots (default: multiogar for --objective ffa, else scripted)")
     p.add_argument("--eval-matches", type=int, default=24, help="ffa: real-server matches per evaluation")
+    p.add_argument("--cpus", type=int, default=14,
+                   help="pin training and its eval subprocesses to this many CPUs (14 of 16: total CPU < 90%%)")
     args = p.parse_args()
     if args.eval_job:
         return eval_job(args.eval_job)
+    from arena.match import limit_cpus
+    limit_cpus(args.cpus)
     setup_cuda(args.vram_gb, args.rng)
     Population(args).run()
 
