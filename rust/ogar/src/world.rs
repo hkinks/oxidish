@@ -141,6 +141,8 @@ pub struct Player {
     pub p_q: bool,
     pub last_eject: Option<u32>,
     pub spawn_size: f64,
+    /// 0xCD (+500 mass) used this life; shows only in the [players] log ("b": 1)
+    pub boosted: bool,
     pub view_nodes: Vec<u32>,
     pub client_nodes: Vec<u32>,
     pub connected: bool,
@@ -189,6 +191,7 @@ impl Player {
             p_q: false,
             last_eject: None,
             spawn_size: 0.0,
+            boosted: false,
             view_nodes: Vec::new(),
             client_nodes: Vec::new(),
             connected: true,
@@ -369,7 +372,9 @@ impl World {
         if owner >= 0 {
             let p = &mut self.players[owner as usize];
             p.cells.push(h);
-            p.new_cells.push(id);
+            if p.kind == PKind::Human {
+                p.new_cells.push(id);
+            }
         }
         match kind {
             T_PLAYER => self.nodes_player.push(h),
@@ -552,6 +557,7 @@ impl World {
     }
 
     fn on_player_spawn(&mut self, pi: usize) {
+        self.players[pi].boosted = false;
         let c = self.random_color();
         self.players[pi].color = c;
         let pos = self.random_position();
@@ -1332,20 +1338,11 @@ impl World {
         } else {
             let target = self.spec_target(pi);
             if self.players[pi].free_roam || target.is_none() {
+                // free roam = the whole map: centred, zoomed out to fit (arena.js)
+                let (minx, miny, maxx, maxy) = self.border;
                 let p = &mut self.players[pi];
-                let (dx, dy) = (p.mouse.0 - p.center.0, p.mouse.1 - p.center.1);
-                let sq = dx * dx + dy * dy;
-                if sq < 1.0 {
-                    return;
-                }
-                let sqrt = sq.sqrt();
-                let speed = sqrt.min(self.cfg.free_roam_speed);
-                if speed == 0.0 {
-                    return;
-                }
                 p.scale = self.cfg.spec_scale;
-                let (cx, cy) = (p.center.0 + dx / sqrt * speed, p.center.1 + dy / sqrt * speed);
-                self.set_center(pi, cx, cy);
+                p.center = ((minx + maxx) / 2.0, (miny + maxy) / 2.0);
             } else if let Some(t) = target {
                 let c = self.players[t].center;
                 let s = self.get_scale(t);

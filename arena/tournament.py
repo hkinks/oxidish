@@ -21,8 +21,15 @@ METRICS = ("log_mass", "avg_mass", "peak_mass", "deaths", "kills")
 
 
 def _play(index: int, specs: list[str], ticks: int, bots: int, map_size: int,
-          sync: int, seed_base: int, food_mult: float = 1.0, rust: bool = False) -> list[dict]:
-    port, seed = free_port(), seed_base + index
+          sync: int, seed_base: int, food_mult: float = 1.0, rust: bool = False,
+          engine: str = "node") -> list[dict]:
+    seed = seed_base + index
+    if engine == "ogar":   # the Rust re-implementation of the server (rust/ogar): whole match in one process
+        from . import rust_runner
+        if not rust_runner.supported(specs):
+            raise SystemExit("--engine ogar: only rule bots (route, field, name=genome.json) are supported")
+        return rust_runner.play_ogar(specs, ticks, sync, seed, bots, map_size, food_mult)
+    port = free_port()
     if rust:   # rule-bot lineups only: the Rust client plays the whole lineup in one process
         from . import rust_runner
         if not rust_runner.supported(specs):
@@ -46,11 +53,12 @@ def _play(index: int, specs: list[str], ticks: int, bots: int, map_size: int,
 
 
 def play_many(specs: list[str], matches: int, workers: int = 8, ticks: int = 6000, bots: int = 8,
-              map_size: int = 7000, sync: int = 2, seed_base: int = 1, food_mult: float = 2.0) -> list[dict]:
+              map_size: int = 7000, sync: int = 2, seed_base: int = 1, food_mult: float = 2.0,
+              engine: str = "node") -> list[dict]:
     """`matches` seeded matches of the lineup `specs` in parallel; one row per agent per match."""
     rows: list[dict] = []
     with ProcessPoolExecutor(workers) as pool:
-        futures = [pool.submit(_play, i, specs, ticks, bots, map_size, sync, seed_base, food_mult)
+        futures = [pool.submit(_play, i, specs, ticks, bots, map_size, sync, seed_base, food_mult, False, engine)
                    for i in range(matches)]
         for fut in as_completed(futures):
             try:
@@ -102,6 +110,8 @@ def main() -> None:
     p.add_argument("--seed-base", type=int, default=1, help="use fresh seeds for unbiased checks")
     p.add_argument("--out", help="also write every agent's per-match stats (incl. losses) to this JSON")
     p.add_argument("--rust", action="store_true", help="play rule-bot lineups with the Rust client (rust/arena_client)")
+    p.add_argument("--engine", choices=("node", "ogar"), default="node",
+                   help="ogar = the Rust engine (rust/ogar), rule bots only; ~10x faster than node + clients")
     p.add_argument("--cpus", type=int, default=11, help="pin to this many CPUs (0 = all): stay under 90% CPU")
     args = p.parse_args()
     limit_cpus(args.cpus)
@@ -110,7 +120,7 @@ def main() -> None:
     rows: list[dict] = []
     with ProcessPoolExecutor(args.workers) as pool:
         futures = [pool.submit(_play, i, args.agents, args.ticks, args.bots,
-                               args.map, args.sync, args.seed_base, args.food_mult, args.rust) for i in range(args.matches)]
+                               args.map, args.sync, args.seed_base, args.food_mult, args.rust, args.engine) for i in range(args.matches)]
         for n, fut in enumerate(as_completed(futures), 1):
             try:
                 rows += fut.result()

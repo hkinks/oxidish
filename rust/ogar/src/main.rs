@@ -103,10 +103,29 @@ fn run_match_cmd(a: &Args) -> Result<(), String> {
     Ok(())
 }
 
+fn run_serve_cmd(a: &Args) -> Result<(), String> {
+    let o = ogar::server::ServeOpts {
+        port: a.num("port", 9600u16)?,
+        bind: a.kv.get("bind").cloned().unwrap_or_else(|| "0.0.0.0".into()),
+        bots: a.num("bots", 8usize)?,
+        map: a.num("map", 7000.0f64)?,
+        food_mult: a.num("food-mult", 1.0f64)?,
+        seed: a.num("seed", 0u64)?,
+        sync: a.num("sync", 2u64)?,
+        max_tps: a.num("max-tps", 25.0f64)?,
+        agents: a.agents.clone(),
+        follow: a.kv.get("follow").cloned().unwrap_or_default(),
+        log_players: a.num("log-players", 0.0f64)?,
+        control_port: a.kv.get("control-port").map(|v| v.parse().map_err(|_| "bad --control-port")).transpose()?,
+    };
+    ogar::server::serve(o)
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
         Some("match") => parse_args(&args[1..]).and_then(|a| run_match_cmd(&a)),
+        Some("serve") => parse_args(&args[1..]).and_then(|a| run_serve_cmd(&a)),
         _ => Err("usage: ogar match|serve ...".into()),
     };
     if let Err(e) = result {

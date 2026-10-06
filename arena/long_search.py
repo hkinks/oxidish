@@ -49,6 +49,7 @@ def main() -> None:
     p.add_argument("--field", nargs="+", default=FIELD, help="the fixed opponents (arena lineup specs)")
     p.add_argument("--genes", nargs="+", default=GENES, help="the searched genes (others stay as in --init)")
     p.add_argument("--rust", action="store_true", help="play the matches with the Rust client (rule bots only)")
+    p.add_argument("--engine", choices=("node", "ogar"), default="node", help="ogar = the Rust engine (rule bots only)")
     p.add_argument("--cpus", type=int, default=11, help="pin to this many CPUs (0 = all): stay under 90% CPU")
     args = p.parse_args()
     limit_cpus(args.cpus)
@@ -86,7 +87,7 @@ def main() -> None:
             jobs += [(c, s, lineup) for s in seeds]
         scores: dict[int, list[float]] = {c: [] for c in range(len(specs))}
         with ProcessPoolExecutor(args.workers) as pool:
-            futs = {pool.submit(_play, s - 1, lineup, args.ticks, 8, 7000, 2, 1, 2.0, args.rust): c for c, s, lineup in jobs}
+            futs = {pool.submit(_play, s - 1, lineup, args.ticks, 8, 7000, 2, 1, 2.0, args.rust, args.engine): c for c, s, lineup in jobs}
             for fut, c in futs.items():
                 try:
                     rows = fut.result()
