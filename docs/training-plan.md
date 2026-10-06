@@ -147,3 +147,16 @@ runs/final_champion.json** (r3 champion_008). PPO state kept at runs/rl/p4_final
 - **Result:** `half_split_safety` won 24 matches (+0.18, half the deaths) but **did not replicate** on 36 fresh seeds (5.38 vs champ 5.42). `piece_threats`: no effect.
 - **The 4-min format can't separate the top bots.** champ, r2g9, nnbest and hs all score 5.38-5.47 +-0.13.
 - **Showcase long run** (8.5 game-hours since the restart): nnbest 3223, champ 3131, r2g9 2174, g4net 1657, evader 1055, ffa (guarded net) 964. Humans average ~9-11k, mostly by dying 2-3x less often.
+
+### The cautious champion beats every other bot in long games
+
+`runs/champ_safe.json` (copy: `bot/champ_safe.json`) is the final champion with three changes: `flee_margin` 0.2 -> 1.0 (flee at the full danger radius), `split_safety` 0.5 -> 2.0, and `half_split_safety` on. In 15-game-min real-server matches (2x food, 8 MultiOgar bots), two independent fresh-seed runs of 14 matches:
+
+| run | safe | champ | r2g9 | nnbest | g4net | safe's deaths vs others' |
+|---|---|---|---|---|---|---|
+| seeds 75000 | **6.85** | 6.18 | 6.40 | 6.40 | - | 2.75 vs 4.96-5.96 |
+| seeds 76000 | **6.90** | 6.26 | 6.52 | 6.56 | 6.30 | 2.39 vs 4.43-5.64 |
+
+safe's head-to-head wins over both runs: champ 75%, r2g9 64%, nnbest 75%, g4net 79%. Its average mass is ~1400, against at most ~1070 for the others.
+
+In long games, dying is what costs: each death throws away accumulated mass, and the rule bots were tuned in 4-min matches where recklessness pays. A half-way variant (`flee_margin` 0.6, `split_safety` 1.2) did not help (6.22).
