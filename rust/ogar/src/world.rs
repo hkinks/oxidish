@@ -1,4 +1,4 @@
-﻿//! The MultiOgar (FFA) game world: cells, physics, eating/splitting/merging, spawning, decay.
+//! The MultiOgar (FFA) game world: cells, physics, eating/splitting/merging, spawning, decay.
 //! A port of vendor/MultiOgar GameServer.js + entity/* (statistically, not bit-for-bit, equivalent).
 
 use std::collections::HashMap;
@@ -239,6 +239,8 @@ struct Col {
 }
 
 pub struct World {
+    /// serve --full-view: human players receive every node of the map (fog of war off)
+    pub full_view: bool,
     pub cfg: Config,
     pub rng: Rng,
     pub ents: Vec<Entity>,
@@ -278,6 +280,7 @@ impl World {
     pub fn new(cfg: Config, seed: u64) -> World {
         let map = cfg.map;
         let mut w = World {
+            full_view: false,
             grid: Grid::new(map),
             border: (-map / 2.0, -map / 2.0, map / 2.0, map / 2.0),
             rng: Rng::new(seed),
@@ -1295,8 +1298,12 @@ impl World {
         }
         self.update_view_nodes(pi);
         let scale = self.get_scale(pi).max(self.cfg.min_scale);
-        let w = self.cfg.view_base_x / scale / 2.0;
-        let h = self.cfg.view_base_y / scale / 2.0;
+        let mut w = self.cfg.view_base_x / scale / 2.0;
+        let mut h = self.cfg.view_base_y / scale / 2.0;
+        if self.full_view && self.players[pi].kind == PKind::Human {
+            w = w.max(self.cfg.map * 1.5);
+            h = h.max(self.cfg.map * 1.5);
+        }
         let p = &mut self.players[pi];
         p.vminx = p.center.0 - w;
         p.vminy = p.center.1 - h;

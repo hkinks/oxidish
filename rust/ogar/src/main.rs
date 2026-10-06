@@ -2,7 +2,7 @@
 //!
 //!   ogar match --agents ramp300=runs/r2g9_ramp300.json:1 champ=runs/final_champion.json:1 --ticks 22500 \
 //!              --food-mult 2 --seed 1 --matches 8 --threads 2 --out rows.json
-//!   ogar serve --port 9600 --bots 8 --food-mult 2 --map 7000 [--agents name=genome.json:N] [--minions N]
+//!   ogar serve --port 9600 --bots 8 --food-mult 2 --map 7000 [--agents name=genome.json:N] [--full-view]
 
 use ogar::matches::{parse_lineup, run_many, MatchOpts};
 use serde_json::Value;
@@ -41,7 +41,7 @@ pub fn parse_args(args: &[String]) -> Result<Args, String> {
                 i += 1;
                 a.agents.push(args[i].clone());
             }
-        } else if matches!(key.as_str(), "--realtime") {
+        } else if matches!(key.as_str(), "--realtime" | "--full-view") {
             a.kv.insert(key[2..].to_string(), "1".into());
         } else {
             i += 1;
@@ -105,6 +105,7 @@ fn run_match_cmd(a: &Args) -> Result<(), String> {
 
 fn run_serve_cmd(a: &Args) -> Result<(), String> {
     let o = ogar::server::ServeOpts {
+        full_view: a.kv.contains_key("full-view"),
         port: a.num("port", 9600u16)?,
         bind: a.kv.get("bind").cloned().unwrap_or_else(|| "0.0.0.0".into()),
         bots: a.num("bots", 8usize)?,

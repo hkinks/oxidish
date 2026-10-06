@@ -24,6 +24,7 @@ const GROW_MASS: f64 = 500.0;
 const ACK_TIMEOUT: Duration = Duration::from_millis(2000);
 
 pub struct ServeOpts {
+    pub full_view: bool,
     pub port: u16,
     pub bind: String,
     pub bots: usize,
@@ -155,6 +156,7 @@ pub fn serve(o: ServeOpts) -> Result<(), String> {
     let cfg = Config::new(o.map, o.bots, o.food_mult);
     let base_food = cfg.base_food();
     let mut w = World::new(cfg, o.seed);
+    w.full_view = o.full_view;
     w.track_eats = true;
     let mut s = Server { o, w, conns: HashMap::new(), drivers: Vec::new(), ev_rx, base_food, quit: false };
     let specs = std::mem::take(&mut s.o.agents);
