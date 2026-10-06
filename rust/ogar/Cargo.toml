@@ -1,0 +1,16 @@
+[package]
+name = "ogar"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+arena_client = { path = "../arena_client" }
+serde_json = "1"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "net", "time", "sync", "io-util", "io-std"] }
+tokio-tungstenite = "0.26"
+futures-util = { version = "0.3", features = ["sink"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
