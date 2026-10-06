@@ -1,7 +1,7 @@
 //! Per-tick steering by potential field (port of bot/steer.py).
 
 use crate::farm::FoodRouter;
-use crate::game::{Cell, Kind, Snapshot};
+use crate::game::{Border, Cell, Kind, Snapshot};
 use crate::params::Params;
 
 pub const EAT_RATIO: f64 = 1.3;
@@ -102,6 +102,28 @@ pub fn danger_radius(threat: &Cell, me: &Cell, p: &Params) -> f64 {
     if threat.mass() > me.mass() * SPLIT_KILL_RATIO {
         reach += p.split_range;
     }
+    reach + p.danger_margin
+}
+
+pub const WARY_RANGE: f64 = 1500.0; // wall_wary: a bigger player within this distance widens the wall margin
+pub const WALL_ZONE: f64 = 700.0; // wall_danger fades out this far from a wall
+
+/// Extra danger gap when pressed on a wall (wall_danger): full at the wall, 0 at WALL_ZONE from it.
+pub fn wall_extra(me: &Cell, b: &Border, p: &Params) -> f64 {
+    if p.wall_danger <= 0.0 {
+        return 0.0;
+    }
+    let wd = (me.x - b.left).min(b.right - me.x).min(me.y - b.top).min(b.bottom - me.y) - me.size;
+    p.wall_danger * (1.0 - wd / WALL_ZONE).max(0.0).min(1.0)
+}
+
+/// danger_radius with the wall term (Python: danger_radius(..., border)); same float order as Python.
+pub fn danger_radius_at(threat: &Cell, me: &Cell, p: &Params, b: &Border) -> f64 {
+    let mut reach = threat.size + me.size;
+    if threat.mass() > me.mass() * SPLIT_KILL_RATIO {
+        reach += p.split_range;
+    }
+    reach += wall_extra(me, b, p);
     reach + p.danger_margin
 }
 
@@ -232,7 +254,7 @@ pub fn steer(s: &Snapshot, plan: &Plan, mut router: Option<&mut FoodRouter>, p: 
                 .copied()
                 .collect();
             let unsafe_cell = |c: &Cell| {
-                threats.iter().any(|t| t.dist(c) < danger_radius(t, &me, p))
+                threats.iter().any(|t| t.dist(c) < danger_radius_at(t, &me, p, &s.border))
                     || poppable.iter().any(|v| v.dist(c) < v.size + me.size)
             };
             let (wx, wy) = r.next_waypoint(s, &food, &unsafe_cell, p.switch_margin);
@@ -254,7 +276,7 @@ pub fn steer(s: &Snapshot, plan: &Plan, mut router: Option<&mut FoodRouter>, p: 
     }
     for c in &threats {
         let d = me.dist(c) - c.size - me.size;
-        let r = danger_radius(c, &me, p);
+        let r = danger_radius_at(c, &me, p, &s.border);
         if d < r {
             pull!(c.x, c.y, -w_threat * p.threat_force * (r - d) / r);
         }
@@ -273,7 +295,7 @@ pub fn steer(s: &Snapshot, plan: &Plan, mut router: Option<&mut FoodRouter>, p: 
                     continue;
                 }
                 let d = q.dist(c) - c.size - q.size;
-                let r = danger_radius(c, q, p);
+                let r = danger_radius_at(c, q, p, &s.border);
                 if d < r {
                     let (dx, dy) = (q.x - c.x, q.y - c.y);
                     let n = dx.hypot(dy).max(1.0);
@@ -301,7 +323,12 @@ pub fn steer(s: &Snapshot, plan: &Plan, mut router: Option<&mut FoodRouter>, p: 
     }
 
     let b = &s.border;
-    let margin = me.size + p.border_margin;
+    let mut margin = me.size + p.border_margin;
+    if p.wall_wary > 0.0
+        && s.others.iter().any(|c| c.kind == Kind::Player && c.mass() > me.mass() * p.wall_wary_ratio && me.dist(c) < WARY_RANGE)
+    {
+        margin += p.wall_wary; // a big player is about: keep clear of walls we could be pinned on
+    }
     let target = if plan.mode == Mode::Hunt { prey.iter().find(|c| Some(c.id) == plan.target_id) } else { None };
     let t_edges = match target {
         Some(t) => [t.x - b.left, b.right - t.x, t.y - b.top, b.bottom - t.y],

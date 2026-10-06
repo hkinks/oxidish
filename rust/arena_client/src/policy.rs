@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use crate::farm::FoodRouter;
 use crate::game::{Cell, Kind, Snapshot};
 use crate::params::Params;
-use crate::steer::{classify, danger_radius, eaters_of, guarded_cells, half_of, split_threats, steer, Mode, Plan, EAT_RATIO};
+use crate::steer::{classify, danger_radius, danger_radius_at, eaters_of, guarded_cells, half_of, split_threats, steer, Mode, Plan, EAT_RATIO};
 
 const VIRUS_POP_RATIO: f64 = 1.33;
 
@@ -14,7 +14,7 @@ pub fn heuristic_plan(s: &Snapshot, p: &Params) -> Plan {
     let me = *s.main().unwrap();
     let cl = classify(s, Some(p));
     let gap = |c: &Cell| me.dist(c) - c.size - me.size;
-    if cl.threats.iter().any(|t| gap(t) < danger_radius(t, &me, p) * p.flee_margin) {
+    if cl.threats.iter().any(|t| gap(t) < danger_radius_at(t, &me, p, &s.border) * p.flee_margin) {
         return Plan::new(Mode::Flee);
     }
     if p.flee_pieces > 0.5 {
@@ -104,7 +104,7 @@ impl Tactics {
         if let Some((x, y)) = self.second_split.take() {
             return Some(Out { x, y, split: true, eject: false });
         }
-        let safe = !threats.iter().any(|t| gap(t) < danger_radius(t, &me, p));
+        let safe = !threats.iter().any(|t| gap(t) < danger_radius_at(t, &me, p, &s.border));
         let total = s.total_mass();
 
         if p.selffeed_enable > 0.5 && s.mine.len() >= 2 && safe && total >= p.selffeed_min_mass
@@ -135,7 +135,7 @@ impl Tactics {
 
         if p.hide_enable > 0.5 && !threats.is_empty() {
             let near: Vec<&Cell> =
-                threats.iter().filter(|t| gap(t) < danger_radius(t, &me, p) * p.flee_margin).collect();
+                threats.iter().filter(|t| gap(t) < danger_radius_at(t, &me, p, &s.border) * p.flee_margin).collect();
             let covers: Vec<&Cell> =
                 viruses.iter().filter(|v| v.mass() > me.mass() * EAT_RATIO && gap(v) < p.hide_range).collect();
             if !near.is_empty() && !covers.is_empty() {

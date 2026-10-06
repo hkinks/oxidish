@@ -69,6 +69,9 @@ params! {
     aim_all_cells = 1.0,
     contender = 0.0,
     contender_gap = 200.0,
+    wall_danger = 0.0,
+    wall_wary = 0.0,
+    wall_wary_ratio = 0.8,
 }
 
 impl Params {
