@@ -50,7 +50,7 @@ class Tactics:
             self._second_split = None
             return x, y, True, False
 
-        safe = not any(gap(t) < danger_radius(t, me, p) for t in threats)
+        safe = not any(gap(t) < danger_radius(t, me, p, s.border) for t in threats)
 
         # Self-feeding: while split and safe, aim at our biggest piece and eject, so the
         # small pieces' W blobs feed it and the mass is back in one cell before the
@@ -76,7 +76,7 @@ class Tactics:
                     return tx, ty, True, False
 
         if p.hide_enable > 0.5 and threats:
-            near = [t for t in threats if gap(t) < danger_radius(t, me, p) * p.flee_margin]
+            near = [t for t in threats if gap(t) < danger_radius(t, me, p, s.border) * p.flee_margin]
             covers = [v for v in viruses if v.mass > me.mass * EAT_RATIO and gap(v) < p.hide_range]
             if near and covers:
                 chaser = min(near, key=gap)

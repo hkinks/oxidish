@@ -119,6 +119,20 @@ def test_contender_is_a_threat():
     assert ux < -0.5, f"aim x {ux:.2f} does not move away from the rival"
 
 
+WALLD = Params.from_dict({"border_margin": 30.0, "wall_danger": 400.0})
+
+
+def test_wall_danger_flees_earlier_at_a_wall():
+    """A 1400 chaser 1700 from a 600 cell: far enough to farm in the open, but pinned on a wall (no room to run)
+    the bot flees. Off (0) it does not; mid-map the gene changes nothing."""
+    from .modes import heuristic_plan
+    base = Params.from_dict({"border_margin": 30.0})
+    at_wall = Snapshot([cell(1, 3500 - 120, 0, 600, "mine")], [cell(2, 3500 - 120 - 1700, 0, 1400)], {}, 0, 0, BORDER, False)
+    mid = Snapshot([cell(1, 0, 0, 600, "mine")], [cell(2, -1700, 0, 1400)], {}, 0, 0, BORDER, False)
+    assert heuristic_plan(at_wall, base).mode == "farm"
+    assert heuristic_plan(at_wall, WALLD).mode == "flee"
+    assert heuristic_plan(mid, WALLD).mode == heuristic_plan(mid, base).mode
+
 def test_aim_leads_every_own_piece():
     """Split, with a 1197 piece 775 ahead (left) of our 1832 main cell, heading left: the mouse 600 ahead of
     the main cell was behind the piece, so the piece turned back into the main cell and both crawled
@@ -132,6 +146,18 @@ def test_aim_leads_every_own_piece():
     assert ux < -0.5, f"heading ({ux:.2f}, {uy:.2f}) is not toward the prey on the left"
     ahead = (x - piece.x) * ux + (y - piece.y) * uy      # mouse beyond the piece, along the heading
     assert ahead > 300, f"mouse only {ahead:.0f} ahead of the piece: it turns back into the main cell"
+
+
+def test_wall_wary_keeps_off_the_wall_near_a_big_player():
+    """Farming 500 off the right wall: with nobody near the wall margin (30) leaves us alone; with a bigger player
+    within 1500 the widened margin pushes us off the wall."""
+    wary = Params.from_dict({"border_margin": 30.0, "wall_wary": 400.0})
+    me = cell(1, 3500 - 500, 0, 600, "mine")
+    big = cell(2, 3500 - 500 - 1200, 0, 700)
+    alone = Snapshot([me], [], {}, 0, 0, BORDER, False)
+    near = Snapshot([me], [big], {}, 0, 0, BORDER, False)
+    assert aim_dir(alone, Plan("farm"), wary)[0] == 1.0
+    assert aim_dir(near, Plan("farm"), wary)[0] < aim_dir(near, Plan("farm"), CHAMP)[0] - 0.01
 
 
 def main() -> int:
