@@ -66,6 +66,7 @@ params! {
     split_safety_big = 2.0,
     flee_plan = 0.0,
     flee_pieces = 0.0,
+    aim_all_cells = 1.0,
     contender = 0.0,
     contender_gap = 200.0,
 }

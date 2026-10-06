@@ -360,7 +360,13 @@ pub fn steer(s: &Snapshot, plan: &Plan, mut router: Option<&mut FoodRouter>, p: 
         ux = dx / dn;
         uy = dy / dn;
     }
-    let mut aim = (me.x + ux * AIM_DISTANCE, me.y + uy * AIM_DISTANCE);
+    let ahead_of_main = if p.aim_all_cells > 0.5 {
+        s.mine.iter().map(|q| ((q.x - me.x) * ux + (q.y - me.y) * uy).max(0.0)).fold(0.0, f64::max)
+    } else {
+        0.0
+    };
+    let reach = AIM_DISTANCE + ahead_of_main;
+    let mut aim = (me.x + ux * reach, me.y + uy * reach);
 
     let mut split = false;
     if plan.split_ok && plan.mode == Mode::Hunt && (s.mine.len() as f64) <= p.split_max_cells.round_ties_even() {
