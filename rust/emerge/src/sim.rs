@@ -740,7 +740,7 @@ impl World {
         self.new_stage_flash = 6.0;
         self.stage_times.push(self.t);
         let msg = match self.stage {
-            1 => "Stage 1: DECAY. Eating is lossy (80%): the rest becomes detritus, which blooms into food. Big cells shrink. SPACE dashes.",
+            1 => "Stage 1: DECAY. Eating is lossy (80%): the rest becomes detritus, which blooms into food. Big cells shrink. SPACE lunges.",
             2 => "Stage 2: SCARCITY. Sunlight dims. Nutrient patches appear (hold still inside one to gather). Parasites roam. R digests nutrients into mass.",
             3 => "Stage 3: SYMBIOSIS. F near a cell offers a bond: no friendly eating, faster when close. G leaves (betrayal is possible).",
             4 => "Stage 4: COLONIES. A colony can build a nest (B, 80 nutrients). Refuge: nobody can be eaten inside. Trade nutrients for chitin (1).",
