@@ -41,7 +41,7 @@ rust/ogar/target/release/ogar serve --port 9600 --bots 8 --food-mult 2 --map 700
 - Play with the web client (`setServer("127.0.0.1:9600")`, i.e. `?ip=127.0.0.1:9600` if enabled, or `arena.watch --port 9600`) or `game_client --server ws://127.0.0.1:9600`.
 - External bots still work: `arena.join --port 9600 ...` and `arena_client run --port 9600 ...` (lockstep 0xC8/0xC9, `--sync 2`).
 - **Add / remove in-process bots while it runs** (no restart): type commands on the server's stdin, or over the control port (127.0.0.1 only, one line per command, one reply line):
-  `add ramp=bot/r2g9_ramp800.json:2` | `remove champ` (name prefix) | `list` | `food 1.5` | `quit`. E.g. `echo "add ramp=bot/r2g9_ramp800.json:2" | nc 127.0.0.1 9600` (control port) or PowerShell `TcpClient`.
+  `add ramp=bot/r2g9_ramp800.json:2` | `remove champ` (name prefix) | `list` | `food 1.5` | `quit`. E.g. `echo "add ramp=bot/r2g9_ramp800.json:2" | nc 127.0.0.1 9601` (control port) or PowerShell `TcpClient`.
 - `--max-tps 0` runs ticks unthrottled; `--seed N` makes the world deterministic (0 = time).
 
 Headless matches (no network at all, rows in the `arena.tournament --out` format):
