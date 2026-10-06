@@ -166,3 +166,24 @@ In long games, dying is what costs: each death throws away accumulated mass, and
 - In a field of three cautious variants, the aggressive r2g9 won (71% over safe): caution pays most against reckless opponents.
 - `r2g9_safe` (r2g9's genome with the same caution changes, 28 matches): 6.48, a tie (field 6.40-6.71).
 - Long games are very noisy (+-0.3 per 14 matches), and all champion-family bots tie within it. A consistent winner needs a qualitatively different player, not gene tweaks.
+
+**Pooled over 70 long matches** (4 standard-field runs; `uv run python -m arena.pooled runs/bench/safe_long_*.json`):
+
+| bot | log-mass |
+|---|---|
+| safe | 6.73 +-0.14 |
+| g4net | 6.51 |
+| nnbest | 6.50 |
+| r2g9 | 6.47 |
+| champ | 6.39 |
+
+| safe vs | wins | 95% Wilson interval |
+|---|---|---|
+| champ | 64% | 53-74% |
+| r2g9 | 64% | 53-74% |
+| nnbest | 63% | 51-73% |
+| g4net | 55% | 42-68% (n=56, not significant) |
+
+safe consistently beats champ, r2g9 and nnbest in long games, but not yet g4net. In 4-min games it ties the field, with half the deaths.
+
+Its remaining leaks: ~1.5 own virus pops per 15 min, and 36% of its big losses are whole-on-whole (caught by a bigger cell).
