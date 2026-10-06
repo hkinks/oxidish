@@ -1,0 +1,29 @@
+{
+ "farm": "route",
+ "params": {
+  "danger_margin": 417.2317096839262,
+  "split_range": 834.4312257288808,
+  "threat_force": 5.0,
+  "flee_margin": 0.2,
+  "farm_prey": 0.5874290340094535,
+  "farm_threat": 0.6085308950798018,
+  "hunt_food": 0.0,
+  "hunt_threat": 0.2,
+  "flee_threat": 2.456216678588982,
+  "target_bonus": 2.8122702625864324,
+  "food_pull": 3.1935869997113913,
+  "hunt_range": 815.6739548269992,
+  "min_prey_frac": 0.10300045721265524,
+  "split_safety": 1.11404760934398,
+  "split_reach": 0.38022480022949157,
+  "split_max_cells": 1.0,
+  "virus_avoid": 230.54368481215727,
+  "border_margin": 30.0,
+  "switch_margin": 1.3442428629572492,
+  "caution_mass": 300.0,
+  "flee_margin_big": 1.0,
+  "split_safety_big": 2.0,
+  "wall_danger": 400,
+  "wall_wary": 400
+ }
+}
