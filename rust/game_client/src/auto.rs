@@ -13,6 +13,8 @@ pub struct Action {
     pub packets: Vec<Vec<u8>>,
     pub aim: Option<(f64, f64)>,
     pub screenshot: Option<String>,
+    pub spectate: bool,
+    pub whole_map: bool,
 }
 
 pub struct Auto {
@@ -31,10 +33,13 @@ pub struct Auto {
     last_eject: f64,
     died_at: Option<f64>,
     shot_done: bool,
+    spectate: bool,
+    whole_map: bool,
+    spec_t0: Option<f64>,
 }
 
 impl Auto {
-    pub fn new(selftest: bool, shot: Option<String>, shot_at: f64) -> Auto {
+    pub fn new(selftest: bool, shot: Option<String>, shot_at: f64, spectate: bool, whole_map: bool) -> Auto {
         Auto {
             selftest,
             shot,
@@ -51,6 +56,9 @@ impl Auto {
             last_eject: 0.0,
             died_at: None,
             shot_done: false,
+            spectate,
+            whole_map,
+            spec_t0: None,
         }
     }
 
@@ -64,6 +72,10 @@ impl Auto {
         }
         match mode {
             Mode::Menu => {
+                if ready && now - start > 1.0 && self.spectate {
+                    act.spectate = true;
+                    return act;
+                }
                 if ready && now - start > 1.0 {
                     act.spawn = true;
                     println!("[auto] t={:.1} spawn requested (packets={} border={:?})", now - start, world.packets, world.border);
@@ -82,7 +94,20 @@ impl Auto {
                 }
                 return act;
             }
-            Mode::Spectating => return act,
+            Mode::Spectating => {
+                let t0 = *self.spec_t0.get_or_insert(now);
+                if self.whole_map && now - t0 > 0.5 && !act.whole_map && self.shot.is_some() && !self.shot_done && self.life == 0 {
+                    self.life = 99;
+                    act.whole_map = true;
+                }
+                if let Some(path) = &self.shot {
+                    if !self.shot_done && now - t0 >= self.shot_at {
+                        self.shot_done = true;
+                        act.screenshot = Some(path.clone());
+                    }
+                }
+                return act;
+            }
             Mode::Playing => {}
         }
         let own: Vec<_> = world.mine.iter().filter_map(|id| world.cells.get(id)).filter(|c| c.dead_at.is_none()).collect();

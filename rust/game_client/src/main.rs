@@ -1,12 +1,15 @@
-﻿//! Native agar.io client for the local MultiOgar arena server (protocol 6, same wire format as
+//! Native agar.io client for the local MultiOgar arena server (protocol 6, same wire format as
 //! vendor/agarian-client). See docs/showcase.md for keys.
 
 mod auto;
+mod menu;
 mod net;
+mod settings;
 mod world;
 
 use macroquad::prelude::*;
 use net::{Ev, Net};
+use settings::Settings;
 use world::{Cell, Kind, World, FADE_SECS};
 
 const MOUSE_SEND_SECS: f64 = 0.025;
@@ -21,22 +24,36 @@ pub enum Mode {
 }
 
 struct Args {
-    server: String,
-    name: String,
+    server: Option<String>,
+    name: Option<String>,
+    spectate: bool,
+    whole_map: bool,
+    settings_open: bool,
+    zoom: Option<f64>,
     selftest: bool,
     screenshot: Option<String>,
     shot_at: f64,
 }
 
 fn parse_args() -> Args {
-    let mut a = Args { server: "ws://127.0.0.1:9600".into(), name: String::new(), selftest: false, screenshot: None, shot_at: 9.0 };
+    let mut a = Args { server: None, name: None, spectate: false, whole_map: false, settings_open: false, zoom: None, selftest: false, screenshot: None, shot_at: 9.0 };
     let mut it = std::env::args().skip(1);
     while let Some(k) = it.next() {
         match k.as_str() {
-            "--server" => a.server = it.next().unwrap_or_default(),
-            "--name" => a.name = it.next().unwrap_or_default(),
+            "--server" => a.server = it.next(),
+            "--name" => a.name = it.next(),
             "--selftest" => a.selftest = true,
             "--novsync" => {}
+            "--config" => {
+                it.next();
+            }
+            "--spectate" => a.spectate = true,
+            "--whole-map" => {
+                a.spectate = true;
+                a.whole_map = true;
+            }
+            "--settings-open" => a.settings_open = true,
+            "--zoom" => a.zoom = it.next().and_then(|v| v.parse().ok()),
             "--screenshot" => a.screenshot = it.next(),
             "--shot-at" => a.shot_at = it.next().and_then(|v| v.parse().ok()).unwrap_or(9.0),
             "-h" | "--help" => {
@@ -58,7 +75,7 @@ fn window_conf() -> Conf {
         sample_count: 4,
         platform: macroquad::miniquad::conf::Platform {
             // vsync is on by default (caps FPS at the monitor refresh); --novsync uncaps it
-            swap_interval: if std::env::args().any(|a| a == "--novsync") { Some(0) } else { None },
+            swap_interval: if std::env::args().any(|a| a == "--novsync") || !Settings::load().vsync { Some(0) } else { None },
             ..Default::default()
         },
         ..Default::default()
@@ -70,7 +87,10 @@ struct Camera {
     y: f64,
     z: f64,
     target_z: f64,
-    mouse_z: f64,
+    /// manual zoom (mouse wheel) overrides auto zoom until re-enabled
+    manual: bool,
+    manual_z: f64,
+    fit: f64,
 }
 
 impl Camera {
@@ -166,6 +186,11 @@ struct Game {
     last_score: i64,
     fonts: Fonts,
     whole_map: bool,
+    set: Settings,
+    saved: Settings,
+    settings_open: bool,
+    focus: Option<usize>,
+    quit: bool,
 }
 
 impl Game {
@@ -238,6 +263,8 @@ impl Game {
         let a_far = 1.0 - (19.0f64 / 20.0).powf(dt * 60.0);
         let a_zoom = 1.0 - (8.0f64 / 9.0).powf(dt * 60.0);
         let own = self.own_cells();
+        let (bw, bh) = self.map_size();
+        let fit = (screen_width() as f64 / bw).min(screen_height() as f64 / bh) * 0.96;
         let mut score = 0.0;
         if !own.is_empty() {
             let n = own.len() as f64;
@@ -256,8 +283,25 @@ impl Game {
             self.cam.x += (tx - self.cam.x) * a_far;
             self.cam.y += (ty - self.cam.y) * a_far;
             self.cam.target_z = tz;
+            if self.whole_map {
+                // free roam over the whole map: centre the map and fit it to the window at any aspect
+                if let Some(b) = self.world.border {
+                    self.cam.x += ((b.left + b.right) / 2.0 - self.cam.x) * a_far;
+                    self.cam.y += ((b.top + b.bottom) / 2.0 - self.cam.y) * a_far;
+                }
+                self.cam.target_z = fit / Camera::view_mult();
+            }
         }
-        self.cam.z += (self.cam.target_z * Camera::view_mult() * self.cam.mouse_z - self.cam.z) * a_zoom;
+        let mut goal = self.cam.target_z * Camera::view_mult();
+        if self.cam.manual || !self.set.auto_zoom {
+            goal = self.cam.manual_z;
+        }
+        self.cam.fit = fit;
+        self.cam.z += (goal.clamp(fit * 0.9, 5.0) - self.cam.z) * a_zoom;
+    }
+
+    fn map_size(&self) -> (f64, f64) {
+        self.world.border.map_or((7000.0, 7000.0), |b| ((b.right - b.left).max(1.0), (b.bottom - b.top).max(1.0)))
     }
 
     fn mouse_world(&self) -> (f64, f64) {
@@ -277,9 +321,24 @@ impl Game {
     }
 
     fn input(&mut self, now: f64, aim: Option<(f64, f64)>) {
+        if self.settings_open {
+            self.settings_input();
+            return;
+        }
         let (_, wheel) = mouse_wheel();
         if wheel != 0.0 {
-            self.cam.mouse_z = (self.cam.mouse_z * if wheel > 0.0 { 1.1 } else { 0.9 }).clamp(0.12, 5.0);
+            if !self.cam.manual {
+                self.cam.manual = true;
+                self.cam.manual_z = self.cam.z;
+            }
+            self.cam.manual_z = (self.cam.manual_z * if wheel > 0.0 { 1.1 } else { 0.9 }).clamp(self.cam.fit * 0.9, 5.0);
+        }
+        if is_key_pressed(KeyCode::Z) && self.mode != Mode::Menu {
+            self.cam.manual = false;
+            self.set.auto_zoom = true;
+        }
+        if is_key_pressed(KeyCode::F1) {
+            self.settings_open = true;
         }
         if is_key_pressed(KeyCode::F11) {
             set_fullscreen(true);
@@ -355,7 +414,7 @@ impl Game {
         let right = self.cam.x + w / 2.0 / z;
         let top = self.cam.y - h / 2.0 / z;
         let bottom = self.cam.y + h / 2.0 / z;
-        let col = Color::new(0.0, 0.0, 0.0, 0.07);
+        let col = if self.set.dark { Color::new(1.0, 1.0, 1.0, 0.06) } else { Color::new(0.0, 0.0, 0.0, 0.07) };
         let mut x = (left / step).floor() * step;
         while x <= right {
             let sx = ((x - self.cam.x) * z + w / 2.0) as f32;
@@ -371,12 +430,16 @@ impl Game {
     }
 
     fn draw_world(&self, now: f64) {
-        clear_background(Color::new(0.55, 0.57, 0.6, 1.0));
+        let dark = self.set.dark;
+        clear_background(if dark { Color::new(0.02, 0.02, 0.03, 1.0) } else { Color::new(0.55, 0.57, 0.6, 1.0) });
         if let Some(b) = self.world.border {
             let (x0, y0) = self.cam.to_screen(b.left, b.top);
             let (x1, y1) = self.cam.to_screen(b.right, b.bottom);
-            draw_rectangle(x0, y0, x1 - x0, y1 - y0, Color::new(0.95, 0.98, 1.0, 1.0));
-            self.draw_grid();
+            let bg = if dark { Color::new(0.09, 0.10, 0.13, 1.0) } else { Color::new(0.95, 0.98, 1.0, 1.0) };
+            draw_rectangle(x0, y0, x1 - x0, y1 - y0, bg);
+            if self.set.show_grid {
+                self.draw_grid();
+            }
             draw_rectangle_lines(x0, y0, x1 - x0, y1 - y0, 6.0, Color::new(0.8, 0.2, 0.2, 0.8));
         }
         let (w, h) = (screen_width(), screen_height());
@@ -406,9 +469,13 @@ impl Game {
                 continue;
             }
             let sides = sides_for(r);
-            draw_poly(sx, sy, sides, r, 0.0, darker(c.color, alpha));
-            let ring = (r * 0.04).clamp(1.5, 12.0).min(r * 0.5);
-            draw_poly(sx, sy, sides, r - ring, 0.0, rgb(c.color, alpha));
+            if self.set.outline {
+                draw_poly(sx, sy, sides, r, 0.0, darker(c.color, alpha));
+                let ring = (r * 0.04).clamp(1.5, 12.0).min(r * 0.5);
+                draw_poly(sx, sy, sides, r - ring, 0.0, rgb(c.color, alpha));
+            } else {
+                draw_poly(sx, sy, sides, r, 0.0, rgb(c.color, alpha));
+            }
         }
         for &(c, sx, sy, r, alpha) in &sorted {
             if c.kind != Kind::Player || r < 16.0 {
@@ -417,11 +484,11 @@ impl Game {
             let white = Color::new(1.0, 1.0, 1.0, 1.0);
             let px = ((0.3 * c.s).max(24.0) as f32 * z).max(10.0);
             let mine = self.world.mine.contains(&c.id);
-            if !c.name.is_empty() {
+            if !c.name.is_empty() && self.set.show_names {
                 self.fonts.outlined(&c.name, sx, sy, px, white, alpha);
             }
-            if r >= 26.0 || mine {
-                let off = if c.name.is_empty() { 0.0 } else { px * 0.75 };
+            if self.set.show_mass && (r >= 26.0 || mine) {
+                let off = if c.name.is_empty() || !self.set.show_names { 0.0 } else { px * 0.75 };
                 self.fonts.outlined(&format!("{}", c.mass() as i64), sx, sy + off, px * 0.6, white, alpha);
             }
         }
@@ -430,8 +497,12 @@ impl Game {
     fn draw_hud(&self, now: f64) {
         let (w, h) = (screen_width(), screen_height());
         let f = &self.fonts;
-        let fg = Color::new(0.1, 0.1, 0.12, 0.9);
-        f.draw(&format!("FPS {}   cells {}   upd {}   {}", get_fps(), self.world.cells.len(), self.world.updates, self.status), 10.0, 20.0, 18.0, fg);
+        let fg = if self.set.dark { Color::new(0.9, 0.9, 0.95, 0.9) } else { Color::new(0.1, 0.1, 0.12, 0.9) };
+        if self.set.show_fps {
+            f.draw(&format!("FPS {}   cells {}   upd {}   zoom {:.2}{}   {}", get_fps(), self.world.cells.len(), self.world.updates, self.cam.z,
+                if self.cam.manual || !self.set.auto_zoom { " (manual, Z: auto)" } else { "" }, self.status), 10.0, 20.0, 18.0, fg);
+        }
+        f.draw("F1: settings", 10.0, 42.0, 18.0, fg);
         if self.mode == Mode::Playing || self.mode == Mode::Dead {
             let s = format!("Score: {}", self.last_score);
             f.outlined(&s, 16.0 + f.size(&s, 36.0).width / 2.0, h - 34.0, 36.0, Color::new(1.0, 1.0, 1.0, 1.0), 1.0);
@@ -450,6 +521,10 @@ impl Game {
 
     fn draw_overlay(&self, now: f64) {
         let (w, h) = (screen_width(), screen_height());
+        if self.settings_open {
+            self.draw_settings(now);
+            return;
+        }
         if self.mode == Mode::Playing || self.mode == Mode::Spectating {
             if self.mode == Mode::Spectating {
                 let what = if self.whole_map { "Spectating the whole map.  Q: follow the largest player" } else { "Spectating the largest player.  Q: whole map" };
@@ -481,7 +556,7 @@ impl Game {
         f.outlined(&self.status, w / 2.0, h / 2.0 + 56.0, 20.0, dim, 1.0);
         let help = [
             "Mouse: steer    Space: split    W: eject (hold)    Wheel: zoom",
-            "+ : add 500 mass    Tab: spectate (Q: whole map)    Esc: quit",
+            "+ : add 500 mass    Tab: spectate (Q: whole map)    Esc / F1: settings",
         ];
         for (i, l) in help.iter().enumerate() {
             f.outlined(l, w / 2.0, h / 2.0 + 110.0 + 28.0 * i as f32, 20.0, dim, 1.0);
@@ -508,36 +583,64 @@ fn raise_priority() {
 async fn main() {
     raise_priority();
     let args = parse_args();
+    let mut set = Settings::load();
+    if let Some(s) = &args.server {
+        set.server = s.clone();
+    }
+    if let Some(n) = &args.name {
+        set.nick = n.clone();
+    }
     let mut game = Game {
-        world: World::new(),
+        world: {
+            let mut w = World::new();
+            w.lerp = set.lerp_secs();
+            w
+        },
         net: None,
-        url: args.server.clone(),
+        url: set.server.clone(),
         reconnect_at: 0.0,
         status: String::new(),
         mode: Mode::Menu,
         had_cells: false,
-        nick: args.name.clone(),
-        cam: Camera { x: 0.0, y: 0.0, z: 1.0, target_z: 1.0, mouse_z: 1.0 },
+        nick: set.nick.clone(),
+        cam: Camera { x: 0.0, y: 0.0, z: 1.0, target_z: 1.0, manual: false, manual_z: 1.0, fit: 0.1 },
         border_seen: false,
         last_mouse: 0.0,
         last_repeat: 0.0,
         last_score: 0,
         fonts: Fonts::load(),
         whole_map: false,
+        saved: set.clone(),
+        set,
+        settings_open: args.settings_open,
+        focus: None,
+        quit: false,
     };
+    if let Some(z) = args.zoom {
+        game.cam.manual = true;
+        game.cam.manual_z = z;
+    }
     let mut auto = if args.selftest || args.screenshot.is_some() {
         if game.nick.is_empty() {
             game.nick = "selftest".into();
         }
-        Some(auto::Auto::new(args.selftest, args.screenshot.clone(), args.shot_at))
+        Some(auto::Auto::new(args.selftest, args.screenshot.clone(), args.shot_at, args.spectate, args.whole_map))
     } else {
         None
     };
+    let vsync_on = game.set.vsync && !std::env::args().any(|a| a == "--novsync");
     let mut shot_pending: Option<String> = None;
     loop {
         let now = get_time();
         let dt = get_frame_time() as f64;
         if is_key_pressed(KeyCode::Escape) {
+            game.settings_open = !game.settings_open;
+            game.focus = None;
+            if !game.settings_open {
+                game.apply_settings();
+            }
+        }
+        if game.quit {
             break;
         }
         game.pump_net(now);
@@ -548,6 +651,14 @@ async fn main() {
             let act = a.step(now, game.mode, &game.world, game.nick.is_empty(), game.net.is_some() && game.world.border.is_some(), get_fps());
             if act.spawn {
                 game.spawn();
+            }
+            if act.spectate {
+                game.spectate();
+            }
+            if act.whole_map {
+                game.send(vec![18]);
+                game.send(vec![19]);
+                game.whole_map = true;
             }
             for p in act.packets {
                 game.send(p);
@@ -571,6 +682,15 @@ async fn main() {
         }
         if auto.as_ref().map_or(false, |a| a.finished) {
             break;
+        }
+        if !vsync_on && game.set.fps_cap > 0 {
+            let frame = 1.0 / game.set.fps_cap as f64;
+            while get_time() - now < frame - 0.0015 {
+                std::thread::sleep(std::time::Duration::from_micros(300));
+            }
+            while get_time() - now < frame {
+                std::hint::spin_loop();
+            }
         }
         next_frame().await;
     }

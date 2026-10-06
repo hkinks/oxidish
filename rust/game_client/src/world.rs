@@ -54,6 +54,8 @@ pub struct LbItem {
 }
 
 pub struct World {
+    /// interpolation window in seconds (settings: smoothing)
+    pub lerp: f64,
     pub cells: HashMap<u32, Cell>,
     pub mine: Vec<u32>,
     pub border: Option<Border>,
@@ -106,6 +108,7 @@ impl<'a> Rd<'a> {
 impl World {
     pub fn new() -> World {
         World {
+            lerp: LERP_SECS,
             cells: HashMap::new(),
             mine: Vec::new(),
             border: None,
@@ -186,6 +189,7 @@ impl World {
 
     fn on_update(&mut self, r: &mut Rd, now: f64) -> Option<()> {
         self.updates += 1;
+        let lerp = self.lerp;
         let n = r.u16()?;
         for _ in 0..n {
             let killer = r.u32()?;
@@ -211,7 +215,7 @@ impl World {
             let name = if flags & 0x08 != 0 { Some(r.string()?) } else { None };
             match self.cells.get_mut(&id) {
                 Some(c) => {
-                    interpolate(c, now);
+                    interpolate(c, now, lerp);
                     c.ox = c.x;
                     c.oy = c.y;
                     c.os = c.s;
@@ -270,6 +274,7 @@ impl World {
 
     /// Advance interpolation to `now` and drop faded-out cells.
     pub fn tick(&mut self, now: f64) {
+        let lerp = self.lerp;
         let killers: HashMap<u32, (f64, f64)> = self
             .cells
             .values()
@@ -282,13 +287,13 @@ impl World {
                 c.nx = kx;
                 c.ny = ky;
             }
-            interpolate(c, now);
+            interpolate(c, now, lerp);
         }
     }
 }
 
-fn interpolate(c: &mut Cell, now: f64) {
-    let dt = ((now - c.updated) / LERP_SECS).clamp(0.0, 1.0);
+fn interpolate(c: &mut Cell, now: f64, lerp: f64) {
+    let dt = ((now - c.updated) / lerp).clamp(0.0, 1.0);
     c.x = c.ox + (c.nx - c.ox) * dt;
     c.y = c.oy + (c.ny - c.oy) * dt;
     c.s = c.os + (c.ns - c.os) * dt;

@@ -50,3 +50,7 @@ rust/ogar/target/release/ogar match --agents ramp300=runs/r2g9_ramp300.json:1 ch
     --ticks 22500 --food-mult 2 --seed 1 --matches 48 --threads 2 --out rows.json
 uv run python -m arena.tournament --engine ogar --agents ... --matches 48 --workers 2 --ticks 22500 --food-mult 2   # also arena.verdict / arena.long_search --engine ogar
 ```
+- **Zoom:** auto zoom is on by default (playing: size-based like the web client; spectating the whole map (Q): map fitted to the window; spectating a player: server scale). The mouse wheel switches to manual zoom (can zoom out until the whole map fits the window); `Z` re-enables auto zoom.
+- **Settings (Esc or F1):** server address, nickname, auto zoom, show mass/names/grid/FPS, vsync (applies on restart), FPS cap (with vsync off), interpolation smoothing, cell outline, dark/light background, Quit. Saved to `%APPDATA%\agario-client\settings.json` (override with `--config PATH`). `--server` / `--name` override the saved values.
+- **Whole field while playing:** the server only sends your view box. The Rust server (`rust/ogar`) has an opt-in `ogar serve ... --full-view` that sends human players every node of the map (off by default); zoom out with the wheel to see it all.
+- Test flags: `--spectate`, `--whole-map`, `--settings-open`, `--zoom Z`, `--config PATH`.
