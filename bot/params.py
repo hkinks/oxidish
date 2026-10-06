@@ -57,6 +57,16 @@ class Params:
     # quarter of champ's to players smaller than it overall, i.e. its pieces)
     half_split_safety: float = 0.0   # >0.5: judge split safety against the halves we split into
     piece_threats: float = 0.0       # >0.5: while split, every piece's threats push (by its mass share)
+    # caution ramp: above caution_mass total mass (0 = off) the bot plays the cautious genes below (and
+    # the half-split check): reckless growth while there is little to lose, safety once there is
+    caution_mass: float = 0.0
+    flee_margin_big: float = 1.0
+    split_safety_big: float = 2.0
+
+    def cautious(self) -> "Params":
+        """These genes with the big-cell caution applied (caution ramp)."""
+        return Params(**{**asdict(self), "flee_margin": self.flee_margin_big,
+                         "split_safety": self.split_safety_big, "half_split_safety": 1.0})
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -84,6 +94,7 @@ BOUNDS = {
     "selffeed_enable": (0, 1), "selffeed_min_mass": (50, 3000), "selffeed_frac": (0.3, 0.95),
     "big_hunt": (0, 1), "big_mass": (300, 6000),
     "half_split_safety": (0, 1), "piece_threats": (0, 1),
+    "caution_mass": (0, 3000), "flee_margin_big": (0.2, 2.5), "split_safety_big": (0.5, 4),
 }
 
 DEFAULT = Params()

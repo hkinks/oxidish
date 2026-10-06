@@ -18,6 +18,8 @@ class HeuristicPolicy:
     def __init__(self, farm: str = "route", params: dict | None = None):
         self._router = FoodRouter() if farm == "route" else None
         self._p = Params.from_dict(params or {})
+        self._p_small = self._p
+        self._p_big = self._p.cautious() if self._p.caution_mass > 0 else self._p
         self._tactics = Tactics()
         self.counters = self._tactics.counters
         self._prev: dict[int, tuple[float, float]] = {}  # last positions, for velocities
@@ -31,6 +33,8 @@ class HeuristicPolicy:
             if c.id in prev:
                 c.vx, c.vy = c.x - prev[c.id][0], c.y - prev[c.id][1]
             self._prev[c.id] = (c.x, c.y)
+        if self._p_big is not self._p_small:       # caution ramp: cautious genes once there is mass to lose
+            self._p = self._p_big if s.total_mass > self._p_small.caution_mass else self._p_small
         plan = heuristic_plan(s, self._p)
         out = self._tactics.act(s, plan, self._p)
         if out is None:
@@ -119,11 +123,13 @@ class HybridPolicy:
     the guarded net survives fights about as well (1.2 vs 0.8-1.0 deaths per 4 min) and can learn more.
     Both run every step (their trackers and memories stay current); only the output is switched."""
 
-    def __init__(self, ckpt: str, params: dict | None = None, near: float = 1000.0, guard: int = 2):
+    def __init__(self, ckpt: str, params: dict | None = None, near: float = 1000.0, guard: int = 2,
+                 mode: str = "any"):
         from rl.policy import NNPolicy
         self.champ = HeuristicPolicy("route", params)
         self.net = NNPolicy(ckpt, guard=guard)
         self.near = near
+        self.mode = mode     # which nearby players hand control to the net: any / threat (bigger) / prey (smaller)
         self.counters = {"steps": 0, "net": 0}
 
     def act(self, s: Snapshot):
@@ -133,7 +139,9 @@ class HybridPolicy:
             return a_champ
         me = max(s.mine, key=lambda c: c.size)
         mine = {c.id for c in s.mine}
+        bigger = {"any": None, "threat": True, "prey": False}[self.mode]
         near = any(c.kind == "player" and c.id not in mine
+                   and (bigger is None or (c.mass > me.mass) == bigger)
                    and ((c.x - me.x) ** 2 + (c.y - me.y) ** 2) ** 0.5 - c.size - me.size < self.near
                    for c in s.others)
         self.counters["steps"] += 1
@@ -147,7 +155,7 @@ class HybridPolicy:
 
 def build(spec: dict):
     if spec.get("kind") == "hybrid":   # {"kind": "hybrid", "ckpt": net, "params": champion Params}
-        return HybridPolicy(spec["ckpt"], spec.get("params"), spec.get("near", 1000.0))
+        return HybridPolicy(spec["ckpt"], spec.get("params"), spec.get("near", 1000.0), mode=spec.get("mode", "any"))
     if spec.get("kind") == "jev":  # {"kind": "jev", "params": {...champion Params...}}
         return JevPolicy(spec.get("params"), spec.get("farm", "route"))
     if spec.get("kind") == "nn":  # {"kind": "nn", "ckpt": "runs/rl/p1/latest.pt"}
