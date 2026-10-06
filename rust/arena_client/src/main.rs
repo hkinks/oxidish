@@ -4,21 +4,14 @@
 //!   arena_client parity dump.jsonl       # replay Python-recorded snapshots, compare decisions
 //!   arena_client bench dump.jsonl        # decisions per second on the recorded snapshots
 
-mod client;
-mod farm;
-mod game;
-mod params;
-mod policy;
-mod steer;
-
 use std::collections::HashMap;
 use std::time::Instant;
 
 use serde_json::{json, Value};
 
-use client::{AgentClient, AgentStats};
-use game::{Border, Cell, Kind, Snapshot};
-use policy::HeuristicPolicy;
+use arena_client::client::{AgentClient, AgentStats};
+use arena_client::game::{Border, Cell, Kind, Snapshot};
+use arena_client::policy::HeuristicPolicy;
 
 /// "route:4 champ=runs/x.json:4" -> [(agent name, policy spec)] (arena.match.parse_lineup, rule bots only).
 fn parse_lineup(specs: &[String]) -> Result<Vec<(String, Value)>, String> {

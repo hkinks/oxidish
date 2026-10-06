@@ -69,6 +69,7 @@ def main() -> None:
     p.add_argument("--p1", type=float, default=0.6)
     p.add_argument("--alpha", type=float, default=0.05)
     p.add_argument("--beta", type=float, default=0.05)
+    p.add_argument("--engine", choices=("node", "ogar"), default="node", help="ogar = the Rust engine (rule bots only)")
     p.add_argument("--cpus", type=int, default=11, help="pin to this many CPUs (0 = all): stay under 90% CPU")
     a = p.parse_args()
     limit_cpus(a.cpus)
@@ -84,7 +85,8 @@ def main() -> None:
         seed0 = max((r["seed"] for r in rows), default=a.seed_base - 1) + 1
         batch = min(a.batch, a.max - n)
         print(f"\nplaying matches {n + 1}-{n + batch} (seeds {seed0}-{seed0 + batch - 1})", flush=True)
-        rows += play_many(a.agents, batch, a.workers, a.ticks, seed_base=seed0, food_mult=a.food_mult)
+        rows += play_many(a.agents, batch, a.workers, a.ticks, seed_base=seed0, food_mult=a.food_mult,
+                          engine=a.engine)
         with open(a.out, "w") as f:
             json.dump(rows, f)
     st = status(rows, a.candidate, a.p0, a.p1, a.alpha, a.beta)

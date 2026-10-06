@@ -41,6 +41,27 @@ def supported(specs: list[str]) -> bool:
     return True
 
 
+def ogar_binary() -> Path:
+    path = Path(os.environ.get("OGAR_BIN", ROOT / "rust" / "ogar" / "target" / "release" / ("ogar.exe" if os.name == "nt" else "ogar")))
+    if not path.exists():
+        raise FileNotFoundError(f"{path} missing: cargo build --release -j 2 --manifest-path rust/ogar/Cargo.toml")
+    return path
+
+
+def play_ogar(specs: list[str], ticks: int, sync: int, seed: int, bots: int = 8, map_size: int = 7000,
+              food_mult: float = 1.0) -> list[dict]:
+    """One match in the Rust engine (rust/ogar): the whole world + agents in one process, no websockets."""
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "rows.json"
+        cmd = [str(ogar_binary()), "match", "--ticks", str(ticks), "--sync", str(sync), "--seed", str(seed),
+               "--bots", str(bots), "--map", str(map_size), "--food-mult", str(food_mult),
+               "--out", str(out), "--agents", *specs]
+        proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
+        if proc.returncode:
+            raise RuntimeError(f"ogar failed: {proc.stderr.strip() or proc.stdout.strip()}")
+        return json.loads(out.read_text(encoding="utf-8"))
+
+
 def play_rust(specs: list[str], ticks: int, port: int, sync: int, seed: int) -> list[dict]:
     """Run the lineup against a server already listening on `port`; one row per agent."""
     with tempfile.TemporaryDirectory() as tmp:

@@ -29,3 +29,24 @@ cd rust/game_client && cargo build --release -j 2
 - Mouse steers, Space split, W eject (hold repeats), `+` / numpad `+` adds 500 mass (opcode 0xCD), wheel zoom, F11 fullscreen, Esc quits.
 - Rendering interpolates cells over 120 ms like the web client; leaderboard top-right, score bottom-left, FPS top-left.
 - Testing without eyes: `--selftest` (scripted bot: steers, eats, dies, respawns, +500, split, eject; logs `[auto]` lines), `--screenshot out.png [--shot-at SECS]`.
+
+## Rust server (`ogar`, rust/ogar): faster showcase + headless evaluation
+A Rust port of the MultiOgar FFA game (same rules, config.ini values, server bots, protocol 6, and the arena.js extras 0xC8/0xC9 lockstep agents, 0xCA follow, 0xCB spawn size, 0xCC food, 0xCD +500 mass). Statistically, not bit-for-bit, equivalent to Node (see docs/ogar.md). Rule bots can run **inside** the server, without websockets.
+```bash
+cargo build --release -j 2 --manifest-path rust/ogar/Cargo.toml
+# live server on a free port (never reuse 9500 while the Node showcase runs); 25 ticks/s, 8 server bots, in-process rule bots
+rust/ogar/target/release/ogar serve --port 9600 --bots 8 --food-mult 2 --map 7000 --follow champ --log-players 5 --control-port 9601 \
+    --agents champ=runs/final_champion.json:2 r2g9=runs/r2/champion_009.json:2 safe=bot/champ_safe.json:1 route:1
+```
+- Play with the web client (`setServer("127.0.0.1:9600")`, i.e. `?ip=127.0.0.1:9600` if enabled, or `arena.watch --port 9600`) or `game_client --server ws://127.0.0.1:9600`.
+- External bots still work: `arena.join --port 9600 ...` and `arena_client run --port 9600 ...` (lockstep 0xC8/0xC9, `--sync 2`).
+- **Add / remove in-process bots while it runs** (no restart): type commands on the server's stdin, or over the control port (127.0.0.1 only, one line per command, one reply line):
+  `add ramp=bot/r2g9_ramp800.json:2` | `remove champ` (name prefix) | `list` | `food 1.5` | `quit`. E.g. `echo "add ramp=bot/r2g9_ramp800.json:2" | nc 127.0.0.1 9601` (control port) or PowerShell `TcpClient`.
+- `--max-tps 0` runs ticks unthrottled; `--seed N` makes the world deterministic (0 = time).
+
+Headless matches (no network at all, rows in the `arena.tournament --out` format):
+```bash
+rust/ogar/target/release/ogar match --agents ramp300=runs/r2g9_ramp300.json:1 champ=runs/final_champion.json:1 \
+    --ticks 22500 --food-mult 2 --seed 1 --matches 48 --threads 2 --out rows.json
+uv run python -m arena.tournament --engine ogar --agents ... --matches 48 --workers 2 --ticks 22500 --food-mult 2   # also arena.verdict / arena.long_search --engine ogar
+```
