@@ -46,6 +46,8 @@ def main() -> None:
     p.add_argument("--gens", type=int, default=20)
     p.add_argument("--workers", type=int, default=12)
     p.add_argument("--ticks", type=int, default=22500)
+    p.add_argument("--field", nargs="+", default=FIELD, help="the fixed opponents (arena lineup specs)")
+    p.add_argument("--genes", nargs="+", default=GENES, help="the searched genes (others stay as in --init)")
     p.add_argument("--cpus", type=int, default=11, help="pin to this many CPUs (0 = all): stay under 90% CPU")
     args = p.parse_args()
     limit_cpus(args.cpus)
@@ -55,7 +57,8 @@ def main() -> None:
     base = Params.from_dict(init["params"])
     names = list(BOUNDS)
     unit = to_unit(base)
-    idx = [names.index(g) for g in GENES]
+    genes = args.genes
+    idx = [names.index(g) for g in genes]
     es = cma.CMAEvolutionStrategy([unit[i] for i in idx], args.sigma,
                                   {"popsize": args.popsize, "bounds": [0, 1], "seed": 1, "verbose": -9})
     best = {"fitness": -1e9}
@@ -70,14 +73,15 @@ def main() -> None:
                 u[i] = float(x[k])
             params = from_unit(u).to_dict()
             for k in ("half_split_safety", "piece_threats", "caution_mass"):   # keep the non-searched genes
-                params[k] = init["params"].get(k, params.get(k))
+                if k not in genes:
+                    params[k] = init["params"].get(k, params.get(k))
             specs.append({**init, "params": params})
         seeds = [900_000 + 1000 * gen + j for j in range(args.matches)]
         jobs = []
         for c, spec in enumerate(specs):
             f = root / f"cand_{gen:03d}_{c}.json"
             f.write_text(json.dumps(spec, indent=1))
-            lineup = [f"cand{c}={f}:2"] + FIELD
+            lineup = [f"cand{c}={f}:2"] + args.field
             jobs += [(c, s, lineup) for s in seeds]
         scores: dict[int, list[float]] = {c: [] for c in range(len(specs))}
         with ProcessPoolExecutor(args.workers) as pool:
@@ -99,7 +103,7 @@ def main() -> None:
                 (root / "best.json").write_text(json.dumps(specs[c], indent=1))
         (root / f"gen_{gen:03d}.json").write_text(json.dumps(
             {"gen": gen, "fitness": fit, "scores": scores, "best": {k: best[k] for k in ("fitness", "gen", "cand")},
-             "mean_genes": dict(zip(GENES, map(float, es.mean)))}, indent=1))
+             "mean_genes": dict(zip(genes, map(float, es.mean)))}, indent=1))
         print(f"gen {gen}: fitness " + " ".join(f"{f:+.3f}" for f in fit)
               + f"  (best so far {best['fitness']:+.3f}, gen {best['gen']} cand {best['cand']})"
               + f"  {time.time() - t0:.0f}s", flush=True)
