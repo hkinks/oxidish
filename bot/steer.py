@@ -136,9 +136,14 @@ def steer(s: Snapshot, plan: Plan, router: FoodRouter | None = None,
 
     b = s.border  # push back from map edges
     margin = me.size + p.border_margin
-    for edge, push in ((me.x - b["left"], (1, 0)), (b["right"] - me.x, (-1, 0)),
-                       (me.y - b["top"], (0, 1)), (b["bottom"] - me.y, (0, -1))):
-        if edge < margin:
+    # ...but not from a wall our hunt target is closer to than we are: prey tucked into a
+    # corner balanced the push against the prey pull and we shook there, never eating it.
+    target = next((c for c in prey if c.id == plan.target_id), None) if plan.mode == "hunt" else None
+    t_edges = ((target.x - b["left"], b["right"] - target.x, target.y - b["top"], b["bottom"] - target.y)
+               if target else (math.inf,) * 4)
+    for edge, t_edge, push in zip((me.x - b["left"], b["right"] - me.x, me.y - b["top"], b["bottom"] - me.y),
+                                  t_edges, ((1, 0), (-1, 0), (0, 1), (0, -1))):
+        if edge < margin and t_edge >= edge:
             fx += push[0] * 10 * (margin - edge) / margin
             fy += push[1] * 10 * (margin - edge) / margin
 
