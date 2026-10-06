@@ -5,60 +5,53 @@ Run: `cd rust/emerge && cargo run --release -j 2`
 
 ## Concept
 
-Agar.io is already a tiny ecology: pellets are a faucet, growth is compounding, bigger eats smaller,
-hunting and fleeing are the whole game. EMERGE keeps that as stage 0 and lets new rules appear only
-when the *world state* reaches a measurable condition (shown as a progress bar in the HUD), never
-from a menu. By stage 5 the same cells are miners, haulers, pact members and traders in a priced
-market with faucets, sinks, inflation and inequality.
+Agar.io is already a tiny ecology: food specks are a faucet, growth compounds, bigger eats smaller,
+hunting and fleeing are the whole game. Real economies mirror it (big firms absorb small ones, wealth
+compounds, resources are finite). EMERGE keeps plain agar.io as stage 0 and lets new rules appear only
+when the *world state* reaches a measurable condition (a progress bar in the HUD), never from a menu.
+By stage 5 the same cells are gatherers, hunters, colony members and traders, trading nutrients and
+chitin for spores (stored energy used as money) at nests whose prices follow local scarcity.
+The setting is a living pond: cells, specks, nutrient patches, detritus, spiked parasites, colonies and
+their nests. (The economic lessons come from the EVE Online notes; the setting is not EVE.)
 
-### Substrate ideas used (from the Substrate notes)
+## Stages (each emerges from play)
 
-| Idea | Where it shows up |
-|---|---|
-| Complexity from minimal primitives (distinction / constraint / coupling) | Stage 0 has one primitive (a pellet is a distinction, a cell is a persistent structure). Stage 1 adds a constraint (lossy eating), stage 3 adds coupling (pacts bind cells). Each layer exists only once the layer below is stable. |
-| Layered emergence, detected by metrics not by fiat | Stage gates are measured conditions: largest persistent structure, pellet scarcity, ore mined, pact mass, ore delivered. HUD shows the live metric. |
-| Reversibility / conservation, "no hard-coded constants, no engineered conservation laws" in spirit | One closed mass ledger: pellets + cells + cargo + plates + armor + station structure + veins + heat. Only explicit faucets add mass (sunlight, newcomers). The HUD shows the conservation error (it stays at ~0). |
-| Landauer: irreversible operations cost heat | Every lossy act (20% of a meal, dash, mass decay of big cells, refining, armor wear-off, destroyed loot) dumps mass into a heat lattice. Heat diffuses and blooms back into pellets and ore, so fights create farmland. |
-| Fakeon / ancillary state | Heat is bookkeeping that is never an asset: it cannot be owned or traded, but it is essential to the dynamics. |
-| Weak emergence / computational irreducibility | Nothing about specialization, inequality or prices is scripted; it only appears by running the rules. |
-| Time as process, observers see layers | The tick is the only clock; the "stage" is purely what the observers (HUD) report from measured state. (Wolfram-style causal graphs, bounded-observer fog and asynchronous updates are future work.) |
+0. SOUP: food specks, eat, grow. Gate: a cell reaches mass 140.
+1. DECAY: eating is lossy, big cells shrink, detritus feeds new growth, SPACE lunges. Gate: food below 45% of capacity.
+2. SCARCITY: sunlight dims, nutrient patches appear (hold still inside to gather), R digests nutrients into mass, spiked parasites roam. Gate: 250 nutrients gathered.
+3. SYMBIOSIS: F bonds with a nearby cell into a colony (no friendly eating, faster when close), G leaves. Gate: a colony of 2+ cells with 400 mass.
+4. COLONIES: B builds a nest (80 nutrients + 40 mass): a refuge nobody can be eaten in, with a digester (4 nutrients -> 1 chitin + detritus). Nutrients are traded for chitin at 5:1 (key 1), chitin hardens the shell (key 3). Gate: 150 nutrients delivered or 50 s after the first nest.
+5. EXCHANGE: spores exist. Nests quote prices from local stock (keys 1-4). Parasite harvests and first-bloom grants make spores; tolls and lost loot destroy them. A drought halves patch yield while parasite blooms inflate harvests. Big colonies take over small ones.
 
-### EVE Online lessons used
+## Mechanic to Substrate idea to economic principle
 
-| Lesson | Mechanic |
-|---|---|
-| Faucets and sinks | Credits are minted only by drifter bounties and station grants; burned by a 1% broker fee, 40% of looted credits lost on a kill, abandoned treasuries. Faucets/sinks are shown live. |
-| Destruction as a sink | Eating is 80% efficient; a dead cell's plates, armor and part of its ore and credits turn to heat. Armor wears off, so plate demand never ends. |
-| Veteran capital compounds | Mining yield scales with sqrt(mass) and with learned skill; big cells keep growing. Newcomers respawn at mass 10 with nothing. Gini and top-10% share are on screen. |
-| Specialization | Bots are forager / hunter / miner / trader. Per-role skill grows by doing, feeds back into role choice (with crowding), so niches lock in. |
-| Empires, welfare, N+1 | Pacts give speed when close, found stations (havens), and pay a share of the station treasury to members as dividends. Outsiders pay higher fees. |
-| Money printing and stagflation | At stage 5 a dev patch halves mining yield and multiplies drifter bounties, so miners flip to hunting, money supply rises while ore falls. The patch later reverts, the extra credits do not. |
-| Market with price discovery | Each station quotes ore bid and plate ask from its own stock (scarce = dearer). Prices differ between stations, so traders arbitrage plates between them. Station treasury limits what it can buy. |
-| Scams / betrayal | Hunters inside a pact may defect when a richer, smaller pact-mate is close. |
-
-## Stages (all emerge from play, see HUD bar)
-
-0. SOUP: pellets, eat, grow. Gate: a cell reaches mass 140 (or 50 s).
-1. HEAT: eating is lossy, big cells decay, heat blooms into food, SPACE dashes. Gate: pellets below 45% of capacity (min 35 s in stage).
-2. SCARCITY: sunlight dims, ore veins appear (hold still inside to mine), R burns ore into mass, red drifters roam. Gate: 250 ore mined.
-3. PACTS: F proposes a pact, G leaves; no friendly eating, speed bonus near mates. Gate: a pact of 2+ cells with 400 mass.
-4. STATIONS: B founds a station (80 ore + 40 mass). Havens, refinery (4 ore -> 1 plate + heat), barter 5 ore : 1 plate (key 1), plates become armor (key 3). Gate: 150 ore delivered or 50 s after the first station.
-5. MARKET: credits, priced trades (keys 1-4), bounties, fees, dividends, dev patch, Gini / money / price panels.
+| Mechanic | Substrate idea | Economic principle |
+|---|---|---|
+| One closed mass ledger (specks, cells, cargo, chitin, shells, nests, patches, detritus); HUD shows conservation error (~0) | Conservation / reversibility: nothing is created or lost except through explicit processes | Faucets and sinks must be accounted for |
+| Lossy eating, lunging, decay of big cells, digesting, shell wear, destroyed loot all produce detritus; detritus diffuses and regrows specks and nutrients | Landauer: irreversible operations cost heat; heat is ancillary state that is never an asset | Destruction as a sink that fuels renewed production (fights make farmland) |
+| Stage gates are measured world states (largest cell, food density, nutrients gathered, colony mass, nutrients delivered) | Layers of structure from simple primitives, detected by metrics, not fiat | Economies bootstrap in layers: subsistence, extraction, organisation, then markets |
+| Specialization, inequality, prices are not scripted | Weak emergence: only visible by running the rules | Specialization by learning-by-doing with crowding; Gini and top-10% share shown |
+| Distinction (specks), constraint (lossy eating), coupling (bonds) added in that order | Primitives distinction / constraint / coupling | Alliances reduce risk but invite free riding |
+| Gathering yield scales with sqrt(mass) and skill; newcomers start at mass 10 | Compounding structure persists longer | Veteran capital advantage |
+| Colonies share a nest, pay members dividends from its treasury; outsiders pay higher tolls; hunters may defect | Coupling between structures | Alliances that can betray, welfare to hold labour |
+| Spores minted only by parasite harvests and grants, burned by a 1% toll and 40% of loot lost on kills | Explicit accounting of what enters/leaves the closed system | Faucets and sinks of a currency, inflation |
+| Nest prices from local stock; traders carry chitin between nests | Local rules, global pattern | Price discovery and arbitrage |
+| Drought halves yield and boosts harvests, then reverts; the extra spores stay | A perturbation of a rule, not of the state | Shock leading to stagflation-like prices |
+| A dominant colony absorbs a much smaller one (members, treasury, nest) | Larger structures absorb smaller | Mergers and acquisitions |
 
 ## Controls
 
-Mouse steers (distance = throttle). Wheel zoom. SPACE dash, R burn ore, F pact, G leave, B build station, 1 sell ore, 2 buy plate, 3 wear plate, 4 sell plate, H help, M ledger panel, `]` skip to next stage (debug), `+`/`-` sim speed, Esc quit.
-Mining needs a low throttle: keep the cursor near your cell while inside a vein.
+Mouse steers (distance = throttle). Wheel zoom. SPACE lunge, R digest nutrients, F bond, G leave colony, B build nest, 1 sell nutrients (hold to keep selling), 2 buy chitin, 3 harden shell, 4 sell chitin, H help, M ledger panel, `]` skip to next stage (debug), `+`/`-` sim speed, Esc quit.
+Gathering needs a low throttle: keep the cursor near your cell while inside a patch.
 
 ## Command line
 
 - `emerge --sim N` headless: N ticks (30/s), prints stage transitions, economy stats, conservation check, top agents. `--seed`, `--bots`, `--dump`.
-- `--screenshot out.png [--shot-at SECS] [--stage N] [--warm SECS] [--autoplay] [--zoom Z] [--help-open]` renders one frame and exits. `--stage N` pre-runs the world (forcing a stage every 25 s) so structures exist.
-- `--autoplay` lets the bot AI drive the player cell.
+- `--screenshot out.png [--shot-at SECS] [--stage N] [--warm SECS] [--autoplay] [--zoom Z] [--help-open]` renders one frame and exits. `--stage N` pre-runs the world so structures exist; `--autoplay` lets the bot AI drive your cell.
 
-Screenshots from the build: `docs/emerge/stage0_help.png`, `stage2.png`, `stage4.png`, `stage5.png`.
+Screenshots: `docs/emerge/stage0_help.png`, `stage2.png`, `stage4.png`, `stage5.png`.
 
 ## Implemented vs future
 
-Implemented: everything above, 27 bots + drifters, one-process play, headless self-test (`--sim`) with an exact mass ledger.
-Not yet: splitting/ejecting, fog of war (bounded observers), asynchronous / causal-invariant updates, player-posted limit orders (stations are automated market makers), inheritance when players quit, contracts and loans, price manipulation and scams beyond defection, regulation/taxes as policy, multiplayer (the sim is deterministic per seed and could be moved behind the `ogar` server), tuned pacing for human players (stages take about 3 minutes with bots alone).
+Implemented: all of the above with 27 bot organisms plus parasites, an exact mass ledger, headless self-test.
+Not yet: splitting, fog of war (bounded observers), asynchronous updates, player-posted limit orders (nests are automated market makers), inheritance, loans, richer takeovers, multiplayer, pacing tuned for humans (bots alone reach stage 5 in about 3 minutes).

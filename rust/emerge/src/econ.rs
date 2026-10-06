@@ -37,7 +37,7 @@ pub fn propose_pact(w: &mut World, i: usize) {
     }
     let Some((j, _)) = best else {
         if mk == Kind::Player {
-            w.say("No one in range for a pact (get within ~300).");
+            w.say("No one in range for a colony (get within ~300).");
         }
         return;
     };
@@ -51,7 +51,7 @@ pub fn propose_pact(w: &mut World, i: usize) {
     if !accept {
         if mk == Kind::Player {
             let n = w.agents[j].name.clone();
-            w.say(format!("{} declined your pact.", n));
+            w.say(format!("{} declined your colony.", n));
         }
         return;
     }
@@ -85,7 +85,7 @@ pub fn propose_pact(w: &mut World, i: usize) {
     };
     w.stats.pacts_formed += 1;
     let (a, b, c) = (w.agents[i].name.clone(), w.agents[j].name.clone(), w.clans[target_clan].name.clone());
-    w.say(format!("{} and {} are bound by pact: {}", a, b, c));
+    w.say(format!("{} and {} are bound by colony: {}", a, b, c));
 }
 
 pub fn leave_clan(w: &mut World, i: usize, announce: bool) {
@@ -109,27 +109,27 @@ pub fn build_station(w: &mut World, i: usize) {
     let a = &w.agents[i];
     let Some(c) = a.clan else {
         if a.kind == Kind::Player {
-            w.say("You need a pact to found a station (F near another cell).");
+            w.say("You need a colony to found a nest (F near another cell).");
         }
         return;
     };
     let is_player = a.kind == Kind::Player;
     if w.clans[c].station.is_some() {
         if is_player {
-            w.say("Your pact already has a station.");
+            w.say("Your colony already has a nest.");
         }
         return;
     }
     if a.ore < BUILD_ORE || a.mass < BUILD_MASS + 30.0 {
         if is_player {
-            w.say(format!("Station needs {:.0} ore in cargo and {:.0}+ mass.", BUILD_ORE, BUILD_MASS + 30.0));
+            w.say(format!("Nest needs {:.0} nutrients in cargo and {:.0}+ mass.", BUILD_ORE, BUILD_MASS + 30.0));
         }
         return;
     }
     let p = a.pos;
     if p.x < 200.0 || p.y < 200.0 || p.x > MAP - 200.0 || p.y > MAP - 200.0 || w.stations.iter().any(|s| s.alive && s.pos.distance(p) < 700.0) {
         if is_player {
-            w.say("Too close to the edge or to another station (need 700 apart).");
+            w.say("Too close to the edge or to another nest (need 700 apart).");
         }
         return;
     }
@@ -149,7 +149,7 @@ pub fn build_station(w: &mut World, i: usize) {
         w.stats.money_faucet_grant += 150.0;
     }
     let (n, cn) = (w.agents[i].name.clone(), w.clans[c].name.clone());
-    w.say(format!("{} founded a station for {}. Haven: nobody can be eaten inside.", n, cn));
+    w.say(format!("{} founded a nest for {}. Haven: nobody can be eaten inside.", n, cn));
 }
 
 /// Dock services. Stage 4: fixed barter. Stage 5: priced market with fees.
@@ -261,7 +261,7 @@ pub fn slow(w: &mut World) {
                 st.plates = 0.0;
                 st.struct_mass = 0.0;
                 w.add_heat(p, back);
-                w.say("An abandoned station crumbled into heat.");
+                w.say("An abandoned nest crumbled into detritus.");
             } else {
                 w.add_heat(p, 1.0);
             }
@@ -300,16 +300,51 @@ pub fn slow(w: &mut World) {
         }
     }
     // dev patch: the EVE lesson. Nerf mining, boost bounties (money printing) -> stagflation.
+    // takeovers: a dominant colony absorbs a much smaller one (members, treasury and nest)
+    if stage >= 5 && w.tick % 1200 == 0 {
+        absorb_smallest(w);
+    }
     if stage >= 5 && !w.patch_done && w.stage_t > 110.0 {
         w.patch_done = true;
         w.nerf_until = w.t + 150.0;
         w.bounty_mult = 2.5;
-        w.say("DEV PATCH: mining yield -50% for 150s, drifter bounties x2.5. Watch prices.");
+        w.say("DROUGHT: patches yield -50% for 150s, parasite blooms make harvests x2.5. Watch prices.");
     }
     if stage >= 5 && w.patch_done && w.bounty_mult > 1.0 && w.t > w.nerf_until {
         w.bounty_mult = 1.0;
-        w.say("DEV PATCH reverted: mining restored, bounties normal. The extra credits remain.");
+        w.say("The rains return: patches recover, harvests normal. The extra spores remain.");
     }
+}
+
+fn colony_mass(w: &World, c: usize) -> f32 {
+    w.clans[c].members.iter().filter(|m| w.agents[**m].alive).map(|m| w.agents[*m].mass).sum()
+}
+
+fn absorb_smallest(w: &mut World) {
+    let live: Vec<usize> = (0..w.clans.len()).filter(|c| w.clans[*c].alive && w.clans[*c].station.is_some()).collect();
+    if live.len() < 2 {
+        return;
+    }
+    let big = *live.iter().max_by(|a, b| colony_mass(w, **a).partial_cmp(&colony_mass(w, **b)).unwrap()).unwrap();
+    let small = *live.iter().filter(|c| **c != big).min_by(|a, b| colony_mass(w, **a).partial_cmp(&colony_mass(w, **b)).unwrap()).unwrap();
+    if colony_mass(w, big) < 2.5 * colony_mass(w, small) {
+        return;
+    }
+    let members = std::mem::take(&mut w.clans[small].members);
+    for m in &members {
+        w.agents[*m].clan = Some(big);
+        w.clans[big].members.push(*m);
+    }
+    let tr = w.clans[small].treasury;
+    w.clans[small].treasury = 0.0;
+    w.clans[big].treasury += tr;
+    if let Some(s) = w.clans[small].station.take() {
+        w.stations[s].clan = big;
+    }
+    w.clans[small].alive = false;
+    w.stats.takeovers += 1;
+    let (b, s) = (w.clans[big].name.clone(), w.clans[small].name.clone());
+    w.say(format!("TAKEOVER: colony {} absorbed {} ({} members, its nest and {:.0} spores)", b, s, members.len(), tr));
 }
 
 pub fn clan_members_alive(w: &World, c: usize) -> Vec<usize> {

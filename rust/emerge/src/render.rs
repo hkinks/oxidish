@@ -4,12 +4,12 @@ use crate::sim::*;
 use macroquad::prelude::*;
 
 pub const STAGE_DESC: [&str; 6] = [
-    "Distinction. Pellets are bits of mass. Eat to grow. Anything 25% smaller than you is food; anything 25% bigger is death.",
-    "Constraint. Eating is lossy: 20% of a meal becomes heat, and heat blooms into new food where fights happened. Big cells shrink. SPACE dashes (costs mass).",
-    "Scarcity. Sunlight dims, so the world is finite. Ore veins appear: hold still inside one to mine (cursor near your cell). R burns ore into mass. Red drifters hunt.",
-    "Coupling. Cells can bind: F near a cell proposes a pact (no friendly eating, speed when close). G leaves. Defection is allowed.",
-    "Structure. A pact can found a station (B, 80 ore): a haven where nobody can be eaten, with a refinery. Dock and press 1 to barter ore for plates, 3 to wear them as armor.",
-    "Economy. Credits exist. Station prices follow stock. Bounties print money, fees and lost loot burn it. Watch prices, inequality, and the dev patch.",
+    "Distinction. Specks of food are bits of mass. Eat to grow. Anything 25% smaller than you is food; anything 25% bigger is death.",
+    "Constraint. Eating is lossy: 20% of a meal rots into detritus, and detritus feeds new growth where fights happened. Big cells shrink. SPACE lunges (costs mass).",
+    "Scarcity. Sunlight dims, so the world is finite. Nutrient patches appear: hold still inside one to gather (cursor near your cell). R digests nutrients into mass. Spiked parasites hunt.",
+    "Symbiosis. Cells can bond: F near a cell offers a bond (no friendly eating, faster when close). G leaves. Defection is allowed.",
+    "Colonies. A colony can build a nest (B, 80 nutrients): a refuge where nobody can be eaten, with a digester. At the nest press 1 to trade nutrients for chitin, 3 to harden your shell.",
+    "Exchange. Spores are money. Nest prices follow local stock. Parasite harvests make spores; tolls and lost loot destroy them. Watch prices, inequality, the drought and takeovers.",
 ];
 
 pub struct View {
@@ -60,8 +60,8 @@ fn wrap(t: &str, max: usize) -> Vec<String> {
 }
 
 fn panel(x: f32, y: f32, w: f32, h: f32) {
-    draw_rectangle(x, y, w, h, Color::new(0.04, 0.05, 0.08, 0.88));
-    draw_rectangle_lines(x, y, w, h, 1.0, Color::new(0.5, 0.6, 0.8, 0.35));
+    draw_rectangle(x, y, w, h, Color::new(0.05, 0.07, 0.05, 0.88));
+    draw_rectangle_lines(x, y, w, h, 1.0, Color::new(0.55, 0.7, 0.45, 0.35));
 }
 
 pub struct Ui {
@@ -70,7 +70,7 @@ pub struct Ui {
 }
 
 pub fn draw_world(w: &World, v: &View, player: usize) {
-    clear_background(Color::new(0.045, 0.05, 0.075, 1.0));
+    clear_background(Color::new(0.04, 0.07, 0.06, 1.0));
     let sw = screen_width();
     let sh = screen_height();
     // substrate lattice with heat field
@@ -85,14 +85,14 @@ pub fn draw_world(w: &World, v: &View, player: usize) {
             let h = w.heat[ty as usize * NT + tx as usize];
             let p = v.w2s(vec2(tx as f32 * TILE, ty as f32 * TILE));
             if h > 1.0 {
-                draw_rectangle(p.x, p.y, TILE * v.scale, TILE * v.scale, Color::new(1.0, 0.42, 0.08, (h / 90.0).min(0.38)));
+                draw_rectangle(p.x, p.y, TILE * v.scale, TILE * v.scale, Color::new(0.55, 0.36, 0.14, (h / 90.0).min(0.38)));
             }
-            draw_rectangle_lines(p.x, p.y, TILE * v.scale, TILE * v.scale, 1.0, Color::new(0.3, 0.4, 0.6, 0.12));
+            draw_rectangle_lines(p.x, p.y, TILE * v.scale, TILE * v.scale, 1.0, Color::new(0.35, 0.6, 0.45, 0.10));
         }
     }
     // map edge
     let e0 = v.w2s(vec2(0.0, 0.0));
-    draw_rectangle_lines(e0.x, e0.y, MAP * v.scale, MAP * v.scale, 4.0, Color::new(0.8, 0.3, 0.3, 0.6));
+    draw_rectangle_lines(e0.x, e0.y, MAP * v.scale, MAP * v.scale, 4.0, Color::new(0.65, 0.5, 0.3, 0.7));
 
     // veins
     for vn in &w.veins {
@@ -102,15 +102,15 @@ pub fn draw_world(w: &World, v: &View, player: usize) {
             continue;
         }
         let fill = (vn.stock / vn.cap).clamp(0.0, 1.0);
-        draw_circle(p.x, p.y, r, Color::new(0.45, 0.32, 0.18, 0.25 + 0.2 * fill));
-        draw_circle_lines(p.x, p.y, r, 2.0, Color::new(0.85, 0.6, 0.3, 0.8));
+        draw_circle(p.x, p.y, r, Color::new(0.25, 0.5, 0.2, 0.25 + 0.2 * fill));
+        draw_circle_lines(p.x, p.y, r, 2.0, Color::new(0.6, 0.85, 0.4, 0.8));
         for k in 0..((fill * 9.0) as i32 + 1) {
             let ang = k as f32 * 2.4 + vn.pos.x;
             let rr = r * 0.55 * ((k as f32 * 0.37 + 0.2) % 1.0);
-            draw_circle(p.x + ang.cos() * rr, p.y + ang.sin() * rr, (3.0 + 5.0 * fill) * v.scale.max(0.5), Color::new(0.95, 0.7, 0.3, 0.9));
+            draw_circle(p.x + ang.cos() * rr, p.y + ang.sin() * rr, (3.0 + 5.0 * fill) * v.scale.max(0.5), Color::new(0.8, 0.9, 0.35, 0.9));
         }
         if v.scale > 0.4 {
-            text_shadow(&format!("ore {:.0}", vn.stock), p.x - r * 0.4, p.y + r + 14.0, 16.0, Color::new(0.95, 0.75, 0.45, 0.9));
+            text_shadow(&format!("nutrients {:.0}", vn.stock), p.x - r * 0.4, p.y + r + 14.0, 16.0, Color::new(0.95, 0.75, 0.45, 0.9));
         }
     }
 
@@ -125,13 +125,14 @@ pub fn draw_world(w: &World, v: &View, player: usize) {
         draw_circle(p.x, p.y, r, col(cl.hue, 0.5, 0.9, 0.10));
         draw_circle_lines(p.x, p.y, r, 3.0, col(cl.hue, 0.6, 1.0, 0.8));
         let q = 26.0 * v.scale.max(0.5);
-        draw_rectangle(p.x - q, p.y - q, q * 2.0, q * 2.0, col(cl.hue, 0.5, 0.75, 0.95));
-        draw_rectangle_lines(p.x - q, p.y - q, q * 2.0, q * 2.0, 3.0, WHITE);
-        let mut lines = vec![format!("STATION {} [{}]", i + 1, cl.name)];
+        draw_circle(p.x, p.y, q * 1.3, col(cl.hue, 0.45, 0.6, 0.95));
+        draw_circle(p.x, p.y, q * 0.8, col(cl.hue, 0.5, 0.85, 1.0));
+        draw_circle_lines(p.x, p.y, q * 1.3, 3.0, Color::new(0.95, 0.9, 0.7, 0.9));
+        let mut lines = vec![format!("NEST {} [{}]", i + 1, cl.name)];
         if w.stage >= 5 {
-            lines.push(format!("ore bid {:.1}  plate ask {:.0}", s.ore_bid, s.plate_ask));
+            lines.push(format!("nutrient bid {:.1}  chitin ask {:.0}", s.ore_bid, s.plate_ask));
         }
-        lines.push(format!("stock ore {:.0} plates {:.0}", s.ore, s.plates));
+        lines.push(format!("stock nutrients {:.0} chitin {:.0}", s.ore, s.plates));
         for (k, l) in lines.iter().enumerate() {
             let tw = measure_text(l, None, 16, 1.0).width;
             text_shadow(l, p.x - tw / 2.0, p.y - r - 8.0 - 16.0 * (lines.len() - 1 - k) as f32, 16.0, WHITE);
@@ -179,11 +180,11 @@ pub fn draw_world(w: &World, v: &View, player: usize) {
         if a.mining {
             if let Some(vn) = w.veins.iter().find(|vn| vn.pos.distance(a.pos) < VEIN_R) {
                 let q = v.w2s(vn.pos);
-                draw_line(p.x, p.y, q.x, q.y, 2.0, Color::new(0.95, 0.7, 0.3, 0.7));
+                draw_line(p.x, p.y, q.x, q.y, 2.0, Color::new(0.7, 0.9, 0.4, 0.7));
             }
         }
         if a.kind == Kind::Drifter {
-            draw_circle(p.x, p.y, r, Color::new(0.75, 0.12, 0.12, 0.92));
+            draw_circle(p.x, p.y, r, Color::new(0.42, 0.18, 0.48, 0.92));
             draw_circle_lines(p.x, p.y, r, 3.0, Color::new(1.0, 0.45, 0.35, 1.0));
             let n = 12;
             for k in 0..n {
@@ -197,13 +198,13 @@ pub fn draw_world(w: &World, v: &View, player: usize) {
             }
             draw_circle(p.x, p.y, r, col(a.hue, 0.55, 0.9, 1.0));
             let ol = if a.kind == Kind::Player { WHITE } else { col(a.hue, 0.7, 0.55, 1.0) };
-            draw_circle_lines(p.x, p.y, r, 2.0 + a.armor as f32 * 1.2, if a.armor > 0 { Color::new(0.75, 0.85, 1.0, 1.0) } else { ol });
+            draw_circle_lines(p.x, p.y, r, 2.0 + a.armor as f32 * 1.2, if a.armor > 0 { Color::new(0.88, 0.74, 0.45, 1.0) } else { ol });
             if a.kind == Kind::Player {
                 draw_circle_lines(p.x, p.y, r + 3.0, 2.0, WHITE);
             }
         }
         if r > 9.0 {
-            let label = if a.kind == Kind::Drifter { "drifter".to_string() } else { a.name.clone() };
+            let label = if a.kind == Kind::Drifter { "parasite".to_string() } else { a.name.clone() };
             let fs = (r * 0.55).clamp(13.0, 30.0);
             let tw = measure_text(&label, None, fs as u16, 1.0).width;
             text_shadow(&label, p.x - tw / 2.0, p.y + fs * 0.2, fs, WHITE);
@@ -279,16 +280,16 @@ pub fn draw_hud(w: &World, ui: &Ui, player: usize, view: &View, fps: i32, speed:
         lines[0].push_str(&format!("   dash {}", if p.dash_cd <= 0.0 { "ready".to_string() } else { format!("{:.1}s", p.dash_cd) }));
     }
     if w.stage >= 2 {
-        lines.push(format!("ore {:.0}/{:.0}   plates {}   armor {}", p.ore, p.cargo_cap(), p.plates, p.armor));
+        lines.push(format!("nutrients {:.0}/{:.0}   chitin {}   shell {}", p.ore, p.cargo_cap(), p.plates, p.armor));
     }
     if w.stage >= 3 {
         lines.push(match p.clan {
-            Some(c) => format!("pact: {} ({} members)", w.clans[c].name, w.clans[c].members.len()),
-            None => "pact: none".to_string(),
+            Some(c) => format!("colony: {} ({} members)", w.clans[c].name, w.clans[c].members.len()),
+            None => "colony: none".to_string(),
         });
     }
     if w.stage >= 5 {
-        lines.push(format!("credits {:.0}", p.credits));
+        lines.push(format!("spores {:.0}", p.credits));
     }
     panel(10.0, sy, 300.0, 12.0 + lines.len() as f32 * 19.0);
     for (k, l) in lines.iter().enumerate() {
@@ -300,14 +301,14 @@ pub fn draw_hud(w: &World, ui: &Ui, player: usize, view: &View, fps: i32, speed:
         hint = "You were eaten. Respawning...".into();
     } else if let Some(s) = w.station_at(p.pos) {
         let _ = s;
-        hint = if w.stage >= 5 { "DOCKED: 1 sell ore  2 buy plate  3 wear plate  4 sell plate".into() } else { "DOCKED: 1 barter ore for plates (5:1)  3 wear plate as armor".into() };
+        hint = if w.stage >= 5 { "AT NEST: 1 sell nutrients  2 buy chitin  3 harden shell  4 sell chitin".into() } else { "AT NEST: 1 trade nutrients for chitin (5:1)  3 harden shell".into() };
     } else if w.stage >= 2 && w.veins.iter().any(|v| v.pos.distance(p.pos) < VEIN_R && v.stock > 1.0) {
-        hint = if p.want.length() <= 0.35 { "Mining... (R burns ore for mass)".into() } else { "In a vein: hold the cursor near your cell to mine".into() };
+        hint = if p.want.length() <= 0.35 { "Gathering... (R digests nutrients for mass)".into() } else { "In a patch: hold the cursor near your cell to gather".into() };
     } else if w.stage >= 4 && p.clan.is_some() && w.clans[p.clan.unwrap()].station.is_none() {
-        hint = "B: found a station here (80 ore + 40 mass)".into();
+        hint = "B: found a nest here (80 nutrients + 40 mass)".into();
     } else if w.stage >= 3 {
         if let Some(o) = w.agents.iter().filter(|o| o.alive && o.kind == Kind::Bot && o.id != player && (p.clan.is_none() || o.clan != p.clan) && o.pos.distance(p.pos) < 320.0).next() {
-            hint = format!("F: propose a pact with {}", o.name);
+            hint = format!("F: bond with {}", o.name);
         }
     }
     if !hint.is_empty() {
@@ -336,7 +337,7 @@ pub fn draw_hud(w: &World, ui: &Ui, player: usize, view: &View, fps: i32, speed:
         }
     }
     if w.stage >= 2 {
-        text_shadow(&format!("roles F{} H{} M{} T{}", rc[0], rc[1], rc[2], rc[3]), lx + 10.0, 10.0 + lh - 8.0, 15.0, Color::new(0.7, 0.85, 1.0, 0.9));
+        text_shadow(&format!("roles F{} H{} G{} T{}", rc[0], rc[1], rc[2], rc[3]), lx + 10.0, 10.0 + lh - 8.0, 15.0, Color::new(0.7, 0.85, 1.0, 0.9));
     }
 
     // ---- economy / substrate panel
@@ -354,21 +355,21 @@ pub fn draw_hud(w: &World, ui: &Ui, player: usize, view: &View, fps: i32, speed:
         let tot = w.total_mass();
         let exp = w.ledger_expected();
         line(format!("mass in world {:.0}  (sun in {:.0})", tot, w.stats.sun_in + w.stats.respawn_in), &mut y);
-        line(format!("heat {:.0}  food {} pellets", w.heat_total(), w.food.len()), &mut y);
+        line(format!("detritus {:.0}  food {} specks", w.heat_total(), w.food.len()), &mut y);
         line(format!("conservation error {:+.2}", tot - exp), &mut y);
         line(format!("Gini {:.2}   top10% own {:.0}%", w.gini(), w.top_share(0.1) * 100.0), &mut y);
         if w.stage >= 5 {
             y += 4.0;
-            text_shadow("MARKET", lx + 10.0, y, 17.0, Color::new(1.0, 0.9, 0.5, 1.0));
+            text_shadow("EXCHANGE", lx + 10.0, y, 17.0, Color::new(1.0, 0.9, 0.5, 1.0));
             y += 19.0;
-            line(format!("money supply {:.0} cr", w.money_supply()), &mut y);
+            line(format!("money supply {:.0} spores", w.money_supply()), &mut y);
             if let Some(pa) = w.avg_plate_ask() {
-                line(format!("plate price {:.0} cr   trades {}", pa, w.stats.trades), &mut y);
+                line(format!("chitin price {:.0} spores   trades {}", pa, w.stats.trades), &mut y);
             }
-            line(format!("faucets: bounty {:.0} grant {:.0}", w.stats.money_faucet_bounty, w.stats.money_faucet_grant), &mut y);
+            line(format!("faucets: harvest {:.0} grant {:.0}", w.stats.money_faucet_bounty, w.stats.money_faucet_grant), &mut y);
             line(format!("sinks: fees {:.0} loot {:.0}", w.stats.money_sink_fee, w.stats.money_sink_loot + w.stats.money_sink_other), &mut y);
             spark(lx + 10.0, y, lw - 20.0, 30.0, &w.price_hist, Color::new(1.0, 0.8, 0.3, 1.0));
-            text_shadow("plate price", lx + 14.0, y + 12.0, 12.0, Color::new(1.0, 0.8, 0.3, 0.8));
+            text_shadow("chitin price", lx + 14.0, y + 12.0, 12.0, Color::new(1.0, 0.8, 0.3, 0.8));
             y += 36.0;
             spark(lx + 10.0, y, lw - 20.0, 30.0, &w.money_hist, Color::new(0.5, 1.0, 0.7, 1.0));
             text_shadow("money supply", lx + 14.0, y + 12.0, 12.0, Color::new(0.5, 1.0, 0.7, 0.8));
@@ -399,7 +400,7 @@ pub fn draw_hud(w: &World, ui: &Ui, player: usize, view: &View, fps: i32, speed:
         for tx in 0..NT {
             let h = w.heat[ty * NT + tx];
             if h > 2.0 {
-                draw_rectangle(mx + tx as f32 * TILE * k, my + ty as f32 * TILE * k, TILE * k, TILE * k, Color::new(1.0, 0.45, 0.1, (h / 100.0).min(0.5)));
+                draw_rectangle(mx + tx as f32 * TILE * k, my + ty as f32 * TILE * k, TILE * k, TILE * k, Color::new(0.55, 0.38, 0.15, (h / 100.0).min(0.5)));
             }
         }
     }
@@ -447,21 +448,21 @@ pub fn draw_hud(w: &World, ui: &Ui, player: usize, view: &View, fps: i32, speed:
         yy += 30.0;
         let rows = [
             "Mouse: steer (far from your cell = fast, near = slow). Wheel: zoom.",
-            "SPACE dash (stage 1+)      R burn ore into mass (stage 2+)",
-            "Hold still in an ore vein to mine (stage 2+)",
-            "F propose pact with nearest cell, G leave pact (stage 3+)",
-            "B found a station with your pact (stage 4+)",
-            "At a station: 1 sell ore  2 buy plate  3 wear plate  4 sell plate",
+            "SPACE lunge (stage 1+)      R digest nutrients into mass (stage 2+)",
+            "Hold still in a nutrient patch to gather (stage 2+)",
+            "F bond with the nearest cell, G leave your colony (stage 3+)",
+            "B build a nest with your colony (stage 4+)",
+            "At a nest: 1 sell nutrients  2 buy chitin  3 harden shell  4 sell chitin",
             "H this help   M ledger panel   Esc quit   ] skip to next stage",
             "",
             "The game starts as plain agar.io. Each new rule appears by itself when the",
             "world reaches a state (measured in the top-left bar), not from a menu.",
-            "Everything is conserved: heat, food, ore and cells are one pool of mass.",
-            "Money has explicit faucets (bounties, grants) and sinks (fees, lost loot).",
-            "Red drifters are NPC raiders: killing them pays bounties (stage 5).",
-            "Grey-blue outline rings = armor (plates). Glowing circles = pact havens.",
-            "Bots follow the same rules: they specialize (F/H/M/T in the list), form pacts,",
-            "found stations, trade between them, and sometimes betray their pact.",
+            "Everything is conserved: detritus, food, nutrients and cells are one pool of mass.",
+            "Spores (money) are made only by parasite harvests and first-bloom grants,",
+            "and destroyed by tolls and lost loot. Spiked parasites hunt small cells.",
+            "Tan rings = shell (hardened chitin). Glowing circles = colony refuges.",
+            "Bots follow the same rules: they specialize (F/H/G/T in the list), form colonies,",
+            "build nests, trade between them, betray, and big colonies absorb small ones.",
         ];
         for r in rows.iter() {
             text_shadow(r, x + 20.0, yy, 18.0, Color::new(0.9, 0.94, 1.0, 1.0));

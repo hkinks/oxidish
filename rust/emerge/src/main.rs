@@ -54,13 +54,13 @@ fn parse_args() -> Args {
 
 fn roles_str(w: &World) -> String {
     let c = w.role_counts();
-    format!("F{} H{} M{} T{}", c[0], c[1], c[2], c[3])
+    format!("F{} H{} G{} T{}", c[0], c[1], c[2], c[3])
 }
 
 fn report(w: &World) {
     let tot = w.total_mass();
     println!(
-        "t={:>5.0}s stage={} food={:>4} alive={:>2} gini={:.2} top10%={:>2.0}% veins={:>4.0} stations={} pacts={} roles[{}] ore_mined={:.0} deliv={:.0} trades={} money={:.0} plate={} mass_err={:+.2}",
+        "t={:>5.0}s stage={} food={:>4} alive={:>2} gini={:.2} top10%={:>2.0}% patches={:>4.0} nests={} colonies={} roles[{}] gathered={:.0} deliv={:.0} trades={} money={:.0} chitin={} mass_err={:+.2}",
         w.t,
         w.stage,
         w.food.len(),
@@ -127,19 +127,19 @@ fn run_sim(args: &Args, ticks: u64) {
     report(&w);
     let s = &w.stats;
     println!(
-        "eats={} agent_kills={} pacts_formed={} betrayals={} stations_built={} plates_made={} bounty_faucet={:.0} grant_faucet={:.0} fee_sink={:.0} loot_sink={:.0} other_sink={:.0}",
-        s.eats, s.kills_agents, s.pacts_formed, s.betrayals, s.stations_built, s.plates_made, s.money_faucet_bounty, s.money_faucet_grant, s.money_sink_fee, s.money_sink_loot, s.money_sink_other
+        "eats={} agent_kills={} bonds_formed={} betrayals={} takeovers={} nests_built={} chitin_made={} harvest_faucet={:.0} grant_faucet={:.0} fee_sink={:.0} loot_sink={:.0} other_sink={:.0}",
+        s.eats, s.kills_agents, s.pacts_formed, s.betrayals, s.takeovers, s.stations_built, s.plates_made, s.money_faucet_bounty, s.money_faucet_grant, s.money_sink_fee, s.money_sink_loot, s.money_sink_other
     );
     println!("stage times: {:?}", w.stage_times.iter().map(|t| t.round()).collect::<Vec<_>>());
-    println!("mass: total {:.2} expected {:.2} (heat {:.0})", w.total_mass(), w.ledger_expected(), w.heat_total());
+    println!("mass: total {:.2} expected {:.2} (detritus {:.0})", w.total_mass(), w.ledger_expected(), w.heat_total());
     if let Some(p) = w.price_hist.front().zip(w.price_hist.back()) {
-        println!("plate price: first {:.0} last {:.0}", p.0, p.1);
+        println!("chitin price: first {:.0} last {:.0}", p.0, p.1);
     }
     let mut top: Vec<&Agent> = w.agents.iter().filter(|a| a.kind != Kind::Drifter).collect();
     top.sort_by(|a, b| w.net_worth(b).partial_cmp(&w.net_worth(a)).unwrap());
     for a in top.iter().take(5) {
         println!(
-            "  {:<8} nw={:>5.0} mass={:>4.0} role={:<8} skills F{:.1} H{:.1} M{:.1} T{:.1} credits={:.0} kills={} deaths={}",
+            "  {:<8} nw={:>5.0} mass={:>4.0} role={:<8} skills F{:.1} H{:.1} M{:.1} T{:.1} spores={:.0} kills={} deaths={}",
             a.name, w.net_worth(a), a.mass, ROLE_NAMES[a.role as usize], a.skill[0], a.skill[1], a.skill[2], a.skill[3], a.credits, a.kills, a.deaths
         );
     }
@@ -150,7 +150,7 @@ fn dump(w: &World) {
     for a in w.agents.iter().filter(|a| a.kind != Kind::Drifter) {
         let nv = w.veins.iter().map(|v| (v.pos.distance(a.pos) as i32, v.stock as i32)).min().unwrap_or((0, 0));
         println!(
-            "  {:<8} {:<7} m={:>5.0} ore={:>5.0}/{:>4.0} want={:.2} goalD={:>5.0} nearestVein={:?} clan={:?} haven={} mining={}",
+            "  {:<8} {:<7} m={:>5.0} nutrients={:>5.0}/{:>4.0} want={:.2} goalD={:>5.0} nearestVein={:?} clan={:?} refuge={} gathering={}",
             a.name, ROLE_NAMES[a.role as usize], a.mass, a.ore, a.cargo_cap(), a.want.length(), a.pos.distance(a.goal), nv, a.clan, w.in_haven(a.pos), a.mining
         );
     }

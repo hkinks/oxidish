@@ -14,7 +14,7 @@ pub const FOOD_MASS: f32 = 2.0;
 pub const HAVEN_R: f32 = 150.0;
 pub const ORE_BURN_EFF: f32 = 0.6;
 
-pub const STAGE_NAMES: [&str; 6] = ["SOUP", "HEAT", "SCARCITY", "PACTS", "STATIONS", "MARKET"];
+pub const STAGE_NAMES: [&str; 6] = ["SOUP", "DECAY", "SCARCITY", "SYMBIOSIS", "COLONIES", "EXCHANGE"];
 
 pub struct Rng(pub u64);
 impl Rng {
@@ -52,7 +52,7 @@ pub enum Role {
     Miner = 2,
     Trader = 3,
 }
-pub const ROLE_NAMES: [&str; 4] = ["forager", "hunter", "miner", "trader"];
+pub const ROLE_NAMES: [&str; 4] = ["forager", "hunter", "gatherer", "trader"];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Act {
@@ -200,6 +200,7 @@ pub struct Stats {
     pub money_sink_other: f32,
     pub pacts_formed: u32,
     pub betrayals: u32,
+    pub takeovers: u32,
     pub stations_built: u32,
     pub plates_made: u32,
 }
@@ -236,11 +237,11 @@ pub struct World {
 }
 
 const NAMES: [&str; 28] = [
-    "Aria", "Bolt", "Cinder", "Dune", "Ember", "Flux", "Gale", "Haze", "Iris", "Jolt", "Kite", "Lumen", "Mote", "Nova",
-    "Orbit", "Pixel", "Quark", "Rune", "Sable", "Tide", "Umbra", "Vex", "Wisp", "Xeno", "Yarrow", "Zephyr", "Atlas",
-    "Bryn",
+    "Moss", "Fern", "Thistle", "Clover", "Hazel", "Willow", "Aspen", "Birch", "Sedge", "Lichen", "Algae", "Kelp", "Newt", "Wren",
+    "Finch", "Sorrel", "Basil", "Reed", "Tansy", "Briar", "Cedar", "Dill", "Elm", "Flax", "Gorse", "Heath", "Ivy",
+    "Lark",
 ];
-const CLAN_NAMES: [&str; 10] = ["Vanguard", "Lattice", "Tessera", "Meridian", "Cadre", "Halcyon", "Rift", "Quorum", "Anvil", "Ledger"];
+const CLAN_NAMES: [&str; 10] = ["Reef", "Hive", "Grove", "Mycelium", "Warren", "Coral", "Meadow", "Swarm", "Thicket", "Burrow"];
 
 pub fn hsv(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
     let h = (h.rem_euclid(1.0)) * 6.0;
@@ -314,7 +315,7 @@ impl World {
             w.food.push(Food { pos: p, m: FOOD_MASS });
         }
         w.ledger_base = w.total_mass();
-        w.say("Stage 0: SOUP. Pellets are bits. Eat to grow. Bigger eats smaller.");
+        w.say("Stage 0: SOUP. Specks of food are bits. Eat to grow. Bigger eats smaller.");
         w
     }
 
@@ -585,14 +586,14 @@ impl World {
         let pos = vec2((tx as f32 + 0.5) * TILE, (ty as f32 + 0.5) * TILE);
         if let Some(k) = self.agents.iter().position(|a| a.kind == Kind::Drifter && !a.alive) {
             let id = self.agents[k].id;
-            let mut a = self.make_agent(id, Kind::Drifter, "drifter".into());
+            let mut a = self.make_agent(id, Kind::Drifter, "parasite".into());
             a.pos = pos;
             a.mass = m;
             a.hue = 0.0;
             self.agents[k] = a;
         } else {
             let id = self.agents.len();
-            let mut a = self.make_agent(id, Kind::Drifter, "drifter".into());
+            let mut a = self.make_agent(id, Kind::Drifter, "parasite".into());
             a.pos = pos;
             a.mass = m;
             a.hue = 0.0;
@@ -675,25 +676,25 @@ impl World {
             1 => {
                 let dens = self.food.len() as f32 / FOOD_CAP as f32;
                 let p = (0.45 / dens.max(0.01)).min(1.0).max(self.stage_t / 80.0).min(1.0);
-                Some((format!("wild food runs short (pellets {:.0}% of capacity, need < 45%)", dens * 100.0), p))
+                Some((format!("wild food runs short (food specks {:.0}% of capacity, need < 45%)", dens * 100.0), p))
             }
             2 => {
                 let p = (self.stats.ore_mined / 250.0).max(self.stage_t / 70.0).min(1.0);
-                Some((format!("ore is worked at scale ({:.0}/250 mined)", self.stats.ore_mined), p))
+                Some((format!("nutrient patches are worked at scale ({:.0}/250 gathered)", self.stats.ore_mined), p))
             }
             3 => {
                 let (n, m) = self.best_clan_mass();
                 let p = (m / 400.0).min(1.0) * if n >= 2 { 1.0 } else { 0.5 };
-                Some((format!("a pact gets heavy enough to hold ground (best pact {} cells, {:.0}/400 mass)", n, m), p))
+                Some((format!("a colony gets heavy enough to hold ground (best colony {} cells, {:.0}/400 mass)", n, m), p))
             }
             4 => {
                 let live = self.stations.iter().filter(|s| s.alive).count();
                 if live == 0 {
-                    Some(("a pact founds a station (B, needs 80 ore)".into(), 0.0))
+                    Some(("a colony founds a nest (B, needs 80 nutrients)".into(), 0.0))
                 } else {
                     let since = self.t - self.first_station_t.unwrap_or(self.t);
                     let p = (self.stats.ore_delivered / 150.0).max(since / 50.0).min(1.0);
-                    Some((format!("barter proves itself ({:.0}/150 ore delivered): coins will emerge", self.stats.ore_delivered), p))
+                    Some((format!("trade proves itself ({:.0}/150 nutrients delivered): money will emerge", self.stats.ore_delivered), p))
                 }
             }
             _ => None,
@@ -739,11 +740,11 @@ impl World {
         self.new_stage_flash = 6.0;
         self.stage_times.push(self.t);
         let msg = match self.stage {
-            1 => "Stage 1: HEAT. Eating is lossy (80%): the rest becomes heat, which blooms into food. Big cells shrink. SPACE dashes.",
-            2 => "Stage 2: SCARCITY. Sunlight dims. Ore veins appear (hold still inside one to mine). Drifters roam. R burns ore into mass.",
-            3 => "Stage 3: PACTS. F near a cell proposes a pact: no friendly eating, speed when close. G leaves (betrayal is possible).",
-            4 => "Stage 4: STATIONS. A pact can found a station (B, 80 ore). Havens: nobody can be eaten inside. Barter ore for plates (1).",
-            _ => "Stage 5: MARKET. Credits exist. Stations quote prices from stock. Bounties print money; fees and losses burn it.",
+            1 => "Stage 1: DECAY. Eating is lossy (80%): the rest becomes detritus, which blooms into food. Big cells shrink. SPACE dashes.",
+            2 => "Stage 2: SCARCITY. Sunlight dims. Nutrient patches appear (hold still inside one to gather). Parasites roam. R digests nutrients into mass.",
+            3 => "Stage 3: SYMBIOSIS. F near a cell offers a bond: no friendly eating, faster when close. G leaves (betrayal is possible).",
+            4 => "Stage 4: COLONIES. A colony can build a nest (B, 80 nutrients). Refuge: nobody can be eaten inside. Trade nutrients for chitin (1).",
+            _ => "Stage 5: EXCHANGE. Spores exist. Nests quote prices from stock. Harvests print money; fees and losses digest it.",
         };
         self.say(msg);
         match self.stage {
