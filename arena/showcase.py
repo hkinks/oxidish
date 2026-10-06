@@ -24,7 +24,6 @@ def main() -> None:
     p.add_argument("--follow", default="champ")
     p.add_argument("--seed", type=int, default=1)
     p.add_argument("--food-mult", type=float, default=1.0, help="food density multiplier")
-    p.add_argument("--minions", type=int, default=0, help="minions for each human (web client) player")
     p.add_argument("--log-players", type=float, default=5.0, help="log player masses every N s")
     p.add_argument("--record", default="", help="record human players' inputs + views to this dir (imitation data)")
     args = p.parse_args()
@@ -32,7 +31,7 @@ def main() -> None:
                                str(args.bots), "--map", str(args.map), "--seed", str(args.seed),
                                "--sync", "2", "--max-tps", "25", "--follow", args.follow,
                                "--food-mult", str(args.food_mult),
-                               "--log-players", str(args.log_players), "--minions", str(args.minions),
+                               "--log-players", str(args.log_players),
                                *(["--record", str(Path(args.record).resolve())] if args.record else [])],
                               stdin=subprocess.DEVNULL)
     time.sleep(1.5)
