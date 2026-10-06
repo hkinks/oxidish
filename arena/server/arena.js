@@ -190,7 +190,7 @@ PacketHandler.prototype.handleMessage = function (message) {
 }
 
 const agents = () => gs.clients.filter(ws => ws.isAgent && ws.isConnected !== false);
-let pending = false, ackTimer = null, lastStepAt = 0, started = false;
+let pending = false, ackTimer = null, nextStepAt = 0, started = false;
 let steps = 0, timeouts = 0, statAt = Date.now(), statTicks = 0;
 
 function maybeAdvance() {
@@ -211,10 +211,13 @@ function step() {
         started = true;
     }
     if (args["max-tps"] > 0) {
-        const wait = lastStepAt + args.sync * 1000 / args["max-tps"] - Date.now();
+        // Fixed schedule, not "period after the last step": Windows timers fire on a ~15.6 ms
+        // clock, and measuring from the late wake-up lost ~8 ms a step (0.9x realtime).
+        const period = args.sync * 1000 / args["max-tps"], now = Date.now();
+        const wait = nextStepAt - now;
         if (wait > 1) return setTimeout(step, wait);
+        nextStepAt = Math.max(nextStepAt + period, now - period); // catch up at most one step
     }
-    lastStepAt = Date.now();
     for (let k = 0; k < args.sync; k++) gs.mainLoop();
     steps++;
     statTicks += args.sync;
