@@ -21,8 +21,17 @@ METRICS = ("log_mass", "avg_mass", "peak_mass", "deaths", "kills")
 
 
 def _play(index: int, specs: list[str], ticks: int, bots: int, map_size: int,
-          sync: int, seed_base: int, food_mult: float = 1.0) -> list[dict]:
+          sync: int, seed_base: int, food_mult: float = 1.0, rust: bool = False) -> list[dict]:
     port, seed = free_port(), seed_base + index
+    if rust:   # rule-bot lineups only: the Rust client plays the whole lineup in one process
+        from . import rust_runner
+        if not rust_runner.supported(specs):
+            raise SystemExit("--rust: only rule bots (route, field, name=genome.json) are supported")
+        server = start_server(port, bots, seed, len(parse_lineup(specs)), sync, map_size, food_mult=food_mult)
+        try:
+            return rust_runner.play_rust(specs, ticks, port, sync, seed)
+        finally:
+            server.terminate()
     lineup = parse_lineup(specs)
     server = start_server(port, bots, seed, len(lineup), sync, map_size, food_mult=food_mult)
     try:
@@ -92,6 +101,7 @@ def main() -> None:
     p.add_argument("--food-mult", type=float, default=1.0, help="2 = the showcase's food")
     p.add_argument("--seed-base", type=int, default=1, help="use fresh seeds for unbiased checks")
     p.add_argument("--out", help="also write every agent's per-match stats (incl. losses) to this JSON")
+    p.add_argument("--rust", action="store_true", help="play rule-bot lineups with the Rust client (rust/arena_client)")
     p.add_argument("--cpus", type=int, default=11, help="pin to this many CPUs (0 = all): stay under 90% CPU")
     args = p.parse_args()
     limit_cpus(args.cpus)
@@ -100,7 +110,7 @@ def main() -> None:
     rows: list[dict] = []
     with ProcessPoolExecutor(args.workers) as pool:
         futures = [pool.submit(_play, i, args.agents, args.ticks, args.bots,
-                               args.map, args.sync, args.seed_base, args.food_mult) for i in range(args.matches)]
+                               args.map, args.sync, args.seed_base, args.food_mult, args.rust) for i in range(args.matches)]
         for n, fut in enumerate(as_completed(futures), 1):
             try:
                 rows += fut.result()
