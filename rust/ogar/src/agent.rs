@@ -38,6 +38,8 @@ pub struct AgentDriver {
     pub pi: usize,
     pub name: String,
     pub policy: Policy,
+    /// the genome spec the policy was built from (recorded with loss scenes so they can be replayed)
+    pub spec: Value,
     pub stats: AgentStats,
     pub sync: u64,
     alive: bool,
@@ -97,6 +99,7 @@ impl AgentDriver {
             pi,
             name: name.to_string(),
             policy: Policy::from_spec(spec),
+            spec: spec.clone(),
             stats: AgentStats { name: name.to_string(), ..Default::default() },
             sync,
             alive: false,

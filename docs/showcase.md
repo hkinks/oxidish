@@ -57,3 +57,25 @@ uv run python -m arena.tournament --engine ogar --agents ... --matches 48 --work
 - **Server control (F2):** talks to the server's control port from a background thread (the render loop never blocks). Fields: control address (default = game server host, port + 1; saved) and optional token (saved). Shows tick/tps/speed/paused/food/agent masses (refreshed every 2 s) or the error (e.g. "control port not reachable"). Actions: speed presets 0.5x / 1x / 2x / 4x / 10x / max, Pause/Resume, food density -/+, add bot (pick a preset or any `bot/*.json`, `runs/ab/*.json`; count 1-4; paths are relative to the server's working directory), remove selected / all bots. F2 or Esc closes. Test flag: `--control-open`.
 - **Whole field while playing:** the server only sends your view box. The Rust server (`rust/ogar`) has an opt-in `ogar serve ... --full-view` that sends human players every node of the map (off by default); zoom out with the wheel to see it all.
 - Test flags: `--spectate`, `--whole-map`, `--settings-open`, `--control-open`, `--zoom Z`, `--config PATH`.
+
+## Learning from human play (`ogar serve --record`)
+Every time you eat a bot is a weakness to fix. Start the Rust server with `--record DIR` (off by default; no cost when off) and the session is written to `DIR` as gzip JSONL (flushed every 5 s; a killed server leaves a readable file):
+```bash
+rust/ogar/target/release/ogar serve --port 9600 ... --record logs/human [--record-all]
+```
+- `events-<stamp>.jsonl.gz`: every player cell eaten by another player (tick, eater / victim name, kind human|agent|bot, cell mass, owner total, cell count, positions, whether the victim burst on a virus within 3 s) and a `top` row per second (top 5 + every live human, with the +500 flag).
+- `scenes-<stamp>.jsonl.gz`: **loss scenes**. When an in-process bot loses >= 30% of its mass within ~0.3 s, or dies, its last ~3 s of decision steps are dumped (cells, nearby players / viruses, aim, split, plan mode and stage as the Rust policy decided, food for the last 3 steps) with the eat events and the genome spec. Only when a human was an eater; `--record-all` dumps every eater (bot-vs-bot losses too).
+- `humans-<stamp>.jsonl.gz`: the humans' inputs and view per decision step (mouse target, split / eject presses, own cells, visible nodes), the same format as `arena/server/arena.js --record`, so `uv run python -m rl.human_data --glob "logs/human/humans-*.jsonl.gz"` turns it into the imitation dataset (`runs/human/dataset.pt`; checked on a scripted run: 2.2k samples per 3 min).
+
+Report and fixes:
+```bash
+uv run python -m arena.human_report logs/human --out docs/human/2026-10-07.md      # --session STAMP, --top N
+uv run python -m arena.scene_replay logs/human --list                               # scene ids, cause, eaters
+uv run python -m arena.scene_replay logs/human <id>                                 # Rust vs Python decision per step
+uv run python -m arena.scene_replay logs/human <id> --spec bot/new.json             # would a changed genome act differently?
+uv run python -m arena.scene_replay logs/human <id> --pytest --back 1.0 --write bot/test_scene_x.py   # regression stub
+```
+- The report gives the human's leader share (#1 time) and mass stats (also without +500 lives), deaths, mass taken per bot family, loss scenes classified like `arena/losses.py` (popped / split_kill / pieces = eaten while split / unseen / fled / no_flee) with tags (wall = main cell edge < 150 from a wall, corner, human), and the worst scenes as a text table plus an ASCII map (`@` us, `E` can eat us, `p` we could eat, `V` virus, `#` outside the map).
+- The stub rebuilds the Snapshot `--back` seconds before the loss in `bot/test_steer.py` style and runs the recorded genome; it skips until someone writes the assertion.
+- Test without a person: `uv run python -m arena.scripted_human --port 9650 --seconds 90` (aggressive scripted client, +500 mass via 0xCD) against your own throwaway `ogar serve --record logs/human_test --record-all`. Never on 9500/9600/9601/9700/9701.
+- Code: `rust/ogar/src/record.rs` (recorder), `arena/human_log.py` (reading, classification, rendering).

@@ -206,7 +206,7 @@ impl Recorder {
             &mut self.scenes,
             &json!({"e": "scene", "t": w.tick, "agent": d.name, "kind": if loss.2 { "death" } else { "drop" },
                     "before": loss.0.round() as i64, "after": loss.1.round() as i64,
-                    "eaters": eaters, "human_eater": human, "sync": d.sync,
+                    "eaters": eaters, "human_eater": human, "sync": d.sync, "spec": d.spec,
                     "border": [b.0, b.2, b.1, b.3], "steps": steps}),
         );
     }
