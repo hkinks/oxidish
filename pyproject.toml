@@ -24,7 +24,8 @@ torch = { index = "pytorch-cu128" }
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
+    "maturin>=1.7",
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["bot", "sim", "arena"]
+testpaths = ["bot", "sim", "arena", "rl/vision"]
