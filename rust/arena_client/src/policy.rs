@@ -12,6 +12,8 @@ const VIRUS_POP_RATIO: f64 = 1.33;
 const EJECT_REACH: f64 = 660.0;
 const STAGE_ARC: f64 = 0.6;
 
+const HARVEST_R: f64 = 250.0; // harvest: edible cells this close to a target count toward its value
+
 pub fn heuristic_plan(s: &Snapshot, p: &Params) -> Plan {
     let me = *s.main().unwrap();
     let cl = classify(s, Some(p));
@@ -35,8 +37,31 @@ pub fn heuristic_plan(s: &Snapshot, p: &Params) -> Plan {
     }
     // target = max over worth by mass / (max(gap, 0) + 100); first max wins
     let mut target: Option<(&Cell, f64)> = None;
-    for c in cl.prey.iter().filter(|c| gap(c) < rng && c.mass() >= floor) {
-        let k = c.mass() / (gap(c).max(0.0) + 100.0);
+    // harvest (Python: modes.heuristic_plan): clouds of pieces, and a 4x lower floor for players in >= 3 cells
+    let harvest = p.harvest > 0.5;
+    // owner = the protocol colour one player's pieces share (0 = unknown: counts as its own owner)
+    let owner = |c: &Cell| -> u64 { if c.color != 0 { c.color as u64 } else { (1u64 << 32) | c.id as u64 } };
+    let mut pieces: HashMap<u64, usize> = HashMap::new();
+    if harvest {
+        for c in s.others.iter().filter(|c| c.kind == Kind::Player && !s.mine.iter().any(|m| m.id == c.id)) {
+            *pieces.entry(owner(c)).or_insert(0) += 1;
+        }
+    }
+    let floor_of = |c: &Cell| -> f64 {
+        if harvest && pieces.get(&owner(c)).copied().unwrap_or(0) >= 3 { floor * 0.25 } else { floor }
+    };
+    for c in cl.prey.iter().filter(|c| gap(c) < rng && c.mass() >= floor_of(c)) {
+        let k = if harvest {
+            let mut sum = 0.0;
+            for o in cl.prey.iter() {
+                if o.dist(c) < HARVEST_R {
+                    sum += o.mass();
+                }
+            }
+            sum / (gap(c).max(0.0) + 100.0)
+        } else {
+            c.mass() / (gap(c).max(0.0) + 100.0)
+        };
         if target.map_or(true, |(_, bk)| k > bk) {
             target = Some((c, k));
         }
@@ -471,5 +496,37 @@ impl Policy {
             Policy::Apos(p) => &p.counters,
             Policy::Plan(p) => &p.base.counters,
         }
+    }
+}
+
+#[cfg(test)]
+mod harvest_tests {
+    use super::*;
+    use crate::game::{Border, Cell, Kind, Snapshot};
+
+    fn snap(others: Vec<Cell>) -> Snapshot {
+        let me = Cell::new(1, 0.0, 0.0, (3000.0f64 * 100.0).sqrt(), Kind::Mine);
+        Snapshot { mine: vec![me], others, border: Border { left: -3500.0, right: 3500.0, top: -3500.0, bottom: 3500.0 }, dead: false }
+    }
+
+    fn piece(id: u32, x: f64, y: f64, mass: f64, color: u32) -> Cell {
+        let mut c = Cell::new(id, x, y, (mass * 100.0).sqrt(), Kind::Player);
+        c.color = color;
+        c
+    }
+
+    /// A lone 700 prey vs five 300 pieces of one (popped) player, both ~900 away: harvest goes for the cloud.
+    #[test]
+    fn harvest_prefers_a_cloud_of_pieces() {
+        let mut others = vec![piece(10, 900.0, 0.0, 700.0, 0xff0000)];
+        for i in 0..5 {
+            others.push(piece(20 + i, -900.0 - 40.0 * i as f64, 30.0 * i as f64, 300.0, 0x00ff00));
+        }
+        let s = snap(others);
+        let base = Params::default();
+        let on = Params { harvest: 1.0, ..Params::default() };
+        assert_eq!(heuristic_plan(&s, &base).target_id, Some(10));
+        let t = heuristic_plan(&s, &on).target_id.unwrap();
+        assert!((20..25).contains(&t), "harvest target {t} is not in the cloud of pieces");
     }
 }
