@@ -2,6 +2,7 @@
 //! vendor/agarian-client). See docs/showcase.md for keys.
 
 mod auto;
+mod control;
 mod menu;
 mod net;
 mod settings;
@@ -29,6 +30,7 @@ struct Args {
     spectate: bool,
     whole_map: bool,
     settings_open: bool,
+    control_open: bool,
     zoom: Option<f64>,
     selftest: bool,
     screenshot: Option<String>,
@@ -36,7 +38,7 @@ struct Args {
 }
 
 fn parse_args() -> Args {
-    let mut a = Args { server: None, name: None, spectate: false, whole_map: false, settings_open: false, zoom: None, selftest: false, screenshot: None, shot_at: 9.0 };
+    let mut a = Args { server: None, name: None, spectate: false, whole_map: false, settings_open: false, control_open: false, zoom: None, selftest: false, screenshot: None, shot_at: 9.0 };
     let mut it = std::env::args().skip(1);
     while let Some(k) = it.next() {
         match k.as_str() {
@@ -53,6 +55,7 @@ fn parse_args() -> Args {
                 a.whole_map = true;
             }
             "--settings-open" => a.settings_open = true,
+            "--control-open" => a.control_open = true,
             "--zoom" => a.zoom = it.next().and_then(|v| v.parse().ok()),
             "--screenshot" => a.screenshot = it.next(),
             "--shot-at" => a.shot_at = it.next().and_then(|v| v.parse().ok()).unwrap_or(9.0),
@@ -190,6 +193,7 @@ struct Game {
     set: Settings,
     saved: Settings,
     settings_open: bool,
+    ctl: control::Control,
     focus: Option<usize>,
     quit: bool,
 }
@@ -348,6 +352,9 @@ impl Game {
     }
 
     fn input(&mut self, now: f64, aim: Option<(f64, f64)>) {
+        if self.ctl.open {
+            return;
+        }
         if self.settings_open {
             self.settings_input();
             return;
@@ -366,6 +373,9 @@ impl Game {
         }
         if is_key_pressed(KeyCode::F1) {
             self.settings_open = true;
+        }
+        if is_key_pressed(KeyCode::F2) {
+            self.open_control();
         }
         if is_key_pressed(KeyCode::F11) {
             set_fullscreen(true);
@@ -533,7 +543,7 @@ impl Game {
             f.draw(&format!("FPS {}   cells {}   upd {}   zoom {:.2}{}   {}", get_fps(), self.world.cells.len(), self.world.updates, self.cam.z,
                 if self.cam.manual || !self.set.auto_zoom { " (manual, Z: auto)" } else { "" }, self.status), 10.0, 20.0, 18.0, fg);
         }
-        f.draw("F1: settings", 10.0, 42.0, 18.0, fg);
+        f.draw("F1: settings   F2: server control", 10.0, 42.0, 18.0, fg);
         if self.mode == Mode::Playing || self.mode == Mode::Dead {
             let s = format!("Score: {}", self.last_score);
             f.outlined(&s, 16.0 + f.size(&s, 36.0).width / 2.0, h - 34.0, 36.0, Color::new(1.0, 1.0, 1.0, 1.0), 1.0);
@@ -646,9 +656,13 @@ async fn main() {
         saved: set.clone(),
         set,
         settings_open: args.settings_open,
+        ctl: control::Control::new(),
         focus: None,
         quit: false,
     };
+    if args.control_open {
+        game.open_control();
+    }
     if let Some(z) = args.zoom {
         game.cam.manual = true;
         game.cam.manual_z = z;
@@ -666,7 +680,9 @@ async fn main() {
     loop {
         let now = get_time();
         let dt = get_frame_time() as f64;
-        if is_key_pressed(KeyCode::Escape) {
+        if is_key_pressed(KeyCode::Escape) && game.ctl.open {
+            game.close_control();
+        } else if is_key_pressed(KeyCode::Escape) {
             game.settings_open = !game.settings_open;
             game.focus = None;
             if !game.settings_open {
@@ -706,6 +722,9 @@ async fn main() {
         game.draw_world(now);
         game.draw_hud(now);
         game.draw_overlay(now);
+        if game.ctl.open {
+            game.control_frame(now);
+        }
         if let Some(path) = shot_pending.take() {
             get_screen_data().export_png(&path);
             println!("[auto] screenshot saved to {path}");
