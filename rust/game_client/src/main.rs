@@ -544,6 +544,13 @@ impl Game {
                 if self.cam.manual || !self.set.auto_zoom { " (manual, Z: auto)" } else { "" }, self.status), 10.0, 20.0, 18.0, fg);
         }
         f.draw("F1: settings   F2: server control", 10.0, 42.0, 18.0, fg);
+        if let Some(st) = &self.ctl.status {
+            // from the server's control port (status poll): everyone in the world, and who is alive right now
+            if !st.total.is_empty() {
+                f.draw(&format!("players {} alive / {} total   (bots {}, agents {}, humans {})", st.alive, st.total, st.bots,
+                                st.agents.len(), st.players), 10.0, 64.0, 18.0, fg);
+            }
+        }
         if self.mode == Mode::Playing || self.mode == Mode::Dead {
             let s = format!("Score: {}", self.last_score);
             f.outlined(&s, 16.0 + f.size(&s, 36.0).width / 2.0, h - 34.0, 36.0, Color::new(1.0, 1.0, 1.0, 1.0), 1.0);
@@ -724,6 +731,8 @@ async fn main() {
         game.draw_overlay(now);
         if game.ctl.open {
             game.control_frame(now);
+        } else {
+            game.control_background(now);
         }
         if let Some(path) = shot_pending.take() {
             get_screen_data().export_png(&path);

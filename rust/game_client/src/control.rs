@@ -59,6 +59,8 @@ pub struct Status {
     pub bots: String,
     pub players: String,
     pub clients: String,
+    pub alive: String,
+    pub total: String,
     pub agents: Vec<(String, String)>,
 }
 
@@ -78,6 +80,8 @@ pub fn parse_status(line: &str) -> Option<Status> {
             "bots" => s.bots = v.into(),
             "players" => s.players = v.into(),
             "clients" => s.clients = v.into(),
+            "alive" => s.alive = v.into(),
+            "total" => s.total = v.into(),
             "agentlist" => {
                 s.agents = v
                     .split(',')
@@ -275,6 +279,15 @@ impl Game {
         let c = if enabled { WHITE } else { Color::new(0.5, 0.5, 0.55, 1.0) };
         self.fonts.draw(label, x + (w - tw) / 2.0, y + h / 2.0 + 7.0, 20.0, c);
         enabled && hover && is_mouse_button_pressed(MouseButton::Left)
+    }
+
+    /// While the page is closed: keep polling the status (for the HUD player count), at a slower pace.
+    pub fn control_background(&mut self, now: f64) {
+        self.ctl.drain();
+        if self.ctl.in_flight == 0 && now - self.ctl.last_poll >= 2.0 * POLL_SECS {
+            let (a, t) = (self.control_addr(), self.set.control_token.clone());
+            self.ctl.send(&a, &t, Req::Poll, now);
+        }
     }
 
     /// Handles input and draws the control page (immediate mode). Called once per frame while open.

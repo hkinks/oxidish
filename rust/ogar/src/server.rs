@@ -244,10 +244,16 @@ impl Server {
     }
 
     fn status(&self) -> String {
-        let (mut bots, mut humans) = (0, 0);
+        let (mut bots, mut humans, mut alive, mut total) = (0, 0, 0, 0);
         for q in &self.w.players {
             if q.removed {
                 continue;
+            }
+            if q.kind != PKind::Human || q.connected {
+                total += 1; // everyone in the world: server bots, agents, connected humans
+                if !q.cells.is_empty() {
+                    alive += 1;
+                }
             }
             match q.kind {
                 PKind::Bot => bots += 1,
@@ -257,7 +263,7 @@ impl Server {
         }
         let v: Vec<String> = self.drivers.iter().map(|d| format!("{}:{:.0}", d.name, self.w.players[d.pi].total_mass(&self.w))).collect();
         format!(
-            "tick={} tps={:.1} speed={} paused={} bots={} players={} agents={} clients={} food={} foodmult={} agentlist={}",
+            "tick={} tps={:.1} speed={} paused={} bots={} players={} agents={} clients={} alive={} total={} food={} foodmult={} agentlist={}",
             self.w.tick,
             self.tps,
             self.speed_val(),
@@ -266,6 +272,8 @@ impl Server {
             humans,
             self.drivers.len(),
             self.conns.len(),
+            alive,
+            total,
             self.w.cfg.food_min_amount,
             self.food_mult,
             v.join(",")
