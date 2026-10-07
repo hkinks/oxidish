@@ -136,6 +136,8 @@ pub struct Server {
     quit: bool,
     paused: bool,
     speed_changed: bool,
+    /// wall time of the last update sent to human clients (they get at most ~40/s at any server speed)
+    last_client_send: Instant,
     food_mult: f64,
     tps: f64,
 }
@@ -189,7 +191,8 @@ pub fn serve(o: ServeOpts) -> Result<(), String> {
     w.full_view = o.full_view;
     w.track_eats = true;
     let food_mult = o.food_mult;
-    let mut s = Server { o, w, conns: HashMap::new(), drivers: Vec::new(), ev_rx, base_food, quit: false, paused: false, speed_changed: false, food_mult, tps: 0.0 };
+    let mut s = Server { o, w, conns: HashMap::new(), drivers: Vec::new(), ev_rx, base_food, quit: false, paused: false, speed_changed: false,
+            last_client_send: Instant::now(), food_mult, tps: 0.0 };
     let specs = std::mem::take(&mut s.o.agents);
     if !specs.is_empty() {
         println!("{}", s.add_agents(&specs));
@@ -532,6 +535,14 @@ impl Server {
 
     /// Per-tick packets for every connected client (PlayerTracker.sendUpdate).
     fn send_updates(&mut self) {
+        // At high speed (e.g. max = thousands of ticks/s) an update every tick floods the client, which then lags
+        // further and further behind ("stuck"). Updates are diffs against what the client was last sent, so
+        // skipping ticks is safe: send at most every 25 ms of wall time.
+        let now = Instant::now();
+        if now.duration_since(self.last_client_send) < Duration::from_millis(25) {
+            return;
+        }
+        self.last_client_send = now;
         let ids: Vec<usize> = self.conns.iter().filter(|(_, c)| c.stage == 2).map(|(&i, _)| i).collect();
         for id in ids {
             let (pi, tx) = {
