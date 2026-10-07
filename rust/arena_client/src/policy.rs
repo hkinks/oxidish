@@ -302,6 +302,17 @@ impl HeuristicPolicy {
         }
     }
 
+    /// The genes the next decision uses at this total mass (ramp / giant stages), without changing any state.
+    pub fn params_for(&self, total: f64) -> &Params {
+        let mut p = if self.p_small.caution_mass > 0.0 && total > self.p_small.caution_mass { &self.p_big } else { &self.p_small };
+        if let Some(g) = &self.p_giant {
+            if total > self.p_small.giant_mass {
+                p = g;
+            }
+        }
+        p
+    }
+
     /// Decide one step; `s` must have at least one cell of ours.
     pub fn act(&mut self, s: &mut Snapshot) -> Out {
         let mut prev = std::mem::take(&mut self.prev);
@@ -356,12 +367,14 @@ impl HeuristicPolicy {
 pub enum Policy {
     Heuristic(HeuristicPolicy),
     Apos(crate::apos::AposPolicy),
+    Plan(crate::plan::PlanPolicy),
 }
 
 impl Policy {
     pub fn from_spec(spec: &serde_json::Value) -> Policy {
         match spec.get("kind").and_then(|k| k.as_str()) {
             Some("apos") => Policy::Apos(crate::apos::AposPolicy::from_spec(spec)),
+            Some("plan") => Policy::Plan(crate::plan::PlanPolicy::from_spec(spec)),
             _ => Policy::Heuristic(HeuristicPolicy::from_spec(spec)),
         }
     }
@@ -370,6 +383,7 @@ impl Policy {
         match self {
             Policy::Heuristic(p) => p.act(s),
             Policy::Apos(p) => p.act(s),
+            Policy::Plan(p) => p.act(s),
         }
     }
 
@@ -377,6 +391,7 @@ impl Policy {
         match self {
             Policy::Heuristic(p) => p.reset(),
             Policy::Apos(p) => p.reset(),
+            Policy::Plan(p) => p.reset(),
         }
     }
 
@@ -392,6 +407,7 @@ impl Policy {
         match self {
             Policy::Heuristic(p) => &p.counters,
             Policy::Apos(p) => &p.counters,
+            Policy::Plan(p) => &p.base.counters,
         }
     }
 }

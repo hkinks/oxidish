@@ -5,5 +5,6 @@ pub mod client;
 pub mod farm;
 pub mod game;
 pub mod params;
+pub mod plan;
 pub mod policy;
 pub mod steer;
