@@ -1442,3 +1442,11 @@ impl World {
         self.nodes_virus.len()
     }
 }
+
+impl World {
+    /// Recompute a player view (centre, view box, visible nodes) now instead of at the next tick; the vision env
+    /// uses it to have a valid frame right after a respawn. Applies (and clears) pending input like a tick would.
+    pub fn refresh_view(&mut self, pi: usize) {
+        self.update_tick(pi);
+    }
+}

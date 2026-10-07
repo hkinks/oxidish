@@ -10,4 +10,5 @@ pub mod record;
 pub mod render;
 pub mod rng;
 pub mod server;
+pub mod vision;
 pub mod world;
