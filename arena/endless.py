@@ -106,12 +106,27 @@ def main() -> None:
         with open(a.out, "w") as f:
             json.dump(wins, f)
     c = a.candidate
+    # leader share: samples where the #1 player of the whole leaderboard (server bots included) is ours
+    lead_n = lead_k = 0
+    leaders: dict[str, int] = defaultdict(int)
+    for s_ in worlds:
+        for rec in s_:
+            if rec["t"] < a.skip_min * TICKS_PER_MIN or not rec["p"]:
+                continue
+            fam = max(rec["p"], key=lambda pl: pl["m"])["n"].rsplit("-", 1)[0]
+            leaders[fam if fam in families else "(server bot)"] += 1
+            lead_n += 1
+            lead_k += fam == c
     top = sum(1 for w in wins if max(w, key=w.get) == c)
     lo, hi = wilson(top, len(wins))
     print(f"{len(worlds)} worlds x {a.game_min:.0f} game-min, {len(wins)} windows of {a.window_min:.0f} min "
           f"({time.time() - t0:.0f}s wall)")
     print(f"\n{c} DOMINANCE (heaviest bot family): {top}/{len(wins)} = {top / max(len(wins), 1):.0%}  "
           f"[95% {lo:.0%}-{hi:.0%}]   bar: ~90%")
+    llo, lhi = wilson(lead_k, lead_n)
+    print(f"{c} LEADER SHARE (#1 on the leaderboard): {lead_k / max(lead_n, 1):.0%}  [95% {llo:.0%}-{lhi:.0%}] of "
+          f"{lead_n} samples (correlated within a world)   goal: 80%")
+    print("   leader shares: " + ", ".join(f"{k} {v / max(lead_n, 1):.0%}" for k, v in sorted(leaders.items(), key=lambda kv: -kv[1])))
     print(f"\n{'family':<12} {'mean mass':>10} {'top share':>10} {c + ' ahead':>14}")
     for fam in sorted(families, key=lambda f: -sum(w[f] for w in wins)):
         mean = sum(w[fam] for w in wins) / max(len(wins), 1)
