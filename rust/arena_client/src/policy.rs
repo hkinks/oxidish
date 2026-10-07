@@ -275,3 +275,39 @@ impl HeuristicPolicy {
         }
     }
 }
+
+/// Any policy kind a spec can select: the rule bot (default) or the AposBot port ({"kind": "apos"}).
+pub enum Policy {
+    Heuristic(HeuristicPolicy),
+    Apos(crate::apos::AposPolicy),
+}
+
+impl Policy {
+    pub fn from_spec(spec: &serde_json::Value) -> Policy {
+        match spec.get("kind").and_then(|k| k.as_str()) {
+            Some("apos") => Policy::Apos(crate::apos::AposPolicy::from_spec(spec)),
+            _ => Policy::Heuristic(HeuristicPolicy::from_spec(spec)),
+        }
+    }
+
+    pub fn act(&mut self, s: &mut Snapshot) -> Out {
+        match self {
+            Policy::Heuristic(p) => p.act(s),
+            Policy::Apos(p) => p.act(s),
+        }
+    }
+
+    pub fn reset(&mut self) {
+        match self {
+            Policy::Heuristic(p) => p.reset(),
+            Policy::Apos(p) => p.reset(),
+        }
+    }
+
+    pub fn counters(&self) -> &Counters {
+        match self {
+            Policy::Heuristic(p) => &p.counters,
+            Policy::Apos(p) => &p.counters,
+        }
+    }
+}
