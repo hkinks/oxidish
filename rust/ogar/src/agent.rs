@@ -9,6 +9,31 @@ use serde_json::{json, Value};
 
 use crate::world::{PKind, World, T_EJECT, T_FOOD, T_VIRUS};
 
+/// One decision step of an agent as a recording keeps it (ring buffer, `--record`): what it saw and did.
+pub struct StepRec {
+    pub tick: u32,
+    pub mine: Vec<[i32; 4]>,
+    /// non-food nodes in view: id, x, y, size, kind (0 player, 2 virus, 3 ejected), owner player index
+    pub others: Vec<[i32; 6]>,
+    /// food in view (x, y, size); only kept for the newest few steps
+    pub food: Vec<[i32; 3]>,
+    pub aim: (f64, f64),
+    pub split: bool,
+    pub eject: bool,
+    pub mode: &'static str,
+    pub stage: &'static str,
+    pub target: Option<u32>,
+    pub split_ok: bool,
+}
+
+/// Loss noticed in the last step: (mass before, mass after, died)
+pub type Loss = (f64, f64, bool);
+
+const LOSS_DROP: f64 = 0.3;
+const LOSS_LOOKBACK: usize = 4;
+const LOSS_COOLDOWN: u32 = 20;
+const FOOD_KEEP: usize = 3;
+
 pub struct AgentDriver {
     pub pi: usize,
     pub name: String,
@@ -17,6 +42,13 @@ pub struct AgentDriver {
     pub sync: u64,
     alive: bool,
     n_cells: Option<usize>,
+    /// ring of the last steps; None = recording off (nothing is collected, no cost)
+    pub trace: Option<std::collections::VecDeque<StepRec>>,
+    pub trace_len: usize,
+    totals: std::collections::VecDeque<f64>,
+    cooldown: u32,
+    /// set by `step` when the agent lost >= 30% of its mass (or died); the recorder takes it
+    pub loss: Option<Loss>,
 }
 
 fn color_of(c: [u8; 3]) -> u32 {
@@ -69,6 +101,60 @@ impl AgentDriver {
             sync,
             alive: false,
             n_cells: None,
+            trace: None,
+            trace_len: 0,
+            totals: Default::default(),
+            cooldown: 0,
+            loss: None,
+        }
+    }
+
+    /// Start keeping the last `len` steps (see `StepRec`).
+    pub fn enable_trace(&mut self, len: usize) {
+        self.trace = Some(std::collections::VecDeque::with_capacity(len + 1));
+        self.trace_len = len;
+    }
+
+    fn step_rec(&self, w: &World) -> StepRec {
+        let p = &w.players[self.pi];
+        let mine = p.cells.iter().map(|&h| {
+            let e = &w.ents[h as usize];
+            [e.id as i32, e.x as i32, e.y as i32, e.size as u32 as i32]
+        });
+        let (mut others, mut food) = (Vec::new(), Vec::new());
+        for &h in &p.view_nodes {
+            let e = &w.ents[h as usize];
+            if e.owner == self.pi as i32 {
+                continue;
+            }
+            let (x, y, sz) = (e.x as i32, e.y as i32, e.size as u32 as i32);
+            match e.kind {
+                T_FOOD => food.push([x, y, sz]),
+                T_VIRUS => others.push([e.id as i32, x, y, sz, 2, -1]),
+                T_EJECT => others.push([e.id as i32, x, y, sz, 3, -1]),
+                _ => others.push([e.id as i32, x, y, sz, 0, e.owner]),
+            }
+        }
+        StepRec { tick: w.tick, mine: mine.collect(), others, food, aim: (0.0, 0.0), split: false, eject: false,
+                  mode: "-", stage: "-", target: None, split_ok: false }
+    }
+
+    fn note_loss(&mut self, total: f64, died: bool) {
+        self.cooldown = self.cooldown.saturating_sub(1);
+        let peak = self.totals.iter().cloned().fold(0.0, f64::max);
+        if died {
+            self.loss = Some((peak.max(total), 0.0, true));
+            self.totals.clear();
+            self.cooldown = 0;
+            return;
+        }
+        if self.cooldown == 0 && peak > 0.0 && total < peak * (1.0 - LOSS_DROP) {
+            self.loss = Some((peak, total, false));
+            self.cooldown = LOSS_COOLDOWN;
+        }
+        self.totals.push_back(total);
+        while self.totals.len() > LOSS_LOOKBACK {
+            self.totals.pop_front();
         }
     }
 
@@ -99,6 +185,9 @@ impl AgentDriver {
             if self.stats.steps_alive > 0 && self.alive {
                 self.stats.deaths += 1;
             }
+            if self.trace.is_some() && self.alive {
+                self.note_loss(0.0, true);
+            }
             self.alive = false;
             self.policy.reset();
             let name = self.name.clone();
@@ -117,7 +206,30 @@ impl AgentDriver {
             self.stats.steps_alive += 1;
             self.stats.mass_ticks += mass * self.sync as f64;
             self.stats.peak_mass = self.stats.peak_mass.max(mass);
+            let mut rec = if self.trace.is_some() { Some(self.step_rec(w)) } else { None };
             let a = self.policy.act(&mut s);
+            if let Some(mut r) = rec.take() {
+                r.aim = (a.x, a.y);
+                r.split = a.split;
+                r.eject = a.eject;
+                if let Some((plan, stage)) = self.policy.last_plan() {
+                    r.mode = plan.mode.as_str();
+                    r.stage = stage;
+                    r.target = plan.target_id;
+                    r.split_ok = plan.split_ok;
+                }
+                self.note_loss(mass, false);
+                let len = self.trace_len;
+                let tr = self.trace.as_mut().unwrap();
+                tr.push_back(r);
+                if tr.len() > len {
+                    tr.pop_front();
+                }
+                if tr.len() > FOOD_KEEP {
+                    let k = tr.len() - 1 - FOOD_KEEP;
+                    tr[k].food = Vec::new();
+                }
+            }
             let p = &mut w.players[self.pi];
             p.mouse_in = Some(((a.x as i32) as f64, (a.y as i32) as f64));
             if a.split {

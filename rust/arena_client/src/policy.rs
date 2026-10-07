@@ -274,6 +274,8 @@ pub struct HeuristicPolicy {
     tactics: Tactics,
     pub counters: Counters,
     prev: HashMap<u32, (f64, f64)>,
+    /// plan and genome stage ("small" / "big" / "giant") of the last `act` (read-only, for recordings)
+    pub last_plan: Option<(Plan, &'static str)>,
 }
 
 impl HeuristicPolicy {
@@ -296,6 +298,7 @@ impl HeuristicPolicy {
             tactics: Tactics::new(),
             counters,
             prev: HashMap::new(),
+            last_plan: None,
         }
     }
 
@@ -318,12 +321,15 @@ impl HeuristicPolicy {
             self.use_big = s.total_mass() > self.p_small.caution_mass;
         }
         let mut p = if ramp && self.use_big { &self.p_big } else { &self.p_small };
+        let mut stage = if ramp && self.use_big { "big" } else { "small" };
         if let Some(g) = &self.p_giant {
             if s.total_mass() > self.p_small.giant_mass {
                 p = g; // giant stage: its own genes above giant_mass
+                stage = "giant";
             }
         }
         let plan = heuristic_plan(s, p);
+        self.last_plan = Some((plan, stage));
         let out = match self.tactics.act(s, &plan, p, &mut self.counters) {
             Some(o) => o,
             None => {
@@ -371,6 +377,14 @@ impl Policy {
         match self {
             Policy::Heuristic(p) => p.reset(),
             Policy::Apos(p) => p.reset(),
+        }
+    }
+
+    /// The last decision's plan (mode, target) and stage; None for policies without modes.
+    pub fn last_plan(&self) -> Option<(Plan, &'static str)> {
+        match self {
+            Policy::Heuristic(p) => p.last_plan,
+            Policy::Apos(_) => None,
         }
     }
 

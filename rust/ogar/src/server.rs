@@ -17,6 +17,7 @@ use crate::agent::AgentDriver;
 use crate::config::Config;
 use crate::matches::parse_lineup;
 use crate::protocol::*;
+use crate::record::Recorder;
 use crate::world::{PKind, World};
 
 const SERVER_NAME: &str = "MultiOgar-Edited 2.0.0";
@@ -39,6 +40,10 @@ pub struct ServeOpts {
     pub control_port: Option<u16>,
     pub control_token: Option<String>,
     pub control_bind: String,
+    /// `--record DIR`: eat events, loss scenes and human frames (None = off)
+    pub record: Option<String>,
+    /// `--record-all`: loss scenes for every eater, not only humans
+    pub record_all: bool,
 }
 
 enum Ev {
@@ -140,6 +145,7 @@ pub struct Server {
     last_client_send: Instant,
     food_mult: f64,
     tps: f64,
+    rec: Option<Recorder>,
 }
 
 pub fn serve(o: ServeOpts) -> Result<(), String> {
@@ -192,7 +198,13 @@ pub fn serve(o: ServeOpts) -> Result<(), String> {
     w.track_eats = true;
     let food_mult = o.food_mult;
     let mut s = Server { o, w, conns: HashMap::new(), drivers: Vec::new(), ev_rx, base_food, quit: false, paused: false, speed_changed: false,
-            last_client_send: Instant::now(), food_mult, tps: 0.0 };
+            last_client_send: Instant::now(), food_mult, tps: 0.0, rec: None };
+    if let Some(dir) = s.o.record.clone() {
+        let meta = serde_json::json!({"port": s.o.port, "sync": s.o.sync, "map": s.o.map, "seed": s.o.seed, "record_all": s.o.record_all});
+        s.rec = Some(Recorder::new(&dir, s.o.record_all, meta)?);
+        s.w.record_eats = true;
+        println!("[arena] recording to {dir}");
+    }
     let specs = std::mem::take(&mut s.o.agents);
     if !specs.is_empty() {
         println!("{}", s.add_agents(&specs));
@@ -216,7 +228,10 @@ impl Server {
                 idx += 1;
             }
             let nm = format!("{key}-{idx}");
-            let d = AgentDriver::new(&mut self.w, &nm, &spec, self.o.sync);
+            let mut d = AgentDriver::new(&mut self.w, &nm, &spec, self.o.sync);
+            if self.rec.is_some() {
+                d.enable_trace(Recorder::trace_len(self.o.sync));
+            }
             self.drivers.push(d);
             added.push(nm);
         }
@@ -461,6 +476,11 @@ impl Server {
     fn playing_message(&mut self, id: usize, op: u8, m: &[u8]) {
         let c = self.conns.get(&id).unwrap();
         let (pi, protocol) = (c.player, c.protocol);
+        if (op == 17 || op == 21) && m.len() == 1 {
+            if let Some(r) = self.rec.as_mut() {
+                r.press(pi, op);
+            }
+        }
         let p = &mut self.w.players[pi];
         match op {
             0 => {
@@ -648,6 +668,9 @@ impl Server {
                 continue;
             }
             self.w.tick();
+            if let Some(r) = self.rec.as_mut() {
+                r.on_tick(&mut self.w);
+            }
             stat_ticks += 1;
             tps_ticks += 1;
             self.send_updates();
@@ -656,6 +679,9 @@ impl Server {
                     d.step(&mut self.w);
                 }
                 self.w.kill_log.clear();
+                if let Some(r) = self.rec.as_mut() {
+                    r.after_step(&self.w, &mut self.drivers);
+                }
                 self.lockstep();
             }
             if log_every > 0 && self.w.tick % log_every == 0 {

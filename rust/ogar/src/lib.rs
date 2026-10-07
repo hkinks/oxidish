@@ -6,6 +6,7 @@ pub mod bots;
 pub mod config;
 pub mod matches;
 pub mod protocol;
+pub mod record;
 pub mod rng;
 pub mod server;
 pub mod world;

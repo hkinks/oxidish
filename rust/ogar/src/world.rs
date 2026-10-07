@@ -161,6 +161,8 @@ pub struct Player {
     pub shots: u32,
     pub pops: u32,
     pub pop_mass: f32,
+    /// tick of the last virus this player ate and burst on (recordings only)
+    pub last_pop_tick: Option<u32>,
 }
 
 impl Player {
@@ -208,6 +210,7 @@ impl Player {
             shots: 0,
             pops: 0,
             pop_mass: 0.0,
+            last_pop_tick: None,
         }
     }
 
@@ -225,6 +228,24 @@ pub struct KillEvent {
     pub killer_mass: f64,
     pub killer_cells: usize,
     pub killer_total: f64,
+}
+
+/// One player cell eaten by another player's cell, with the context a recording needs (`record_eats`).
+#[derive(Clone, Debug)]
+pub struct EatEvent {
+    pub tick: u32,
+    pub eater_owner: i32,
+    pub victim_owner: i32,
+    pub eater_cell_mass: f64,
+    pub eater_total: f64,
+    pub eater_cells: usize,
+    pub eater_pos: (f64, f64),
+    pub victim_cell_mass: f64,
+    pub victim_total: f64,
+    pub victim_cells: usize,
+    pub victim_pos: (f64, f64),
+    /// ticks since the victim's owner ate a virus (u32::MAX = never)
+    pub victim_pop_ago: u32,
 }
 
 struct Col {
@@ -263,6 +284,9 @@ pub struct World {
     pub eaten: HashMap<u32, u32>,
     pub track_eats: bool,
     pub kill_log: Vec<KillEvent>,
+    /// opt-in (`ogar serve --record`): rich eat events for recordings; drained by the recorder
+    pub record_eats: bool,
+    pub eat_events: Vec<EatEvent>,
     shooter: i32,
     cand: Vec<u32>,
     bot_names: Vec<&'static str>,
@@ -301,6 +325,8 @@ impl World {
             eaten: HashMap::new(),
             track_eats: false,
             kill_log: Vec::new(),
+            record_eats: false,
+            eat_events: Vec::new(),
             shooter: -1,
             cand: Vec::new(),
             bot_names: include_str!("../data/botnames.txt").lines().filter(|l| !l.is_empty()).collect(),
@@ -955,6 +981,25 @@ impl World {
                 tot += self.ents[h as usize].mass();
             }
             self.kill_log.push(KillEvent { victim_owner: vo, killer_owner: eo, victim_mass: vm, killer_mass: em, killer_cells: n, killer_total: tot });
+            if self.record_eats {
+                let vp = &self.players[vo as usize];
+                let vtot: f64 = vp.cells.iter().map(|&h| self.ents[h as usize].mass()).sum();
+                let (ee, ve) = (&self.ents[eater as usize], &self.ents[victim as usize]);
+                self.eat_events.push(EatEvent {
+                    tick: self.tick,
+                    eater_owner: eo,
+                    victim_owner: vo,
+                    eater_cell_mass: em,
+                    eater_total: tot,
+                    eater_cells: n,
+                    eater_pos: (ee.x, ee.y),
+                    victim_cell_mass: vm,
+                    victim_total: vtot,
+                    victim_cells: vp.cells.len(),
+                    victim_pos: (ve.x, ve.y),
+                    victim_pop_ago: vp.last_pop_tick.map_or(u32::MAX, |t| self.tick.saturating_sub(t)),
+                });
+            }
         }
         self.ents[victim as usize].removed = true;
         // check.onEat(cell)
@@ -1004,6 +1049,9 @@ impl World {
         }
         if cells_left <= 0 {
             return;
+        }
+        if self.record_eats {
+            self.players[owner].last_pop_tick = Some(self.tick);
         }
         let split_min = self.cfg.virus_split_div;
         let cell_mass = self.ents[eater as usize].mass();

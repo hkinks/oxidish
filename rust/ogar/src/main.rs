@@ -3,6 +3,7 @@
 //!   ogar match --agents ramp300=runs/r2g9_ramp300.json:1 champ=runs/final_champion.json:1 --ticks 22500 \
 //!              --food-mult 2 --seed 1 --matches 8 --threads 2 --out rows.json
 //!   ogar serve --port 9600 --bots 8 --food-mult 2 --map 7000 [--agents name=genome.json:N] [--full-view]
+//!                [--record DIR [--record-all]]   (eat events, agent loss scenes, human frames: see record.rs)
 
 use ogar::matches::{parse_lineup, run_many, MatchOpts};
 use serde_json::Value;
@@ -41,7 +42,7 @@ pub fn parse_args(args: &[String]) -> Result<Args, String> {
                 i += 1;
                 a.agents.push(args[i].clone());
             }
-        } else if matches!(key.as_str(), "--realtime" | "--full-view") {
+        } else if matches!(key.as_str(), "--realtime" | "--full-view" | "--record-all") {
             a.kv.insert(key[2..].to_string(), "1".into());
         } else {
             i += 1;
@@ -121,6 +122,8 @@ fn run_serve_cmd(a: &Args) -> Result<(), String> {
         control_port: a.kv.get("control-port").map(|v| v.parse().map_err(|_| "bad --control-port")).transpose()?,
         control_token: a.kv.get("control-token").cloned(),
         control_bind: a.kv.get("control-bind").cloned().unwrap_or_else(|| "127.0.0.1".into()),
+        record: a.kv.get("record").cloned(),
+        record_all: a.kv.contains_key("record-all"),
     };
     ogar::server::serve(o)
 }
