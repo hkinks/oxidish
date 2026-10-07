@@ -98,7 +98,9 @@ class AgentClient:
                 break
             x, y, size, flags = struct.unpack_from("<iiHB", buf, i)
             i += 11
+            color = 0
             if flags & 0x02:
+                color = (buf[i] << 16) | (buf[i + 1] << 8) | buf[i + 2]
                 i += 3
             if flags & 0x04:
                 _, i = _read_str(buf, i)
@@ -107,9 +109,11 @@ class AgentClient:
                 name, i = _read_str(buf, i)
             c = st.cells.get(cid)
             if c is None:
-                st.cells[cid] = Cell(cid, x, y, size, _kind(flags), name or "")
+                st.cells[cid] = Cell(cid, x, y, size, _kind(flags), name or "", color=color)
             else:
                 c.x, c.y, c.size = x, y, size
+                if color:
+                    c.color = color
                 if name:
                     c.name = name
         (n,) = struct.unpack_from("<H", buf, i)
