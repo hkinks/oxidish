@@ -296,7 +296,7 @@ class AposPolicy:
         self.memory_ms = float(memory_ms)
         self.counters = {"steps": 0, "splits": 0, "ejects": 0, "shots_started": 0, "shots_fired": 0, "virus_hides": 0,
                          "baits": 0, "lures": 0, "pours": 0, "escapes": 0, "double_splits": 0}
-        self.now = 0.0
+        self.now = 1_000_000.0   # like the JS epoch clock: timers that start at 0 are long expired
         self._memory: dict[int, tuple[C, float]] = {}
         self._init_state()
         self.point_x = 0.0

@@ -36,7 +36,7 @@ def supported(specs: list[str]) -> bool:
         if path:
             if path.endswith(".pt") or path.startswith(("jev:", "greedy:", "guard", "hybrid", "nosplit:")):
                 return False
-        elif name not in ("route", "field"):
+        elif name not in ("route", "field", "apos"):
             return False
     return True
 

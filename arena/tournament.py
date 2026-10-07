@@ -18,6 +18,7 @@ from pathlib import Path
 from .match import free_port, limit_cpus, parse_lineup, run_match, start_server
 
 METRICS = ("log_mass", "avg_mass", "peak_mass", "deaths", "kills")
+VIRUS_METRICS = ("virus_shots", "virus_pops")   # viruses fed to fire / players popped by them
 
 
 def _play(index: int, specs: list[str], ticks: int, bots: int, map_size: int,
@@ -134,11 +135,12 @@ def main() -> None:
     per_match: dict[str, dict[int, list[dict]]] = {}
     for r in rows:
         per_match.setdefault(r["policy"], {}).setdefault(r["seed"], []).append(r)
-    print(f"\n{'policy':<10}" + "".join(f"{m:>20}" for m in METRICS))
+    metrics = METRICS + (VIRUS_METRICS if any("virus_shots" in r for r in rows) else ())   # ogar engine only
+    print(f"\n{'policy':<10}" + "".join(f"{m:>20}" for m in metrics))
     for policy, by_seed in per_match.items():
         cells = []
-        for m in METRICS:
-            samples = [statistics.fmean(r[m] for r in group) for group in by_seed.values()]
+        for m in metrics:
+            samples = [statistics.fmean(r.get(m, 0) for r in group) for group in by_seed.values()]
             mean, half = _ci95(samples)
             cells.append(f"{mean:10.2f} +- {half:6.2f}")
         print(f"{policy:<10}" + "".join(f"{c:>20}" for c in cells))

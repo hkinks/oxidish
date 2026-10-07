@@ -444,7 +444,7 @@ impl AposPolicy {
             step_ms,
             memory_ms,
             counters,
-            now: 0.0,
+            now: 1_000_000.0,
             memory: HashMap::new(),
             state: "roam",
             detour: None,
