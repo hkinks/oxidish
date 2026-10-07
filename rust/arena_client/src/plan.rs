@@ -43,6 +43,8 @@ pub struct PlanCfg {
     pub pop_w: f64,
     pub rival_split: bool,
     pub adv: bool,
+    pub need_loss: f64,
+    pub virus_gain: f64,
     pub scen: Vec<u8>,
     pub min_w: f64,
     pub split_cands: usize,
@@ -76,6 +78,8 @@ impl Default for PlanCfg {
             pop_w: 0.5,
             rival_split: true,
             adv: true,
+            need_loss: 0.1,
+            virus_gain: 0.0,
             scen: vec![0, 1, 2],
             min_w: 0.5,
             split_cands: 3,
@@ -94,7 +98,7 @@ impl PlanCfg {
         macro_rules! set {
             ($($n:ident),*) => { $( if let Some(x) = f(stringify!($n)) { c.$n = x; } )* };
         }
-        set!(min_w, gate, margin, loss_w, eat_w, death_w, near_w, near_range, lead_w, frag_w, r_food, r_prey, r_flee, r_inert, pop_w, sync, min_rival_mass);
+        set!(need_loss, virus_gain, min_w, gate, margin, loss_w, eat_w, death_w, near_w, near_range, lead_w, frag_w, r_food, r_prey, r_flee, r_inert, pop_w, sync, min_rival_mass);
         macro_rules! seti {
             ($($n:ident),*) => { $( if let Some(x) = f(stringify!($n)) { c.$n = x as usize; } )* };
         }
@@ -370,7 +374,7 @@ impl Sim {
     }
 
     /// One server tick.
-    fn tick(&mut self) {
+    fn tick(&mut self, virus_gain: f64) {
         self.t += 1;
         let b = self.border;
         for c in self.cells.iter_mut().filter(|c| c.alive) {
@@ -450,7 +454,7 @@ impl Sim {
                 let (dx, dy) = (c.x - v.1, c.y - v.2);
                 if dx * dx + dy * dy < r * r {
                     v.4 = false;
-                    c.size = (c.size * c.size + v.3 * v.3).sqrt();
+                    c.size = (c.size * c.size + virus_gain * v.3 * v.3).sqrt();
                     pop = true;
                     break;
                 }
@@ -628,7 +632,7 @@ impl PlanPolicy {
             None => serde_json::json!({ "farm": "route" }),
         };
         let mut base = HeuristicPolicy::from_spec(&base_spec);
-        for k in ["plan_steps", "plan_gated", "plan_override", "plan_split", "plan_us"] {
+        for k in ["plan_steps", "plan_gated", "plan_deep", "plan_override", "plan_split", "plan_us"] {
             base.counters.0.push((k.to_string(), 0));
         }
         PlanPolicy { base, cfg: PlanCfg::from_json(spec), step: 0, pending: Vec::new(), val: std::env::var("AGAR_PLAN_VAL").is_ok() }
@@ -650,15 +654,16 @@ impl PlanPolicy {
     }
 
     /// Score of an opening: blend of the worst and the mean over the rival-behaviour scenarios.
-    fn evaluate(&self, base: &Sim, s: &Snapshot, p: &Params, o: &Opening) -> f64 {
-        let (mut mn, mut sum) = (f64::INFINITY, 0.0);
+    fn evaluate(&self, base: &Sim, s: &Snapshot, p: &Params, o: &Opening) -> (f64, f64) {
+        let (mut mn, mut sum, mut lost) = (f64::INFINITY, 0.0, 0.0f64);
         for &sc in &self.cfg.scen {
-            let v = self.evaluate_rec(base, s, p, o, false, sc).0;
+            let (v, d, _) = self.evaluate_rec(base, s, p, o, false, sc);
             mn = mn.min(v);
             sum += v;
+            lost = lost.max(d[1] + if d[0] <= 0.0 { base.total(0) } else { 0.0 });
         }
         let mean = sum / self.cfg.scen.len().max(1) as f64;
-        self.cfg.min_w * mn + (1.0 - self.cfg.min_w) * mean
+        (self.cfg.min_w * mn + (1.0 - self.cfg.min_w) * mean, lost)
     }
 
     fn evaluate_full(&self, base: &Sim, s: &Snapshot, p: &Params, o: &Opening) -> (f64, [f64; 4]) {
@@ -697,7 +702,7 @@ impl PlanPolicy {
                     None => break,
                 }
             }
-            sim.tick();
+            sim.tick(cfg.virus_gain);
             if sim.record && (t + 1 == 10 || t + 1 == 24 || t + 1 == 50) {
                 let v: Vec<PC> = sim.cells.iter().filter(|c| c.alive).copied().collect();
                 sim.snaps.push((t + 1, v));
@@ -762,7 +767,7 @@ impl PlanPolicy {
                     }
                 }
                 let npred = cells.iter().filter(|c| c.owner != 0).count();
-                eprintln!("VAL h={} matched={} of {} perr={:.0} serr={:.1} mine_pred={:.0}({}) mine_act={:.0}({})", h, n, npred, perr / n.max(1) as f64, serr / n.max(1) as f64, pred_mine, pred_n, s.total_mass(), s.mine.len());
+                eprintln!("VAL dec={} h={} matched={} of {} perr={:.0} serr={:.1} mine_pred={:.0}({}) mine_act={:.0}({})", step - (h as i64 % 1000) / 2, h, n, npred, perr / n.max(1) as f64, serr / n.max(1) as f64, pred_mine, pred_n, s.total_mass(), s.mine.len());
             }
             self.pending = keep;
         }
@@ -794,10 +799,17 @@ impl PlanPolicy {
         }
         let mut best = (f64::NEG_INFINITY, 0usize);
         let mut base_score = 0.0;
+        let mut base_lost = 0.0;
         for (i, o) in openings.iter().enumerate() {
-            let sc = self.evaluate(&sim, s, &p, o);
+            let (sc, lost) = self.evaluate(&sim, s, &p, o);
             if i == 0 {
                 base_score = sc;
+                base_lost = lost;
+                if base_lost < self.cfg.need_loss * tm {
+                    best = (sc, 0);
+                    break; // nothing at stake: the base action stands, no need to price the alternatives
+                }
+                self.base.counters.bump("plan_deep", 1);
             }
             if sc > best.0 {
                 best = (sc, i);
@@ -805,10 +817,10 @@ impl PlanPolicy {
         }
         self.base.counters.bump("plan_us", t0.elapsed().as_micros() as i64);
         if self.val {
-            let ch = if best.1 != 0 && best.0 > base_score + self.cfg.margin * tm { best.1 } else { 0 };
+            let ch = if best.1 != 0 && best.0 > base_score + self.cfg.margin * tm && base_lost >= self.cfg.need_loss * tm { best.1 } else { 0 };
             let (_, _, snaps) = self.evaluate_rec(&sim, s, &p, &openings[ch], true, 0);
             for (t, cells) in snaps {
-                let tag = if ch != 0 && openings[ch].split { t + 1000 } else { t };
+                let tag = if ch != 0 { t + 2000 + if openings[ch].split { 1000 } else { 0 } } else { t };
                 self.pending.push((self.step + (t as i64) / 2, tag, cells));
             }
         }
@@ -829,7 +841,7 @@ impl PlanPolicy {
                 self.base.counters.0.iter().find(|e| e.0 == "plan_steps").map(|e| e.1).unwrap_or(0), tm, s.mine.len(), me.x, me.y, sim.n_owners - 1,
                 ang(&openings[0]), openings[0].split, best.1, ang(&openings[best.1]), openings[best.1].split, sc);
         }
-        if best.1 != 0 && best.0 > base_score + self.cfg.margin * tm {
+        if best.1 != 0 && best.0 > base_score + self.cfg.margin * tm && base_lost >= self.cfg.need_loss * tm {
             self.base.counters.bump("plan_override", 1);
             let o = &openings[best.1];
             if o.split {
