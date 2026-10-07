@@ -400,6 +400,7 @@ impl Policy {
         match self {
             Policy::Heuristic(p) => p.last_plan,
             Policy::Apos(_) => None,
+            Policy::Plan(p) => p.base.last_plan, // the planner's base rule bot decides first (its plan and stage)
         }
     }
 
