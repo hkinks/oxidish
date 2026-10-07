@@ -182,3 +182,92 @@ about 50 GB/h at 6k decisions/s end to end**; zlib, not the engine, then limits 
 decision), so for M2 prefer streaming straight from the env into the trainer (labels come with every step) and keep
 shards only for fixed validation sets. `--noise S` executes teacher + Gaussian pixel noise (DART-style) while the
 label stays the clean teacher action.
+
+## M2 status: imitation + DAgger (2026-10-07/08, branch `worktree-agent-a01a58030cb44bc32`)
+
+**Result in one line.** Target-pixel agreement gate met (80.8% on the teacher-driven held-out set, early BC/DAgger
+checkpoint); **split-agreement gate missed** (best F1 about 0.3); in-env, the student **without splitting matches the
+planner's leader share** (0.215 vs 0.207, 33-game-minute runs, 2 seed sets) but dies more often (14-15 vs 8 per hour).
+Splitting students are worse than not splitting. The "45% vs c3_4 in 15-min matches" part of the gate needs the M3
+in-server agent and was not measured.
+
+**Code** (`rl/vision/`, Python/PyTorch, no Rust change): `model.py` (VisionNet), `store.py` (GPU ring), `train_bc.py`
+(streaming BC + DAgger), `make_val.py` (fixed validation sets), `evalval.py` (held-out metrics), `eval_env.py` (in-env
+student/teacher runs), `export.py` (TorchScript + ONNX), `summ.py`, `bench_model.py`.
+
+**Model.** 1.49M parameters. View trunk: IMPALA stages 2->16 (3x3 conv at the full 256 px, then 2x2 max pool, 1 res
+block), 32 (2 res) at 128->64 px, 64 (2 res) at 32 px, 128 (1 res) at 16 px. Wide trunk (128 px, 3 light stages, 64 ch
+at 16x16) fused at 16x16. Heat-map decoder (U-Net style, skips from the 32 and 64 px stages) gives 64x64 logits: one
+cell = 4 view px; target = argmax cell refined by a 3x3 soft-argmax. Split / eject / value come from an MLP on the
+pooled features plus an 8-channel 16x16 spatial summary. bf16 autocast, channels_last; training 5.6k samples/s alone,
+3.5-4.5k/s with the env and student inference running. Value head is built but untrained in M2.
+
+**Training** (`python rl/vision/train_bc.py --name bc2 --hours 2 --d0 0.05 --d1 0.4 --pmax 0.9 --ring 320 --pos-weight 3`;
+the validation sets first: `python rl/vision/make_val.py` and `make_val.py --events 600 --out runs/vision/val_events
+--seed 888000 --worlds 32`). 64 worlds x 4 learners, opponent field = champ, r2g9, safe, ramp_r2, ramp300 + 8 server
+bots, planner teacher, 10 env threads pinned to cores 0-10. Collector thread steps the env and pushes frames + teacher
+labels into a GPU ring (320 decisions x 256 learners = 82k frames, 6.7 GB); the trainer samples it uniformly
+(batch 256, AdamW, lr 6e-4 cosine, EMA 0.999, loss = cross-entropy on a Gaussian (1 cell) heat-map target + BCE for
+split / eject). Dihedral augmentation (8 flips/transposes with matching labels). Collection is throttled to 1 new
+sample per trained sample. DAgger: each learner is driven by the teacher or the student in segments of ~150 decisions;
+the student fraction ramps linearly to `pmax` over the budget fractions d0..d1; labels are always the planner's.
+Split is rare (0.07% of decisions, about 30 per game hour): every teacher-split frame goes to a FIFO store (16k frames)
+and 3-6% of each batch is drawn from it. VRAM about 22-23 GB total on the card (incl. 2.4 GB of other processes), 400 W.
+Total training wall time about 4 h (bc1 25 min prototype, bc2 2 h, bc3 1.5 h continuation); about 54M samples.
+
+**Held-out metrics** (51,200 teacher-driven frames from 1024 learner-windows, seeds 777000+, game minutes 3-16; plus
+600 mined teacher-split frames). Agreement = angle between student and teacher heading from the frame centre < 15 deg.
+
+| checkpoint | student share of drivers | target agree (<15 deg) | <30 deg | median px err | split P / R / F1 (best thr) | split recall on 600 events |
+|---|---|---|---|---|---|---|
+| bc1 10 min (BC only, 2.8M samples) | 2% | 0.791 | 0.855 | 2.6 | 0.08 / 0.19 / 0.11 | 0.17 |
+| bc2 10 min (`runs/vision/bc2/best.pt`) | 9% | **0.808** | 0.868 | 2.3 | 0.27 / 0.17 / 0.21 | 0.14 |
+| bc2 final (2 h, DAgger to 90%) | 90% | 0.680 | 0.779 | 5.7 | 0.32 / 0.17 / 0.22 | 0.21 |
+| bc3 final (continued, 70% student) | 70% | 0.768 | 0.834 | 3.3 | 0.47 / 0.19 / 0.27 | 0.14 |
+
+Agreement on the teacher-driven set falls as the DAgger share rises because the ring then holds mostly student-visited
+states (a shift in the training distribution, not worse play: in-env results improve, see below). Split agreement
+stays far below the 70% gate: precision and recall both about 0.2-0.5 at the best threshold. Eject: the planner never
+ejects in this field (0 positives), so the eject head is untested.
+
+**In-env** (32 worlds x 2 learners per world, same field, learners driven purely by the policy; leader = largest
+player in the world; deaths per learner-hour of game time). Seed 424242, 16 game min:
+
+| driver | mean mass | leader share | top-3 | deaths/h |
+|---|---|---|---|---|
+| teacher (planner) | 1663 | 0.207 | 0.467 | 8.4 |
+| bc1 (80% agree, 22% DAgger) | 317 | 0.008 | 0.083 | 56.7 |
+| bc2 @1 h (52% DAgger) | 1387 | 0.150 | 0.404 | 21.6 |
+| bc2 final, splits on (thr 0.85) | 1450 | 0.146 | 0.421 | 15.7 |
+| bc2 final, **no split** | 1816 | 0.233 | 0.540 | 10.3 |
+
+Seeds 11 and 12, 33 game min each (mean of the two): 
+
+| driver | mean mass | leader share | top-3 | deaths/h | splits/h |
+|---|---|---|---|---|---|
+| teacher (planner) | 2402 | 0.207 (0.214 / 0.199) | 0.52 | 8.0 | about 30 |
+| bc2 final, no split | 2427 | 0.214 (0.224 / 0.204) | 0.50 | 13.6 | 0 |
+| bc2 final, split thr 0.97 | 2079 | 0.178 (0.178 / 0.178) | 0.45 | 16.5 | 10 |
+| bc3 final, no split | 2340 | 0.216 (0.226 / 0.206) | 0.48 | 15.5 | 0 |
+| bc3 final, split thr 0.90 | 2332 | 0.197 (0.209 / 0.184) | 0.48 | 14.6 | 20 |
+
+Leader share differences of about 0.02 are within noise (per-world sd 0.12 over 32 worlds). Read: pure DAgger-trained
+pixels reach planner-level leader share and mass, but die about 1.7x as often, and splitting hurts.
+
+**What limited it.**
+1. Split: the label is 0.07% of frames and depends on sub-pixel size ratios (prey > 1.3x, within split range) and on
+   hidden state (split cooldown). Oversampling positives raised precision a little (0.1 -> 0.3-0.5) but recall stays
+   about 0.2. Student splits are mostly wrong-time splits that cost mass; the shipped recommendation is no split
+   (`split_thr` stays in the export json at 0.9 for experiments).
+2. Distribution shift: BC alone at 80% agreement collapses in-env (mass 317, 57 deaths/h); the DAgger share is what
+   matters, and the in-env numbers plateaued between bc2 and bc3 (extra 1.5 h at lower lr gave the same leader share).
+3. Deaths/hour 14-15 vs 8: single bad decisions near threats; ring memory is only 320 decisions per learner (about
+   26 game seconds), so rare dangerous situations are forgotten. A larger or prioritised replay is the first thing to try.
+4. Throughput: the trainer, not the env, is the bottleneck (about 4k samples/s of the 15k/s the env can label).
+
+**Checkpoints and export** (`runs/vision/` is gitignored, nothing large is committed): `runs/vision/bc3/final.pt`
+(recommended, play with `--no-split` semantics), `runs/vision/bc2/final.pt`, `runs/vision/bc2/best.pt` (80.8% agreement),
+logs in `logs/vision/*.jsonl`. M3 export: `runs/vision/export/vision_bc3.{pt,onnx,json}` (TorchScript / ONNX,
+inputs u8 view[B,2,256,256], wide[B,2,128,128]; outputs heat[B,64,64], split, eject, value; ONNX vs torch max
+abs diff 0.04 on random noise input, TorchScript exact). Decode as in `model.decode_target`; the planner-pixel frame is
+the view frame. Reproduce the export: `python rl/vision/export.py runs/vision/bc3/final.pt runs/vision/export/vision_bc3`.
