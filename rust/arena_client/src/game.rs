@@ -41,11 +41,13 @@ pub struct Cell {
     pub kind: Kind,
     pub vx: f64,
     pub vy: f64,
+    /// protocol colour (r<<16|g<<8|b): one player's pieces share it; 0 = unknown
+    pub color: u32,
 }
 
 impl Cell {
     pub fn new(id: u32, x: f64, y: f64, size: f64, kind: Kind) -> Cell {
-        Cell { id, x, y, size, kind, vx: 0.0, vy: 0.0 }
+        Cell { id, x, y, size, kind, vx: 0.0, vy: 0.0, color: 0 }
     }
 
     #[inline]

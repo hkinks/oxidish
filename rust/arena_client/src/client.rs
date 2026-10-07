@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use tokio_tungstenite::tungstenite::Message;
 
 use crate::game::{Border, Cell, Kind, Snapshot};
-use crate::policy::{Counters, HeuristicPolicy};
+use crate::policy::{Counters, Policy};
 
 const OP_AGENT: u8 = 0xC8;
 const OP_STEP: u8 = 0xC9;
@@ -26,6 +26,10 @@ pub struct AgentStats {
     pub counters: Counters,
     pub losses: Vec<Value>,
     pub popped: u64,
+    /// virus shots fired / enemy cells popped by our viruses / mass of the popped (ogar engine only)
+    pub virus_shots: u64,
+    pub virus_pops: u64,
+    pub virus_pop_mass: f64,
 }
 
 impl AgentStats {
@@ -49,6 +53,9 @@ impl AgentStats {
             "losses": self.losses,
             "counters": counters,
             "popped": self.popped,
+            "virus_shots": self.virus_shots,
+            "virus_pops": self.virus_pops,
+            "virus_pop_mass": self.virus_pop_mass,
         })
     }
 }
@@ -148,7 +155,7 @@ fn kind_of(flags: u8) -> Kind {
 
 pub struct AgentClient {
     pub name: String,
-    policy: HeuristicPolicy,
+    policy: Policy,
     end_tick: u64,
     sync: u64,
     pub stats: AgentStats,
@@ -158,7 +165,7 @@ pub struct AgentClient {
 }
 
 impl AgentClient {
-    pub fn new(name: &str, policy: HeuristicPolicy, end_tick: u64, sync: u64) -> AgentClient {
+    pub fn new(name: &str, policy: Policy, end_tick: u64, sync: u64) -> AgentClient {
         AgentClient {
             name: name.to_string(),
             policy,
@@ -203,7 +210,9 @@ impl AgentClient {
             let size = u16::from_le_bytes(rd(buf, i + 8)?);
             let flags = *buf.get(i + 10)?;
             i += 11;
+            let mut color = 0u32;
             if flags & 0x02 != 0 {
+                color = ((*buf.get(i)? as u32) << 16) | ((*buf.get(i + 1)? as u32) << 8) | (*buf.get(i + 2)? as u32);
                 i += 3;
             }
             if flags & 0x04 != 0 {
@@ -221,9 +230,14 @@ impl AgentClient {
                 c.x = x as f64;
                 c.y = y as f64;
                 c.size = size as f64;
+                if color != 0 {
+                    c.color = color;
+                }
             } else {
                 w.index.insert(cid, w.slots.len());
-                w.slots.push(Slot { alive: true, c: Cell::new(cid, x as f64, y as f64, size as f64, kind_of(flags)) });
+                let mut cell = Cell::new(cid, x as f64, y as f64, size as f64, kind_of(flags));
+                cell.color = color;
+                w.slots.push(Slot { alive: true, c: cell });
             }
             if let Some(nm) = name {
                 if !nm.is_empty() {
@@ -368,7 +382,7 @@ impl AgentClient {
             }
         }
         let _ = tx.close().await;
-        self.stats.counters = self.policy.counters.clone();
+        self.stats.counters = self.policy.counters().clone();
         Ok(self.stats)
     }
 }

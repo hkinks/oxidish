@@ -37,6 +37,7 @@ class Cell:
     name: str
     vx: float = 0.0  # per-step velocity, filled in by policies that track cells
     vy: float = 0.0
+    color: int = 0   # protocol colour (r<<16|g<<8|b): one player's pieces share it; 0 = unknown
 
     @property
     def mass(self) -> float:

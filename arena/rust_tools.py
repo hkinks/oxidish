@@ -9,7 +9,7 @@
     rust/arena_client/target/release/arena_client bench out.jsonl
 
 Dump format (JSON lines): {"t":"agent","a":i,"spec":{...}} once per agent, then per step
-{"t":"s","a":i,"mine":[[id,x,y,size]],"others":[[id,x,y,size,kind]],"b":[left,top,right,bottom],"out":[x,y,split,eject]}
+{"t":"s","a":i,"mine":[[id,x,y,size,color]],"others":[[id,x,y,size,kind,color]],"b":[left,top,right,bottom],"out":[x,y,split,eject]}
 and {"t":"r","a":i} where the policy was reset (death).
 """
 
@@ -42,8 +42,8 @@ class DumpPolicy:
 
     def act(self, s):
         rec = {"t": "s", "a": self.index,
-               "mine": [[c.id, c.x, c.y, c.size] for c in s.mine],
-               "others": [[c.id, c.x, c.y, c.size, c.kind] for c in s.others],
+               "mine": [[c.id, c.x, c.y, c.size, c.color] for c in s.mine],
+               "others": [[c.id, c.x, c.y, c.size, c.kind, c.color] for c in s.others],
                "b": [s.border["left"], s.border["top"], s.border["right"], s.border["bottom"]]}
         out = self.policy.act(s)
         rec["out"] = [float(out[0]), float(out[1]), bool(out[2]), bool(out[3]) if len(out) > 3 else False]
@@ -113,15 +113,29 @@ def fuzz(path: str, specs: list[str], steps: int, seed: int) -> None:
                                        cy + 800 * math.sin(a + rng.uniform(-0.1, 0.1)), rng.choice([300, 450]), "player", "p"))
                 for _ in range(rng.randint(0, 3)):
                     others.append(Cell(nid := nid + 1, cx + rng.uniform(-600, 600), cy + rng.uniform(-600, 600), 38, "ejected", ""))
+            if step % 400 == 0 or not mine:
+                palette = [0x112233, 0x445566, 0x778899, 0xAABBCC]
+                for c in mine:
+                    c.color = 0xC0FFEE
+                for c in others:
+                    if c.kind in ("player", "ejected"):
+                        c.color = rng.choice(palette)
+                        if rng.random() < 0.6:
+                            c.vx, c.vy = rng.uniform(-25, 25), rng.uniform(-25, 25)
+                    elif c.kind == "virus":
+                        c.color = 0x33FF33
+                    else:
+                        c.color = rng.randrange(1 << 24)
             for c in others:     # players and viruses drift; some food gets eaten and respawns
                 if c.kind in ("player", "ejected"):
-                    c.x += rng.uniform(-20, 20)
-                    c.y += rng.uniform(-20, 20)
+                    c.x += c.vx + rng.uniform(-20, 20)
+                    c.y += c.vy + rng.uniform(-20, 20)
             for k in range(len(others)):
                 if others[k].kind == "food" and rng.random() < 0.03:
                     others[k] = Cell(nid := nid + 1, mine[0].x + rng.uniform(-1500, 1500), mine[0].y + rng.uniform(-1500, 1500), 10, "food", "")
-            snap = Snapshot([Cell(c.id, c.x, c.y, c.size, "mine", "") for c in mine],
-                            [Cell(c.id, c.x, c.y, c.size, c.kind, "") for c in others], {}, 0, 0, dict(border), False)
+            snap = Snapshot([Cell(c.id, c.x, c.y, c.size, "mine", "", color=c.color) for c in mine],
+                            [Cell(c.id, c.x, c.y, c.size, c.kind, "", color=c.color) for c in others], {}, 0, 0,
+                            dict(border), False)
             out = pol.act(snap)
             for c in mine:      # move toward the aim point like a cell would
                 dx, dy = out[0] - c.x, out[1] - c.y
@@ -152,8 +166,8 @@ def bench(path: str, repeat: int) -> None:
             if r["t"] == "r":
                 pols[r["a"]].reset()
             elif r["t"] == "s":
-                mine = [Cell(i, x, y, sz, "mine", "") for i, x, y, sz in r["mine"]]
-                others = [Cell(i, x, y, sz, k, "") for i, x, y, sz, k in r["others"]]
+                mine = [Cell(i, x, y, sz, "mine", "", color=(c[0] if c else 0)) for i, x, y, sz, *c in r["mine"]]
+                others = [Cell(i, x, y, sz, k, "", color=(c[0] if c else 0)) for i, x, y, sz, k, *c in r["others"]]
                 b = r["b"]
                 s = Snapshot(mine, others, {}, 0, 0, {"left": b[0], "top": b[1], "right": b[2], "bottom": b[3]}, False)
                 t0 = time.perf_counter()

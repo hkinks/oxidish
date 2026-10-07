@@ -9,6 +9,8 @@ use crate::params::Params;
 use crate::steer::{classify, danger_radius, danger_radius_at, eaters_of, guarded_cells, half_of, split_threats, steer, Mode, Plan, EAT_RATIO};
 
 const VIRUS_POP_RATIO: f64 = 1.33;
+const EJECT_REACH: f64 = 660.0;
+const STAGE_ARC: f64 = 0.6;
 
 pub fn heuristic_plan(s: &Snapshot, p: &Params) -> Plan {
     let me = *s.main().unwrap();
@@ -82,16 +84,18 @@ pub struct Out {
 pub struct Tactics {
     feeding: Option<u32>,
     second_split: Option<(f64, f64)>,
+    stage: Option<(u32, u32)>,
 }
 
 impl Tactics {
     fn new() -> Tactics {
-        Tactics { feeding: None, second_split: None }
+        Tactics { feeding: None, second_split: None, stage: None }
     }
 
     fn reset(&mut self) {
         self.feeding = None;
         self.second_split = None;
+        self.stage = None;
     }
 
     fn act(&mut self, s: &Snapshot, plan: &Plan, p: &Params, counters: &mut Counters) -> Option<Out> {
@@ -161,8 +165,8 @@ impl Tactics {
             }
         }
 
-        if p.shoot_enable > 0.5 && s.mine.len() == 1 && me.mass() >= p.shoot_min_mass {
-            if threats.iter().any(|t| gap(t) < danger_radius(t, &me, p) * 0.7) {
+        if p.shoot_enable > 0.5 && (s.mine.len() as f64) <= p.shoot_max_cells && me.mass() >= p.shoot_min_mass {
+            if threats.iter().any(|t| gap(t) < danger_radius(t, &me, p) * p.shoot_safety) {
                 self.feeding = None;
                 return None;
             }
@@ -198,11 +202,65 @@ impl Tactics {
                 }
                 self.feeding = Some(b.id);
                 counters.bump("ejects", 1);
+                if p.shoot_stage > 0.5 {
+                    let (hx, hy) = unit(me.x, me.y, b.x, b.y);
+                    return Some(Out { x: me.x + hx * me.size * 0.9, y: me.y + hy * me.size * 0.9, split: false, eject: true });
+                }
                 return Some(Out { x: b.x, y: b.y, split: false, eject: true });
             }
             self.feeding = None;
+            if p.shoot_stage > 0.5 {
+                return self.stage_move(&me, viruses, s, p, counters);
+            }
         }
         None
+    }
+
+    /// Walk round a virus to the side away from a big player, so that a shot through it lines up.
+    fn stage_move(&mut self, me: &Cell, viruses: &[Cell], s: &Snapshot, p: &Params, counters: &mut Counters) -> Option<Out> {
+        let mut best: Option<(Cell, Cell)> = None;
+        let mut best_score = 0.0f64;
+        for v in viruses {
+            let walk = me.dist(v);
+            if walk > p.shoot_walk || me.size + v.size + p.shoot_standoff > EJECT_REACH {
+                continue;
+            }
+            for t in s.others.iter().filter(|c| c.kind == Kind::Player) {
+                if t.mass() < v.mass() * VIRUS_POP_RATIO * p.shoot_target_mult {
+                    continue;
+                }
+                let d = v.dist(t);
+                if d > p.shoot_reach || d < t.size {
+                    continue;
+                }
+                let score = t.mass() / (walk + d + 400.0) * if self.stage == Some((v.id, t.id)) { 2.0 } else { 1.0 };
+                if score > best_score {
+                    best = Some((*v, *t));
+                    best_score = score;
+                }
+            }
+        }
+        let (v, t) = match best {
+            Some(b) => b,
+            None => {
+                self.stage = None;
+                return None;
+            }
+        };
+        self.stage = Some((v.id, t.id));
+        let stand = me.size + v.size + p.shoot_standoff;
+        let here = (me.y - v.y).atan2(me.x - v.x);
+        let want = (v.y - t.y).atan2(v.x - t.x);
+        let mut turn = want - here;
+        while turn > std::f64::consts::PI {
+            turn -= std::f64::consts::PI * 2.0;
+        }
+        while turn < -std::f64::consts::PI {
+            turn += std::f64::consts::PI * 2.0;
+        }
+        turn = turn.max(-STAGE_ARC).min(STAGE_ARC);
+        counters.bump("stage_ticks", 1);
+        Some(Out { x: v.x + (here + turn).cos() * stand, y: v.y + (here + turn).sin() * stand, split: false, eject: false })
     }
 }
 
@@ -276,6 +334,42 @@ impl HeuristicPolicy {
         self.tactics.reset();
         if let Some(r) = self.router.as_mut() {
             r.reset();
+        }
+    }
+}
+
+/// Any policy kind a spec can select: the rule bot (default) or the AposBot port ({"kind": "apos"}).
+pub enum Policy {
+    Heuristic(HeuristicPolicy),
+    Apos(crate::apos::AposPolicy),
+}
+
+impl Policy {
+    pub fn from_spec(spec: &serde_json::Value) -> Policy {
+        match spec.get("kind").and_then(|k| k.as_str()) {
+            Some("apos") => Policy::Apos(crate::apos::AposPolicy::from_spec(spec)),
+            _ => Policy::Heuristic(HeuristicPolicy::from_spec(spec)),
+        }
+    }
+
+    pub fn act(&mut self, s: &mut Snapshot) -> Out {
+        match self {
+            Policy::Heuristic(p) => p.act(s),
+            Policy::Apos(p) => p.act(s),
+        }
+    }
+
+    pub fn reset(&mut self) {
+        match self {
+            Policy::Heuristic(p) => p.reset(),
+            Policy::Apos(p) => p.reset(),
+        }
+    }
+
+    pub fn counters(&self) -> &Counters {
+        match self {
+            Policy::Heuristic(p) => &p.counters,
+            Policy::Apos(p) => &p.counters,
         }
     }
 }

@@ -27,6 +27,8 @@ pub fn parse_lineup(specs: &[String]) -> Result<Vec<(String, Value)>, String> {
             (k, serde_json::from_str::<Value>(&text).map_err(|e| format!("{path}: {e}"))?)
         } else if key == "route" || key == "field" {
             (key, json!({ "farm": key }))
+        } else if key == "apos" {
+            (key, json!({ "kind": "apos" }))
         } else {
             return Err(format!("unknown policy {key:?}; known: route, field or name=file.json"));
         };
@@ -67,7 +69,7 @@ pub fn run_match(lineup: &[(String, Value)], o: &MatchOpts, seed: u64) -> Vec<Ag
             break;
         }
     }
-    agents.into_iter().map(|a| a.finish()).collect()
+    agents.into_iter().map(|a| a.finish(&w)).collect()
 }
 
 /// `matches` seeded matches (seed, seed+1, ...) on `threads` worker threads, one thread per match.

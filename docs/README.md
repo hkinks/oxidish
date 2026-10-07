@@ -8,6 +8,7 @@
 | [sim-training.md](sim-training.md) | **current work:** PPO self-play in the simulator, the evolution loop, viewer, evaluation |
 | [code-map.md](code-map.md) | module roles and how the pieces fit |
 | [showcase.md](showcase.md) | the real-server showcase for playing against the bots |
+| [sparring.md](sparring.md) | sparring opponents: AposBot port, hunters (virus play), strength and endless results |
 
 Layout:
 

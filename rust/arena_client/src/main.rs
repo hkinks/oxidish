@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 
 use arena_client::client::{AgentClient, AgentStats};
 use arena_client::game::{Border, Cell, Kind, Snapshot};
-use arena_client::policy::HeuristicPolicy;
+use arena_client::policy::Policy;
 
 /// "route:4 champ=runs/x.json:4" -> [(agent name, policy spec)] (arena.match.parse_lineup, rule bots only).
 fn parse_lineup(specs: &[String]) -> Result<Vec<(String, Value)>, String> {
@@ -34,6 +34,8 @@ fn parse_lineup(specs: &[String]) -> Result<Vec<(String, Value)>, String> {
             (k, serde_json::from_str::<Value>(&text).map_err(|e| format!("{path}: {e}"))?)
         } else if key == "route" || key == "field" {
             (key, json!({ "farm": key }))
+        } else if key == "apos" {
+            (key, json!({ "kind": "apos" }))
         } else {
             return Err(format!("unknown policy {key:?}; known: route, field or name=file.json"));
         };
@@ -124,7 +126,7 @@ fn run(args: &[String]) -> Result<(), String> {
         let handles: Vec<_> = lineup
             .iter()
             .map(|(name, spec)| {
-                let c = AgentClient::new(name, HeuristicPolicy::from_spec(spec), o.ticks, o.sync);
+                let c = AgentClient::new(name, Policy::from_spec(spec), o.ticks, o.sync);
                 let url = url.clone();
                 tokio::spawn(async move { c.run(&url).await.map_err(|e| e.to_string()) })
             })
@@ -159,13 +161,21 @@ fn parse_snapshot(v: &Value) -> Snapshot {
         .as_array()
         .unwrap()
         .iter()
-        .map(|c| Cell::new(c[0].as_u64().unwrap() as u32, num(&c[1]), num(&c[2]), num(&c[3]), Kind::Mine))
+        .map(|c| {
+            let mut cell = Cell::new(c[0].as_u64().unwrap() as u32, num(&c[1]), num(&c[2]), num(&c[3]), Kind::Mine);
+            cell.color = c.get(4).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            cell
+        })
         .collect();
     let others = v["others"]
         .as_array()
         .unwrap()
         .iter()
-        .map(|c| Cell::new(c[0].as_u64().unwrap() as u32, num(&c[1]), num(&c[2]), num(&c[3]), Kind::parse(c[4].as_str().unwrap())))
+        .map(|c| {
+            let mut cell = Cell::new(c[0].as_u64().unwrap() as u32, num(&c[1]), num(&c[2]), num(&c[3]), Kind::parse(c[4].as_str().unwrap()));
+            cell.color = c.get(5).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            cell
+        })
         .collect();
     let b = &v["b"];
     Snapshot { mine, others, border: Border { left: num(&b[0]), top: num(&b[1]), right: num(&b[2]), bottom: num(&b[3]) }, dead: false }
@@ -198,13 +208,13 @@ fn load_dump(path: &str) -> Result<Vec<Event>, String> {
 
 fn parity(path: &str) -> Result<(), String> {
     let events = load_dump(path)?;
-    let mut pol: HashMap<usize, HeuristicPolicy> = HashMap::new();
+    let mut pol: HashMap<usize, Policy> = HashMap::new();
     let (mut steps, mut bad_aim, mut bad_flag, mut max_d) = (0u64, 0u64, 0u64, 0.0f64);
     let mut first_bad: Vec<String> = Vec::new();
     for e in events {
         match e {
             Event::Agent(a, spec) => {
-                pol.insert(a, HeuristicPolicy::from_spec(&spec));
+                pol.insert(a, Policy::from_spec(&spec));
             }
             Event::Reset(a) => pol.get_mut(&a).unwrap().reset(),
             Event::Step(a, mut s, aim, flags) => {
@@ -231,7 +241,7 @@ fn parity(path: &str) -> Result<(), String> {
     let mut ids: Vec<_> = pol.keys().copied().collect();
     ids.sort();
     for a in ids {
-        println!("  agent {a} counters: {:?}", pol[&a].counters.0);
+        println!("  agent {a} counters: {:?}", pol[&a].counters().0);
     }
     for l in first_bad {
         println!("  {l}");
@@ -244,11 +254,11 @@ fn bench(path: &str, repeat: usize) -> Result<(), String> {
     let mut total = 0.0f64;
     let mut n = 0u64;
     for _ in 0..repeat {
-        let mut pol: HashMap<usize, HeuristicPolicy> = HashMap::new();
+        let mut pol: HashMap<usize, Policy> = HashMap::new();
         for e in &events {
             match e {
                 Event::Agent(a, spec) => {
-                    pol.insert(*a, HeuristicPolicy::from_spec(spec));
+                    pol.insert(*a, Policy::from_spec(spec));
                 }
                 Event::Reset(a) => pol.get_mut(a).unwrap().reset(),
                 Event::Step(a, s, _, _) => {

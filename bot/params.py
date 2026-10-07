@@ -93,6 +93,14 @@ class Params:
     # range, split when the mass our half can eat around the landing spot > split_ev x the mass at risk (a half that
     # some cell could eat there, or the half we keep). The fixed rules shied away from split enemies' pieces.
     split_ev: float = 0.0
+    # virus staging (bot/tactics.py): >0.5: with the shoot skill on and no shot lined up, walk round a virus
+    # (within shoot_walk) to its far side from a big player (the way AposBot stages a feed), shoot_standoff
+    # from its edge, so the next tick's shot goes through the virus at them. Off by default; not evolved.
+    shoot_stage: float = 0.0
+    shoot_walk: float = 1200.0
+    shoot_standoff: float = 90.0
+    shoot_safety: float = 0.7        # the shot is called off while a threat is within this x its danger radius
+    shoot_max_cells: float = 1.0     # shoot only while we have at most this many cells
 
     def cautious(self) -> "Params":
         """These genes with the big-cell caution applied (caution ramp)."""

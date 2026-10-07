@@ -88,11 +88,12 @@ fn run_match_cmd(a: &Args) -> Result<(), String> {
             names.push(p);
         }
     }
-    println!("\n{:<14}{:>10}{:>10}{:>9}{:>9}{:>9}", "policy", "log_mass", "avg_mass", "peak", "deaths", "kills");
+    println!("\n{:<14}{:>10}{:>10}{:>9}{:>9}{:>9}{:>8}{:>8}", "policy", "log_mass", "avg_mass", "peak", "deaths", "kills", "vshots", "vpops");
     for n in &names {
         let g: Vec<&Value> = rows.iter().filter(|r| r["policy"] == *n).collect();
         let m = |k: &str| g.iter().map(|r| r[k].as_f64().unwrap()).sum::<f64>() / g.len() as f64;
-        println!("{:<14}{:>10.3}{:>10.1}{:>9.0}{:>9.2}{:>9.2}", n, m("log_mass"), m("avg_mass"), m("peak_mass"), m("deaths"), m("kills"));
+        println!("{:<14}{:>10.3}{:>10.1}{:>9.0}{:>9.2}{:>9.2}{:>8.2}{:>8.2}", n, m("log_mass"), m("avg_mass"), m("peak_mass"), m("deaths"), m("kills"),
+                 m("virus_shots"), m("virus_pops"));
     }
     let game_min = matches as f64 * o.ticks as f64 * 0.04 / 60.0;
     println!("\n{matches} matches ({game_min:.0} game-min) in {wall:.1}s wall on {threads} thread(s) = {:.0}x realtime aggregate, {:.2} matches/min/thread",

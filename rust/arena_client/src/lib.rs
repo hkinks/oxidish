@@ -1,5 +1,6 @@
 //! Rule-bot policy code + lockstep client, shared by the `arena_client` binary and the `ogar` engine.
 
+pub mod apos;
 pub mod client;
 pub mod farm;
 pub mod game;

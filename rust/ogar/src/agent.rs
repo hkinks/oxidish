@@ -4,7 +4,7 @@
 
 use arena_client::client::AgentStats;
 use arena_client::game::{Border, Cell, Kind, Snapshot};
-use arena_client::policy::HeuristicPolicy;
+use arena_client::policy::Policy;
 use serde_json::{json, Value};
 
 use crate::world::{PKind, World, T_EJECT, T_FOOD, T_VIRUS};
@@ -12,11 +12,15 @@ use crate::world::{PKind, World, T_EJECT, T_FOOD, T_VIRUS};
 pub struct AgentDriver {
     pub pi: usize,
     pub name: String,
-    pub policy: HeuristicPolicy,
+    pub policy: Policy,
     pub stats: AgentStats,
     pub sync: u64,
     alive: bool,
     n_cells: Option<usize>,
+}
+
+fn color_of(c: [u8; 3]) -> u32 {
+    ((c[0] as u32) << 16) | ((c[1] as u32) << 8) | c[2] as u32
 }
 
 pub fn snapshot(w: &World, pi: usize) -> Snapshot {
@@ -26,7 +30,9 @@ pub fn snapshot(w: &World, pi: usize) -> Snapshot {
         .iter()
         .map(|&h| {
             let e = &w.ents[h as usize];
-            Cell::new(e.id, (e.x as i32) as f64, (e.y as i32) as f64, (e.size as u32) as f64, Kind::Mine)
+            let mut c = Cell::new(e.id, (e.x as i32) as f64, (e.y as i32) as f64, (e.size as u32) as f64, Kind::Mine);
+            c.color = color_of(e.color);
+            c
         })
         .collect();
     let mut others = Vec::with_capacity(p.view_nodes.len());
@@ -41,7 +47,9 @@ pub fn snapshot(w: &World, pi: usize) -> Snapshot {
             T_EJECT => Kind::Ejected,
             _ => Kind::Player,
         };
-        others.push(Cell::new(e.id, (e.x as i32) as f64, (e.y as i32) as f64, (e.size as u32) as f64, kind));
+        let mut c = Cell::new(e.id, (e.x as i32) as f64, (e.y as i32) as f64, (e.size as u32) as f64, kind);
+        c.color = color_of(e.color);
+        others.push(c);
     }
     let b = w.border;
     let dead = mine.is_empty();
@@ -56,7 +64,7 @@ impl AgentDriver {
         AgentDriver {
             pi,
             name: name.to_string(),
-            policy: HeuristicPolicy::from_spec(spec),
+            policy: Policy::from_spec(spec),
             stats: AgentStats { name: name.to_string(), ..Default::default() },
             sync,
             alive: false,
@@ -122,8 +130,12 @@ impl AgentDriver {
         self.stats.ticks += self.sync;
     }
 
-    pub fn finish(mut self) -> AgentStats {
-        self.stats.counters = self.policy.counters.clone();
+    pub fn finish(mut self, w: &World) -> AgentStats {
+        let p = &w.players[self.pi];
+        self.stats.virus_shots = p.shots as u64;
+        self.stats.virus_pops = p.pops as u64;
+        self.stats.virus_pop_mass = p.pop_mass as f64;
+        self.stats.counters = self.policy.counters().clone();
         self.stats
     }
 }
