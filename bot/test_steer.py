@@ -204,6 +204,37 @@ def test_no_ev_split_into_a_threat():
     assert not split, "split next to a cell that eats our half"
 
 
+def test_escape_split_when_cornered():
+    """Pinned in a corner, a 1.6x chaser closing from the open side: every heading is caught within the look-ahead,
+    so split away along the best escape heading (the user: 'wall deaths can be avoided by splitting')."""
+    from .modes import heuristic_plan
+    p = Params.from_dict({"border_margin": 30.0, "escape_split": 1.0, "flee_margin": 1.0})
+    me = cell(1, 3500 - 260, -3500 + 260, 2500, "mine")
+    chaser = cell(2, me.x - 500, me.y + 300, 4000)
+    s = Snapshot([me], [chaser], {}, 0, 0, BORDER, False)
+    plan = heuristic_plan(s, p)
+    assert plan.mode == "flee", plan
+    x, y, split = steer(s, plan, None, p)
+    assert split, "no escape split although every heading is caught"
+    # the lunging half lands out of the chaser's reach (it eats a cell whose centre is within its size - ours/3)
+    half = math.sqrt(2500 / 2 * 100)
+    d = math.hypot(x - me.x, y - me.y)
+    lx = min(max(me.x + (x - me.x) / d * 0.8 * 650, -3500 + half / 2), 3500 - half / 2)
+    ly = min(max(me.y + (y - me.y) / d * 0.8 * 650, -3500 + half / 2), 3500 - half / 2)
+    assert math.hypot(lx - chaser.x, ly - chaser.y) > chaser.size - half / 3, (x - me.x, y - me.y)
+
+
+def test_no_escape_split_when_escape_is_possible():
+    """Open field, chaser far behind: running works, no split."""
+    from .modes import heuristic_plan
+    p = Params.from_dict({"border_margin": 30.0, "escape_split": 1.0, "flee_margin": 1.0})
+    me = cell(1, 0, 0, 2500, "mine")
+    chaser = cell(2, -1300, 0, 4000)
+    s = Snapshot([me], [chaser], {}, 0, 0, BORDER, False)
+    _, _, split = steer(s, heuristic_plan(s, p), None, p)
+    assert not split
+
+
 def main() -> int:
     tests = [v for k, v in globals().items() if k.startswith("test_")]
     failed = 0

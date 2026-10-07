@@ -74,6 +74,7 @@ params! {
     wall_wary_ratio = 0.8,
     piece_detour = 0.0,
     split_ev = 0.0,
+    escape_split = 0.0,
     giant_mass = 0.0,
     giant_hunt_range = 900.0,
     giant_min_prey_frac = 0.1,

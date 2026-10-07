@@ -104,6 +104,11 @@ def eaters_of(s: Snapshot, q: Cell) -> list[Cell]:
 
 def flee_heading(s: Snapshot, me: Cell, threats: list[Cell], poppers: list[Cell], p: Params,
                  pref: tuple[float, float]) -> tuple[float, float]:
+    return flee_heading_scored(s, me, threats, poppers, p, pref)[0]
+
+
+def flee_heading_scored(s: Snapshot, me: Cell, threats: list[Cell], poppers: list[Cell], p: Params,
+                        pref: tuple[float, float]) -> tuple[tuple[float, float], float]:
     """Heading that keeps us out of every threat's reach longest over the next ~1.5 s.
 
     Our path is clamped where the server holds a cell (centre >= size/2 from a wall); each threat
@@ -138,7 +143,7 @@ def flee_heading(s: Snapshot, me: Cell, threats: list[Cell], poppers: list[Cell]
         score += 1e-3 * (ux * pref[0] + uy * pref[1])
         if score > best_score:
             best, best_score = (ux, uy), score
-    return best
+    return best, best_score
 
 
 EV_LAND = 150.0        # split_ev: enemy cells this far beyond our half's edge at the landing spot count as gain
@@ -160,6 +165,27 @@ def split_value(s: Snapshot, me: Cell, target: Cell, p: Params) -> tuple[float, 
                for c in enemies):
             risk += half.mass
     return gain, risk
+
+
+def escape_split_heading(s: Snapshot, me: Cell, threats: list[Cell], p: Params) -> tuple[float, float]:
+    """Escape split direction: where the lunging half lands (~0.8 x split_range, held off the walls like the server
+    does) farthest beyond every threat's reach of that half (threats eat a half more easily than the whole)."""
+    half = half_of(me)
+    b = s.border
+    lo_x, hi_x = b["left"] + half.size / 2, b["right"] - half.size / 2
+    lo_y, hi_y = b["top"] + half.size / 2, b["bottom"] - half.size / 2
+    lunge = 0.8 * p.split_range
+    best, best_score = (1.0, 0.0), -math.inf
+    for k in range(FLEE_HEADINGS):
+        a = 2 * math.pi * k / FLEE_HEADINGS
+        ux, uy = math.cos(a), math.sin(a)
+        x = min(max(me.x + ux * lunge, lo_x), hi_x)
+        y = min(max(me.y + uy * lunge, lo_y), hi_y)
+        score = min((math.hypot(x - t.x, y - t.y) - (t.size - half.size / 3)
+                     - (p.split_range if t.mass > half.mass * SPLIT_KILL_RATIO else 0.0)) for t in threats)
+        if score > best_score:
+            best, best_score = (ux, uy), score
+    return best
 
 
 def steer(s: Snapshot, plan: Plan, router: FoodRouter | None = None,
@@ -332,5 +358,14 @@ def steer(s: Snapshot, plan: Plan, router: FoodRouter | None = None,
                 and not any(me.dist(t) < danger_radius(t, side, p) + p.split_range
                             for t in split_threats(s, me, p))):
             aim = (target.x, target.y)
+            split = True
+    # Escape split: when every heading gets caught within the flee look-ahead (pinned at a wall, cornered), split
+    # away along the best one - half the mass lunges out of reach instead of all of it being eaten.
+    if (not split and p.escape_split > 0.5 and plan.mode == "flee" and threats and me.mass >= 2 * 35.0
+            and len(s.mine) < 16):
+        _, margin = flee_heading_scored(s, me, threats, poppers, p, (ux, uy))
+        if margin < 0:
+            ex, ey = escape_split_heading(s, me, threats, p)
+            aim = (me.x + ex * AIM_DISTANCE, me.y + ey * AIM_DISTANCE)
             split = True
     return aim[0], aim[1], split

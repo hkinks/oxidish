@@ -93,6 +93,9 @@ class Params:
     # range, split when the mass our half can eat around the landing spot > split_ev x the mass at risk (a half that
     # some cell could eat there, or the half we keep). The fixed rules shied away from split enemies' pieces.
     split_ev: float = 0.0
+    # >0.5: in flee mode, when every heading is caught within the flee look-ahead (flee_heading), split away along
+    # the best one (an escape split: half the mass gets out instead of all of it being eaten; the user's suggestion)
+    escape_split: float = 0.0
     # giant stage: above giant_mass total mass (0 = off) the bot plays these giant_* genes (on top of the caution
     # ramp), so late-game play (an endless world's giants) can be tuned without touching the early game
     giant_mass: float = 0.0
@@ -153,7 +156,7 @@ BOUNDS = {
     "half_split_safety": (0, 1), "piece_threats": (0, 1),
     "caution_mass": (0, 3000), "flee_margin_big": (0.2, 2.5), "split_safety_big": (0.5, 4),
     "flee_plan": (0, 1), "flee_pieces": (0, 1), "contender": (0, 1), "contender_gap": (0, 800),
-    "aim_all_cells": (0, 1), "wall_danger": (0, 800), "wall_wary": (0, 800), "wall_wary_ratio": (0.3, 1.3), "piece_detour": (0, 1), "split_ev": (0, 4),
+    "aim_all_cells": (0, 1), "wall_danger": (0, 800), "wall_wary": (0, 800), "wall_wary_ratio": (0.3, 1.3), "piece_detour": (0, 1), "split_ev": (0, 4), "escape_split": (0, 1),
     "giant_mass": (0, 12000), "giant_hunt_range": (200, 3000), "giant_min_prey_frac": (0, 0.6),
     "giant_split_safety": (0.5, 4), "giant_split_reach": (0.3, 1.2), "giant_farm_threat": (0.2, 6),
     "giant_flee_margin": (0.2, 2.5), "giant_danger_margin": (0, 900), "giant_target_bonus": (1, 20),

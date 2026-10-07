@@ -197,6 +197,12 @@ struct Guard {
 /// Heading that keeps us out of every threat's reach longest over the next ~1.5 s.
 pub fn flee_heading(s: &Snapshot, me: &Cell, threats: &[Cell], poppers: &[Cell], p: &Params,
                     pref: (f64, f64)) -> (f64, f64) {
+    flee_heading_scored(s, me, threats, poppers, p, pref).0
+}
+
+/// flee_heading plus its best margin (Python: flee_heading_scored).
+pub fn flee_heading_scored(s: &Snapshot, me: &Cell, threats: &[Cell], poppers: &[Cell], p: &Params,
+                           pref: (f64, f64)) -> ((f64, f64), f64) {
     let b = &s.border;
     let mut guards: Vec<Guard> = Vec::new();
     for q in guarded_cells(s, p) {
@@ -244,7 +250,7 @@ pub fn flee_heading(s: &Snapshot, me: &Cell, threats: &[Cell], poppers: &[Cell],
             best_score = score;
         }
     }
-    best
+    (best, best_score)
 }
 
 /// World aim point and whether to split this tick.
@@ -484,5 +490,47 @@ pub fn steer(s: &Snapshot, plan: &Plan, mut router: Option<&mut FoodRouter>, p: 
             }
         }
     }
+    // Escape split (Python: steer): every heading caught within the flee look-ahead -> split away along the
+    // heading where the lunging half lands farthest beyond the threats' reach.
+    if !split && p.escape_split > 0.5 && plan.mode == Mode::Flee && !threats.is_empty() && me.mass() >= 2.0 * 35.0
+        && s.mine.len() < 16
+    {
+        let (_, margin) = flee_heading_scored(s, &me, &threats, &poppers, p, (ux, uy));
+        if margin < 0.0 {
+            let (ex, ey) = escape_split_heading(s, &me, &threats, p);
+            aim = (me.x + ex * AIM_DISTANCE, me.y + ey * AIM_DISTANCE);
+            split = true;
+        }
+    }
     (aim.0, aim.1, split)
+}
+
+/// Python: escape_split_heading.
+pub fn escape_split_heading(s: &Snapshot, me: &Cell, threats: &[Cell], p: &Params) -> (f64, f64) {
+    let half = half_of(me);
+    let b = &s.border;
+    let (lo_x, hi_x) = (b.left + half.size / 2.0, b.right - half.size / 2.0);
+    let (lo_y, hi_y) = (b.top + half.size / 2.0, b.bottom - half.size / 2.0);
+    let lunge = 0.8 * p.split_range;
+    let mut best = (1.0, 0.0);
+    let mut best_score = f64::NEG_INFINITY;
+    for k in 0..FLEE_HEADINGS {
+        let a = 2.0 * std::f64::consts::PI * k as f64 / FLEE_HEADINGS as f64;
+        let (ux, uy) = (a.cos(), a.sin());
+        let x = (me.x + ux * lunge).max(lo_x).min(hi_x);
+        let y = (me.y + uy * lunge).max(lo_y).min(hi_y);
+        let mut score = f64::INFINITY;
+        for t in threats {
+            let v = (x - t.x).hypot(y - t.y) - (t.size - half.size / 3.0)
+                - if t.mass() > half.mass() * SPLIT_KILL_RATIO { p.split_range } else { 0.0 };
+            if v < score {
+                score = v;
+            }
+        }
+        if score > best_score {
+            best = (ux, uy);
+            best_score = score;
+        }
+    }
+    best
 }
