@@ -38,10 +38,16 @@ reuse the client's camera maths (`rust/game_client`: centre, zoom = server's `sc
   - a **96×96 local view** of the server's camera rectangle;
   - a **48×48 wide view** at 2× that extent.
   - **Why two:** at big mass, pellets are under one pixel in a single view, and threats arrive from off-screen.
-- **Colour vs semantics.** Draw **RGB as the client does**: cell colour, our cells outlined, viruses green and
-  spiky, pellets small and coloured. Add **one size channel** (cell radius encoded as intensity), because size
-  ratios decide everything and RGB at 96 px blurs them. This is still "visual": it is the cell's on-screen size.
-  As an ablation, a pure-RGB variant tests whether the size channel matters.
+- **Plain vision, grayscale.** Draw one grayscale channel per view. Sizes come only from how big a circle looks on
+  screen; there is no hand-made feature channel such as size, mass or a threat flag, which would be cheating
+  (user, 2026-10-07).
+  - **Cells:** filled discs with an outline.
+  - **Viruses:** a spiky outline, recognisable by shape.
+  - **Pellets and ejected mass:** small dots.
+  - **Outside the map border:** dark.
+  - **Our own cells:** their own brightness. This stands in for a human seeing their own name.
+  - **Other players:** one gray shade per player, which keeps the client's colour cue for which pieces belong to
+    the same player.
 - **Motion.** Stack **2 frames** (now and 4 ticks ago). Velocities matter, and a stack is simpler than a recurrent
   network (GRU).
 - **Action.** A **spatial action map**: the net outputs a heat map over the local view, and the argmax pixel is
@@ -79,8 +85,7 @@ death penalty. The value head sees the leaderboard rank as a scalar.
 
 ## Open questions
 
-1. Is a size channel acceptable as "visual", or must frames be **pure RGB** like the screen? (The plan runs both
-   as an ablation in M2.)
+1. (Settled: plain grayscale vision, no feature channels.)
 2. Teacher: the **planner** (best, ~0.3 ms) or c3_4 (simpler, faster labels)? The plan uses the planner, with c3_4
    as fallback.
 3. Should it later run against human-style clients (screen capture)? Not planned now; the renderer could be made
