@@ -228,3 +228,27 @@ ramp_r2 is now dueling champ, nnbest, g4net and safe.
 | safe | 43% | 27-61% |
 
 Neither new bot beats all four existing bots: safe fails against r2g9, ramp_r2 against nnbest. Next: r2g9's genes, cautious from 300 mass (`runs/r2g9_ramp300.json`).
+
+
+### c3_4: the first bot that consistently beats all the others (2026-10-07)
+
+`bot/c3_4.json` = ramp300 (r2g9's genes + caution ramp) + the wall genes (`wall_danger` ~370, `wall_wary` ~430: react earlier when pinned on a wall; keep off walls while a bigger player is near) + a CMA-ES search from there on the Rust engine (`arena.long_search --engine ogar`), which moved caution to ~790 mass, a smaller danger margin and more threat avoidance while farming.
+
+How it got there:
+- Loss mining (`arena.losses`): 82% of the rule bots' lost mass was lost at walls -> wall genes (ww400 beat 6 of 7 bots on Node, not ramp_r2).
+- Fast evaluation: the Rust bot client (`--rust`) and the Rust MultiOgar port (`--engine ogar`, ~500 long matches/h/core) made gene search and A/Bs affordable; the Rust engine overrates candidates vs ramp_r2, so finalists are judged on Node.
+- Bug fixes found on the way: corner shaking while hunting, split pieces jamming (mouse 600 ahead of the main cell), wall-clock exploration memory, and split pieces popping on viruses (`piece_detour`, no gain on Node).
+
+**Verdict** (`arena.verdict`, real MultiOgar server, 15 game-min, 2x food, 8 server bots, the whole field incl. the nets in every match, 348 fresh seeds; runs/verdict_c3_4.json + runs/verdict_c3_4_b.json):
+
+| c3_4 vs | win rate | 95% Wilson |
+|---|---|---|
+| g4net | 67.5% | 62-72% |
+| nnbest | 66.1% | 61-71% |
+| champ | 63.8% | 59-69% |
+| r2g9 | 62.4% | 57-67% |
+| ramp300 | 56.9% | 52-62% |
+| safe | 56.6% | 51-62% |
+| ramp_r2 | 55.7% | 50.5-61% |
+
+Every lower bound is above 50%. Caveats: the margins over the r2g9 family (ramp300, ramp_r2) and safe are small (~56%); the matches were inspected as they accumulated (repeated looks make a borderline bound slightly optimistic), and the sequential test with H1 = 60% has not decided those three.
