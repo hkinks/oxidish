@@ -7,6 +7,7 @@ pub mod config;
 pub mod matches;
 pub mod protocol;
 pub mod record;
+pub mod render;
 pub mod rng;
 pub mod server;
 pub mod world;

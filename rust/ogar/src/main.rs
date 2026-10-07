@@ -128,12 +128,52 @@ fn run_serve_cmd(a: &Args) -> Result<(), String> {
     ogar::server::serve(o)
 }
 
+/// `ogar render --agents ... --ticks T --seed S --out DIR [--px 256]`: play T ticks, then write what each agent's
+/// vision would be (its camera view at px, and a 2x wider view at px/2) as grayscale PNGs.
+fn run_render_cmd(a: &Args) -> Result<(), String> {
+    use ogar::agent::{snapshot, AgentDriver};
+    use ogar::render::{png_gray, render};
+    let lineup = parse_lineup(&a.agents)?;
+    let ticks: u64 = a.num("ticks", 3000u64)?;
+    let px: usize = a.num("px", 256usize)?;
+    let out = a.kv.get("out").cloned().unwrap_or_else(|| "logs/vision".into());
+    std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
+    let cfg = ogar::config::Config::new(a.num("map", 7000.0f64)?, a.num("bots", 8usize)?, a.num("food-mult", 1.0f64)?);
+    let mut w = ogar::world::World::new(cfg, a.num("seed", 1u64)?);
+    let mut agents: Vec<AgentDriver> = lineup.iter().map(|(n, s)| AgentDriver::new(&mut w, n, s, 2)).collect();
+    for _ in 0..ticks {
+        w.tick();
+        if w.tick % 2 == 0 {
+            for ag in agents.iter_mut() {
+                ag.step(&mut w);
+            }
+            w.kill_log.clear();
+        }
+    }
+    for ag in &agents {
+        let s = snapshot(&w, ag.pi);
+        if s.mine.is_empty() {
+            continue;
+        }
+        let (vx0, vy0, vx1, vy1) = w.view_box(ag.pi);
+        let (cx, cy, half) = ((vx0 + vx1) / 2.0, (vy0 + vy1) / 2.0, (vx1 - vx0) / 2.0);
+        let mass: f64 = s.mine.iter().map(|c| c.mass()).sum();
+        for (tag, h, p) in [("view", half, px), ("wide", half * 2.0, px / 2)] {
+            let path = format!("{out}/{}_{tag}_{p}.png", ag.name);
+            std::fs::write(&path, png_gray(p, p, &render(&s, cx, cy, h, p))).map_err(|e| e.to_string())?;
+        }
+        println!("{} mass {:.0} cells {} view width {:.0}", ag.name, mass, s.mine.len(), 2.0 * half);
+    }
+    Ok(())
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
         Some("match") => parse_args(&args[1..]).and_then(|a| run_match_cmd(&a)),
         Some("serve") => parse_args(&args[1..]).and_then(|a| run_serve_cmd(&a)),
-        _ => Err("usage: ogar match|serve ...".into()),
+        Some("render") => parse_args(&args[1..]).and_then(|a| run_render_cmd(&a)),
+        _ => Err("usage: ogar match|serve|render ...".into()),
     };
     if let Err(e) = result {
         eprintln!("error: {e}");
