@@ -69,3 +69,12 @@ Leader share (endless, 8 worlds x 240 min, field of the task) per seed base:
 | plan v2 (`plan2_c34`, [3,0,1]) | 42 | 42 | 49 | 32 | 40 | 41.0 |
 Within noise. Tried on seeds 3000 / 11000 only: scenarios [3,1] 36 / 38, [1,0,2,1] 25 / 39, [0,1,2,3] 36 / 39,
 v1 with horizon 75 35 / 26 (longer horizons hurt: the model is not good enough), v1 with need_loss 0.05 44 / 39.
+
+## Growth-seeking openings (`"opp": 1`) - 2026-10-07 experiment, result: clearly worse
+When no loss is predicted but a valuable edible rival (mass >= `opp_min_frac` x ours, gap < `opp_range`) is near, the
+planner also prices interception openings (aim at the rival's position `opp_lead` ticks ahead) plus the usual headings /
+splits over a short horizon (`opp_horizon` 30 ticks, scenarios `opp_scenarios` [1, 0]) and overrides the base action if
+the best beats it by `opp_margin` x mass. Off by default; specs `bot/plan3_c34.json` (margin 0.08), `bot/plan3b_c34.json` (0.2).
+Leader share, seed bases 3000 / 11000 / 21000 / 31000 / 41000: plan3 22 / 32 / 24 / 23 / 19 (mean 24) vs v1 46 / 35 / 38 /
+38 / 44 (mean 40.2); plan3b 35 on 3000 (stopped). Wall time +60 %. The sim over-rates chases (winner's curse again) and
+every override breaks the base bot's farming routes.
