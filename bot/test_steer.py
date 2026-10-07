@@ -178,6 +178,32 @@ def test_piece_steers_around_virus():
     assert t <= 0 or off > virus.size + piece.size, f"piece passes {off:.0f} from the virus centre (needs > {virus.size + piece.size:.0f})"
 
 
+def test_split_onto_split_enemy_pieces():
+    """An enemy split into pieces near us, none of which can eat us or our half: split onto them (the fixed
+    split_reach of ~300 refused; the user saw bots shy away from 'bigger, split enemies they could gobble up')."""
+    from .modes import heuristic_plan
+    p = Params.from_dict({"border_margin": 30.0, "split_ev": 1.0, "split_reach": 0.36, "split_range": 842.0})
+    me = cell(1, 0, 0, 3000, "mine")
+    pieces = [Cell(10 + i, 980 + 60 * i, 40 * i, math.sqrt(500 * 100), "player", "enemy") for i in range(3)]
+    s = Snapshot([me], pieces, {}, 0, 0, BORDER, False)
+    plan = heuristic_plan(s, p)
+    assert plan.mode == "hunt" and plan.split_ok, plan
+    _, _, split = steer(s, plan, None, p)
+    assert split, "no split onto three edible pieces within split range"
+
+
+def test_no_ev_split_into_a_threat():
+    """Same pieces, but a big enemy cell next to the landing spot could eat our half: no split."""
+    from .modes import heuristic_plan
+    p = Params.from_dict({"border_margin": 30.0, "split_ev": 1.0, "split_range": 842.0})
+    me = cell(1, 0, 0, 3000, "mine")
+    pieces = [Cell(10 + i, 980 + 60 * i, 40 * i, math.sqrt(500 * 100), "player", "enemy") for i in range(3)]
+    big = Cell(20, 1350, 0, math.sqrt(2500 * 100), "player", "enemy")
+    s = Snapshot([me], pieces + [big], {}, 0, 0, BORDER, False)
+    _, _, split = steer(s, heuristic_plan(s, p), None, p)
+    assert not split, "split next to a cell that eats our half"
+
+
 def main() -> int:
     tests = [v for k, v in globals().items() if k.startswith("test_")]
     failed = 0

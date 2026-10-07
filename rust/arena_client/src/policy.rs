@@ -42,6 +42,10 @@ pub fn heuristic_plan(s: &Snapshot, p: &Params) -> Plan {
     if let Some((t, _)) = target {
         let side = if p.half_split_safety > 0.5 { half_of(&me) } else { me };
         let safe = !split_threats(s, &me, p).iter().any(|t| gap(t) < danger_radius(t, &side, p) * p.split_safety);
+        if p.split_ev > 0.0 {
+            // split by expected value: steer() weighs gain against risk
+            return Plan { mode: Mode::Hunt, target_id: Some(t.id), split_ok: me.mass() / 2.0 > t.mass() * EAT_RATIO };
+        }
         return Plan { mode: Mode::Hunt, target_id: Some(t.id), split_ok: safe && me.mass() / 2.0 > t.mass() * EAT_RATIO };
     }
     Plan::new(Mode::Farm)

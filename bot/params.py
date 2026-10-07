@@ -89,6 +89,10 @@ class Params:
     # >0.5: the virus detour also covers our split pieces heavier than a virus (only the main cell's path was
     # checked: 42 of 53 own virus pops happened while split, mostly by trailing pieces; 2026-10-07)
     piece_detour: float = 0.0
+    # >0: split by expected value instead of the fixed split_reach / split_safety checklist: within the full split
+    # range, split when the mass our half can eat around the landing spot > split_ev x the mass at risk (a half that
+    # some cell could eat there, or the half we keep). The fixed rules shied away from split enemies' pieces.
+    split_ev: float = 0.0
 
     def cautious(self) -> "Params":
         """These genes with the big-cell caution applied (caution ramp)."""
@@ -123,7 +127,7 @@ BOUNDS = {
     "half_split_safety": (0, 1), "piece_threats": (0, 1),
     "caution_mass": (0, 3000), "flee_margin_big": (0.2, 2.5), "split_safety_big": (0.5, 4),
     "flee_plan": (0, 1), "flee_pieces": (0, 1), "contender": (0, 1), "contender_gap": (0, 800),
-    "aim_all_cells": (0, 1), "wall_danger": (0, 800), "wall_wary": (0, 800), "wall_wary_ratio": (0.3, 1.3), "piece_detour": (0, 1),
+    "aim_all_cells": (0, 1), "wall_danger": (0, 800), "wall_wary": (0, 800), "wall_wary_ratio": (0.3, 1.3), "piece_detour": (0, 1), "split_ev": (0, 4),
 }
 
 DEFAULT = Params()

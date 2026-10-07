@@ -141,6 +141,27 @@ def flee_heading(s: Snapshot, me: Cell, threats: list[Cell], poppers: list[Cell]
     return best
 
 
+EV_LAND = 150.0        # split_ev: enemy cells this far beyond our half's edge at the landing spot count as gain
+EV_MOVE = 300.0        # ... a cell that can eat our half reaches it if within this (or its own split lunge)
+
+
+def split_value(s: Snapshot, me: Cell, target: Cell, p: Params) -> tuple[float, float]:
+    """(gain, risk) of splitting onto `target`: the mass our half can eat around the landing spot, and the mass
+    at risk (each half, landing or staying, that some enemy cell could eat right after the split)."""
+    half = half_of(me)
+    mine = {c.id for c in s.mine}
+    enemies = [c for c in s.others if c.kind == "player" and c.id not in mine]
+    gain = sum(c.mass for c in enemies
+               if half.mass > c.mass * EAT_RATIO and c.dist(target) < half.size + c.size + EV_LAND)
+    risk = 0.0
+    for at in (target, me):       # the half that lands, the half that stays
+        if any(c.mass > half.mass * EAT_RATIO
+               and c.dist(at) - c.size - half.size < (p.split_range if c.mass > half.mass * SPLIT_KILL_RATIO else EV_MOVE)
+               for c in enemies):
+            risk += half.mass
+    return gain, risk
+
+
 def steer(s: Snapshot, plan: Plan, router: FoodRouter | None = None,
           p: Params = DEFAULT) -> tuple[float, float, bool]:
     """Return world aim point and whether to split this tick.
@@ -300,7 +321,13 @@ def steer(s: Snapshot, plan: Plan, router: FoodRouter | None = None,
         target = next((c for c in prey if c.id == plan.target_id), None)
         target = ahead(target) if target else None
         side = half_of(me) if p.half_split_safety > 0.5 else me
-        if (target and me.mass / 2 > target.mass * EAT_RATIO
+        if p.split_ev > 0:
+            if target and me.mass / 2 > target.mass * EAT_RATIO and me.dist(target) - me.size < p.split_range:
+                gain, risk = split_value(s, me, target, p)
+                if gain >= 0.05 * me.mass and gain > p.split_ev * risk:
+                    aim = (target.x, target.y)
+                    split = True
+        elif (target and me.mass / 2 > target.mass * EAT_RATIO
                 and me.dist(target) - me.size < p.split_range * p.split_reach
                 and not any(me.dist(t) < danger_radius(t, side, p) + p.split_range
                             for t in split_threats(s, me, p))):

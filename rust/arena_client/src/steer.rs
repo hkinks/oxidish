@@ -97,6 +97,33 @@ pub fn split_threats(s: &Snapshot, me: &Cell, p: &Params) -> Vec<Cell> {
         .collect()
 }
 
+pub const EV_LAND: f64 = 150.0; // split_ev: enemy cells this far beyond our half's edge at the landing spot count
+pub const EV_MOVE: f64 = 300.0; // ... a cell that can eat our half reaches it if within this (or its split lunge)
+
+/// (gain, risk) of splitting onto `target` (Python: split_value).
+pub fn split_value(s: &Snapshot, me: &Cell, target: &Cell, p: &Params) -> (f64, f64) {
+    let half = half_of(me);
+    let enemies: Vec<&Cell> =
+        s.others.iter().filter(|c| c.kind == Kind::Player && !s.mine.iter().any(|m| m.id == c.id)).collect();
+    let mut gain = 0.0;
+    for c in &enemies {
+        if half.mass() > c.mass() * EAT_RATIO && c.dist(target) < half.size + c.size + EV_LAND {
+            gain += c.mass();
+        }
+    }
+    let mut risk = 0.0;
+    for at in [target, me] {
+        if enemies.iter().any(|c| {
+            c.mass() > half.mass() * EAT_RATIO
+                && c.dist(at) - c.size - half.size
+                    < (if c.mass() > half.mass() * SPLIT_KILL_RATIO { p.split_range } else { EV_MOVE })
+        }) {
+            risk += half.mass();
+        }
+    }
+    (gain, risk)
+}
+
 pub fn danger_radius(threat: &Cell, me: &Cell, p: &Params) -> f64 {
     let mut reach = threat.size + me.size;
     if threat.mass() > me.mass() * SPLIT_KILL_RATIO {
@@ -437,7 +464,17 @@ pub fn steer(s: &Snapshot, plan: &Plan, mut router: Option<&mut FoodRouter>, p: 
     if plan.split_ok && plan.mode == Mode::Hunt && (s.mine.len() as f64) <= p.split_max_cells.round_ties_even() {
         let target = prey.iter().find(|c| Some(c.id) == plan.target_id).map(|c| ahead(c));
         let side = if p.half_split_safety > 0.5 { half_of(&me) } else { me };
-        if let Some(t) = target {
+        if p.split_ev > 0.0 {
+            if let Some(t) = target {
+                if me.mass() / 2.0 > t.mass() * EAT_RATIO && me.dist(&t) - me.size < p.split_range {
+                    let (gain, risk) = split_value(s, &me, &t, p);
+                    if gain >= 0.05 * me.mass() && gain > p.split_ev * risk {
+                        aim = (t.x, t.y);
+                        split = true;
+                    }
+                }
+            }
+        } else if let Some(t) = target {
             if me.mass() / 2.0 > t.mass() * EAT_RATIO
                 && me.dist(&t) - me.size < p.split_range * p.split_reach
                 && !split_threats(s, &me, p).iter().any(|th| me.dist(th) < danger_radius(th, &side, p) + p.split_range)

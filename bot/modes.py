@@ -30,5 +30,7 @@ def heuristic_plan(s: Snapshot, p: Params = DEFAULT) -> Plan:
         target = max(worth, key=lambda c: c.mass / (max(gap(c), 0) + 100))
         side = half_of(me) if p.half_split_safety > 0.5 else me
         safe = not any(gap(t) < danger_radius(t, side, p) * p.split_safety for t in split_threats(s, me, p))
+        if p.split_ev > 0:    # split by expected value: steer() weighs gain against risk
+            return Plan("hunt", target.id, me.mass / 2 > target.mass * EAT_RATIO)
         return Plan("hunt", target.id, safe and me.mass / 2 > target.mass * EAT_RATIO)
     return Plan("farm")
