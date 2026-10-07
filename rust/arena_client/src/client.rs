@@ -26,6 +26,10 @@ pub struct AgentStats {
     pub counters: Counters,
     pub losses: Vec<Value>,
     pub popped: u64,
+    /// virus shots fired / enemy cells popped by our viruses / mass of the popped (ogar engine only)
+    pub virus_shots: u64,
+    pub virus_pops: u64,
+    pub virus_pop_mass: f64,
 }
 
 impl AgentStats {
@@ -49,6 +53,9 @@ impl AgentStats {
             "losses": self.losses,
             "counters": counters,
             "popped": self.popped,
+            "virus_shots": self.virus_shots,
+            "virus_pops": self.virus_pops,
+            "virus_pop_mass": self.virus_pop_mass,
         })
     }
 }

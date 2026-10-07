@@ -16,6 +16,8 @@ from .params import Params
 from .steer import EAT_RATIO, Plan, classify, danger_radius
 
 VIRUS_POP_RATIO = 1.33
+EJECT_REACH = 660.0   # how far an ejected pellet flies
+STAGE_ARC = 0.6      # radians a staging walk goes round a virus per step
 
 
 def _unit(ax, ay, bx, by):
@@ -28,12 +30,14 @@ class Tactics:
     def __init__(self):
         self._feeding: int | None = None  # id of the virus we're shooting
         self._second_split: tuple[float, float] | None = None  # double split in progress
+        self._stage: tuple[int, int] | None = None  # (virus id, target id) being walked round
         self.counters = {"ejects": 0, "shots_started": 0, "shots_fired": 0, "hide_ticks": 0,
                          "selffeeds": 0, "double_splits": 0}
 
     def reset(self) -> None:
         self._feeding = None
         self._second_split = None
+        self._stage = None
 
     def act(self, s: Snapshot, plan: Plan, p: Params):
         """Return (x, y, split, eject) to override steering, or None."""
@@ -85,8 +89,8 @@ class Tactics:
                 self.counters["hide_ticks"] += 1
                 return v.x + ux * v.size * 0.6, v.y + uy * v.size * 0.6, False, False
 
-        if p.shoot_enable > 0.5 and len(s.mine) == 1 and me.mass >= p.shoot_min_mass:
-            if any(gap(t) < danger_radius(t, me, p) * 0.7 for t in threats):
+        if p.shoot_enable > 0.5 and len(s.mine) <= p.shoot_max_cells and me.mass >= p.shoot_min_mass:
+            if any(gap(t) < danger_radius(t, me, p) * p.shoot_safety for t in threats):
                 self._feeding = None
                 return None  # survival first
             targets = [c for c in s.others if c.kind == "player"]
@@ -112,6 +116,44 @@ class Tactics:
                     self.counters["shots_started"] += 1
                 self._feeding = best.id
                 self.counters["ejects"] += 1
+                if p.shoot_stage > 0.5:   # hold the staged position: aim just past our edge, don't drift into the virus
+                    hx, hy = _unit(me.x, me.y, best.x, best.y)
+                    return me.x + hx * me.size * 0.9, me.y + hy * me.size * 0.9, False, True
                 return best.x, best.y, False, True
             self._feeding = None
+            if p.shoot_stage > 0.5:
+                return self._stage_move(me, viruses, targets, p)
         return None
+
+    def _stage_move(self, me, viruses, targets, p):
+        """Walk round a virus to the side away from a big player, so that a shot through it lines up."""
+        best, best_score = None, 0.0
+        for v in viruses:
+            walk = me.dist(v)
+            if walk > p.shoot_walk or me.size + v.size + p.shoot_standoff > EJECT_REACH:
+                continue
+            for t in targets:
+                if t.mass < v.mass * VIRUS_POP_RATIO * p.shoot_target_mult:
+                    continue
+                d = v.dist(t)
+                if d > p.shoot_reach or d < t.size:
+                    continue
+                score = t.mass / (walk + d + 400) * (2 if self._stage == (v.id, t.id) else 1)
+                if score > best_score:
+                    best, best_score = (v, t), score
+        if best is None:
+            self._stage = None
+            return None
+        v, t = best
+        self._stage = (v.id, t.id)
+        stand = me.size + v.size + p.shoot_standoff
+        here = math.atan2(me.y - v.y, me.x - v.x)
+        want = math.atan2(v.y - t.y, v.x - t.x)
+        turn = want - here
+        while turn > math.pi:
+            turn -= math.pi * 2
+        while turn < -math.pi:
+            turn += math.pi * 2
+        turn = max(-STAGE_ARC, min(STAGE_ARC, turn))
+        self.counters["stage_ticks"] = self.counters.get("stage_ticks", 0) + 1
+        return v.x + math.cos(here + turn) * stand, v.y + math.sin(here + turn) * stand, False, False

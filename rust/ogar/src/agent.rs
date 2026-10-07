@@ -130,7 +130,11 @@ impl AgentDriver {
         self.stats.ticks += self.sync;
     }
 
-    pub fn finish(mut self) -> AgentStats {
+    pub fn finish(mut self, w: &World) -> AgentStats {
+        let p = &w.players[self.pi];
+        self.stats.virus_shots = p.shots as u64;
+        self.stats.virus_pops = p.pops as u64;
+        self.stats.virus_pop_mass = p.pop_mass as f64;
         self.stats.counters = self.policy.counters().clone();
         self.stats
     }

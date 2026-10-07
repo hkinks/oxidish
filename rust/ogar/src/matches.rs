@@ -69,7 +69,7 @@ pub fn run_match(lineup: &[(String, Value)], o: &MatchOpts, seed: u64) -> Vec<Ag
             break;
         }
     }
-    agents.into_iter().map(|a| a.finish()).collect()
+    agents.into_iter().map(|a| a.finish(&w)).collect()
 }
 
 /// `matches` seeded matches (seed, seed+1, ...) on `threads` worker threads, one thread per match.

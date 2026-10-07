@@ -73,6 +73,11 @@ params! {
     wall_wary = 0.0,
     wall_wary_ratio = 0.8,
     piece_detour = 0.0,
+    shoot_stage = 0.0,
+    shoot_walk = 1200.0,
+    shoot_standoff = 90.0,
+    shoot_safety = 0.7,
+    shoot_max_cells = 1.0,
 }
 
 impl Params {
