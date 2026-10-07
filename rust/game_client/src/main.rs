@@ -186,6 +186,7 @@ struct Game {
     last_score: i64,
     fonts: Fonts,
     whole_map: bool,
+    following: Option<String>,
     set: Settings,
     saved: Settings,
     settings_open: bool,
@@ -214,6 +215,32 @@ impl Game {
         self.mode = Mode::Spectating;
         self.had_cells = false;
         self.whole_map = false;   // the server's free roam is off after a spawn
+        self.following = None;
+        let mut auto = vec![0xCA];  // follow the largest player (arena extension: name prefix, "" = auto)
+        auto.extend_from_slice(b"");
+        self.send(auto);
+    }
+
+    /// Tab while spectating: follow the next player on the leaderboard (wraps around; arena extension 0xCA).
+    fn follow_next(&mut self) {
+        let names: Vec<String> = self.world.leaderboard.iter().map(|l| l.name.clone()).filter(|n| !n.is_empty()).collect();
+        if names.is_empty() {
+            return;
+        }
+        if self.whole_map {        // free roam would override following: switch it off first
+            self.send(vec![18]);
+            self.send(vec![19]);
+            self.whole_map = false;
+        }
+        let next = match &self.following {
+            Some(cur) => names.iter().position(|n| n == cur).map_or(0, |i| (i + 1) % names.len()),
+            None => 1 % names.len(),   // auto already shows the largest (leaderboard #1)
+        };
+        let name = names[next].clone();
+        let mut p = vec![0xCA];
+        p.extend_from_slice(name.as_bytes());
+        self.send(p);
+        self.following = Some(name);
     }
 
     fn pump_net(&mut self, now: f64) {
@@ -358,10 +385,14 @@ impl Game {
                     while get_char_pressed().is_some() {}
                 }
                 if self.net.is_some() && self.world.border.is_some() {
-                    if is_key_pressed(KeyCode::Enter) || is_mouse_button_pressed(MouseButton::Left) {
+                    // a click starts playing from the menu / death screen, but not while spectating (only Enter does)
+                    let click = is_mouse_button_pressed(MouseButton::Left) && self.mode != Mode::Spectating;
+                    if is_key_pressed(KeyCode::Enter) || click {
                         self.spawn();
                     } else if is_key_pressed(KeyCode::Tab) && self.mode != Mode::Spectating {
                         self.spectate();
+                    } else if is_key_pressed(KeyCode::Tab) {
+                        self.follow_next();
                     } else if is_key_pressed(KeyCode::Q) && self.mode == Mode::Spectating {
                         // the server's free roam: the whole map (arena.js), or back to following the largest
                         self.send(vec![18]);
@@ -527,7 +558,8 @@ impl Game {
         }
         if self.mode == Mode::Playing || self.mode == Mode::Spectating {
             if self.mode == Mode::Spectating {
-                let what = if self.whole_map { "Spectating the whole map.  Q: follow the largest player" } else { "Spectating the largest player.  Q: whole map" };
+                let who = self.following.clone().unwrap_or_else(|| "the largest player".into());
+                let what = if self.whole_map { "Spectating the whole map.  Q: follow players, Tab: next player".to_string() } else { format!("Spectating {who}.  Tab: next player, Q: whole map") };
                 self.fonts.outlined(&format!("{what}.  Enter: play"), w / 2.0, h - 30.0, 24.0, Color::new(1.0, 1.0, 1.0, 1.0), 1.0);
             }
             return;
@@ -610,6 +642,7 @@ async fn main() {
         last_score: 0,
         fonts: Fonts::load(),
         whole_map: false,
+        following: None,
         saved: set.clone(),
         set,
         settings_open: args.settings_open,
