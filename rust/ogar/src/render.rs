@@ -19,28 +19,63 @@ fn shade(color: u32) -> f32 {
     100.0 + (h as f32 / 255.0) * 115.0
 }
 
+/// Reusable buffers for `render_into` (one per worker thread).
+#[derive(Default)]
+pub struct Scratch {
+    img: Vec<f32>,
+    order: Vec<(f32, bool, usize)>,
+    colin: Vec<bool>,
+}
+
+/// 4x4 subsample offsets inside a pixel.
+const SUB: [f32; 4] = [0.125, 0.375, 0.625, 0.875];
+
 /// Grayscale `px` x `px` frame of the square world area of half-width `half` around (`cx`, `cy`).
 pub fn render(s: &Snapshot, cx: f64, cy: f64, half: f64, px: usize) -> Vec<u8> {
+    let mut out = vec![0u8; px * px];
+    render_into(s, cx, cy, half, px, &mut Scratch::default(), &mut out);
+    out
+}
+
+/// `render` into a caller buffer (`out.len() == px * px`). Only edge pixels are supersampled (4x4); pixels
+/// well inside a disc take its fill directly, cells under ~1.6 px across are one coverage-weighted dot.
+pub fn render_into(s: &Snapshot, cx: f64, cy: f64, half: f64, px: usize, sc: &mut Scratch, out: &mut [u8]) {
     let scale = px as f64 / (2.0 * half); // pixels per world unit
     let x0 = cx - half;
     let y0 = cy - half;
-    let mut img = vec![BG; px * px];
+    let img = &mut sc.img;
+    img.clear();
+    img.resize(px * px, BG);
     let b = &s.border;
+    sc.colin.clear();
+    sc.colin.extend((0..px).map(|i| {
+        let wx = x0 + (i as f64 + 0.5) / scale;
+        wx >= b.left && wx <= b.right
+    }));
     for j in 0..px {
-        for i in 0..px {
-            let wx = x0 + (i as f64 + 0.5) / scale;
-            let wy = y0 + (j as f64 + 0.5) / scale;
-            if wx < b.left || wx > b.right || wy < b.top || wy > b.bottom {
-                img[j * px + i] = OUTSIDE;
+        let wy = y0 + (j as f64 + 0.5) / scale;
+        let row = &mut img[j * px..(j + 1) * px];
+        if wy < b.top || wy > b.bottom {
+            row.fill(OUTSIDE);
+        } else {
+            for (v, &inside) in row.iter_mut().zip(&sc.colin) {
+                if !inside {
+                    *v = OUTSIDE;
+                }
             }
         }
     }
     // small first, as the client draws
-    let mut cells: Vec<_> = s.others.iter().map(|c| (c, false)).chain(s.mine.iter().map(|c| (c, true))).collect();
-    cells.sort_by(|a, b| a.0.size.partial_cmp(&b.0.size).unwrap());
-    for (c, mine) in cells {
-        let r = c.size * scale;
-        let (fx, fy) = ((c.x - x0) * scale, (c.y - y0) * scale);
+    let order = &mut sc.order;
+    order.clear();
+    order.extend(s.others.iter().enumerate().map(|(i, c)| (c.size as f32, false, i)));
+    order.extend(s.mine.iter().enumerate().map(|(i, c)| (c.size as f32, true, i)));
+    order.sort_unstable_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    let pxf = px as f32;
+    for &(_, mine, idx) in order.iter() {
+        let c = if mine { &s.mine[idx] } else { &s.others[idx] };
+        let r = (c.size * scale) as f32;
+        let (fx, fy) = (((c.x - x0) * scale) as f32, ((c.y - y0) * scale) as f32);
         let (fill, edge, virus) = match c.kind {
             Kind::Food | Kind::Ejected => (PELLET, PELLET, false),
             Kind::Virus => (BG + 25.0, VIRUS, true),
@@ -50,36 +85,71 @@ pub fn render(s: &Snapshot, cx: f64, cy: f64, half: f64, px: usize) -> Vec<u8> {
                 (s, s - 45.0, false)
             }
         };
+        if !virus && r < 0.8 {
+            // sub-pixel disc: its area, split bilinearly over the 4 nearest pixels
+            let cov = (std::f32::consts::PI * r * r).min(1.0);
+            let (gx, gy) = (fx - 0.5, fy - 0.5);
+            let (ix, iy) = (gx.floor(), gy.floor());
+            let (tx, ty) = (gx - ix, gy - iy);
+            for (di, dj, wt) in [(0, 0, (1.0 - tx) * (1.0 - ty)), (1, 0, tx * (1.0 - ty)), (0, 1, (1.0 - tx) * ty), (1, 1, tx * ty)] {
+                let (i, j) = (ix + di as f32, iy + dj as f32);
+                if i >= 0.0 && j >= 0.0 && i < pxf && j < pxf {
+                    let p = &mut img[j as usize * px + i as usize];
+                    let a = cov * wt;
+                    *p = *p * (1.0 - a) + fill * a;
+                }
+            }
+            continue;
+        }
         let edge_w = if virus { (r * 0.18).max(1.0) } else { (r * 0.06).max(0.6) };
-        let rmax = r * 1.08 + 1.0;
+        let rmax = r * if virus { 1.08 } else { 1.0 } + 1.0;
         let i0 = (fx - rmax).floor().max(0.0) as usize;
-        let i1 = (fx + rmax).ceil().clamp(0.0, px as f64) as usize;
+        let i1 = (fx + rmax).ceil().clamp(0.0, pxf) as usize;
         let j0 = (fy - rmax).floor().max(0.0) as usize;
-        let j1 = (fy + rmax).ceil().clamp(0.0, px as f64) as usize;
+        let j1 = (fy + rmax).ceil().clamp(0.0, pxf) as usize;
+        let r_in = r - edge_w - 0.75; // pixels whose centre is this close (or closer) are entirely fill
+        let r_out = if virus { r * 1.07 } else { r } + 0.75; // ... and entirely outside beyond this
         for j in j0..j1 {
+            let cy_ = j as f32 + 0.5 - fy;
             for i in i0..i1 {
-                let (mut cov, mut acc) = (0.0f32, 0.0f32);
-                for sj in 0..4 {
-                    for si in 0..4 {
-                        let dx = i as f64 + (si as f64 + 0.5) / 4.0 - fx;
-                        let dy = j as f64 + (sj as f64 + 0.5) / 4.0 - fy;
-                        let d = dx.hypot(dy);
+                let cx_ = i as f32 + 0.5 - fx;
+                let d2 = cx_ * cx_ + cy_ * cy_;
+                let p = &mut img[j * px + i];
+                if r_in > 0.0 && d2 <= r_in * r_in {
+                    *p = fill;
+                    continue;
+                }
+                if d2 >= r_out * r_out {
+                    continue;
+                }
+                let (mut n_fill, mut n_edge) = (0u32, 0u32);
+                for &sj in &SUB {
+                    let dy = j as f32 + sj - fy;
+                    for &si in &SUB {
+                        let dx = i as f32 + si - fx;
+                        let d = dx * dx + dy * dy;
                         // viruses: spiky outline (radius wobbles with the angle)
                         let rr = if virus { r * (1.0 + 0.07 * (18.0 * dy.atan2(dx)).cos()) } else { r };
-                        if d <= rr {
-                            cov += 1.0 / 16.0;
-                            acc += if d > rr - edge_w { edge } else { fill } / 16.0;
+                        if d <= rr * rr {
+                            let ri = rr - edge_w;
+                            if ri > 0.0 && d <= ri * ri {
+                                n_fill += 1;
+                            } else {
+                                n_edge += 1;
+                            }
                         }
                     }
                 }
+                let cov = (n_fill + n_edge) as f32 / 16.0;
                 if cov > 0.0 {
-                    let p = &mut img[j * px + i];
-                    *p = *p * (1.0 - cov) + acc;
+                    *p = *p * (1.0 - cov) + (n_fill as f32 * fill + n_edge as f32 * edge) / 16.0;
                 }
             }
         }
     }
-    img.iter().map(|v| v.round().clamp(0.0, 255.0) as u8).collect()
+    for (o, v) in out.iter_mut().zip(img.iter()) {
+        *o = (v + 0.5).clamp(0.0, 255.0) as u8;
+    }
 }
 
 /// Minimal grayscale PNG (8-bit, zlib via flate2).
