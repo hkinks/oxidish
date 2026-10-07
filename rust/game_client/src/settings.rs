@@ -22,6 +22,9 @@ pub struct Settings {
     pub smoothing: f64,
     pub outline: bool,
     pub dark: bool,
+    /// control address of the server (host:port); empty = server host, port + 1
+    pub control_addr: String,
+    pub control_token: String,
 }
 
 impl Default for Settings {
@@ -39,6 +42,8 @@ impl Default for Settings {
             smoothing: 1.0,
             outline: true,
             dark: false,
+            control_addr: String::new(),
+            control_token: String::new(),
         }
     }
 }
@@ -75,6 +80,12 @@ impl Settings {
         if let Some(x) = v.get("nick").and_then(Value::as_str) {
             s.nick = x.to_string();
         }
+        if let Some(x) = v.get("control_addr").and_then(Value::as_str) {
+            s.control_addr = x.to_string();
+        }
+        if let Some(x) = v.get("control_token").and_then(Value::as_str) {
+            s.control_token = x.to_string();
+        }
         s.auto_zoom = b("auto_zoom", s.auto_zoom);
         s.show_mass = b("show_mass", s.show_mass);
         s.show_names = b("show_names", s.show_names);
@@ -105,6 +116,7 @@ impl Settings {
             "show_mass": self.show_mass, "show_names": self.show_names, "show_grid": self.show_grid,
             "show_fps": self.show_fps, "vsync": self.vsync, "fps_cap": self.fps_cap,
             "smoothing": self.smoothing, "outline": self.outline, "dark": self.dark,
+            "control_addr": self.control_addr, "control_token": self.control_token,
         });
         let _ = std::fs::write(path, serde_json::to_string_pretty(&v).unwrap_or_default());
     }
@@ -133,6 +145,8 @@ mod tests {
         s.fps_cap = 144;
         s.smoothing = 2.0;
         s.show_mass = false;
+        s.control_addr = "10.0.0.2:9601".into();
+        s.control_token = "tok".into();
         s.save_to(&path);
         assert_eq!(Settings::load_from(&path), s);
         let _ = std::fs::remove_dir_all(dir);
