@@ -25,6 +25,8 @@ pub struct Settings {
     /// control address of the server (host:port); empty = server host, port + 1
     pub control_addr: String,
     pub control_token: String,
+    /// spectating starts in whole-map mode (Q toggles to following the largest player)
+    pub spectate_whole_map: bool,
 }
 
 impl Default for Settings {
@@ -33,6 +35,7 @@ impl Default for Settings {
             server: "ws://127.0.0.1:9600".into(),
             nick: String::new(),
             auto_zoom: true,
+            spectate_whole_map: true,
             show_mass: true,
             show_names: true,
             show_grid: true,
@@ -87,6 +90,7 @@ impl Settings {
             s.control_token = x.to_string();
         }
         s.auto_zoom = b("auto_zoom", s.auto_zoom);
+        s.spectate_whole_map = b("spectate_whole_map", s.spectate_whole_map);
         s.show_mass = b("show_mass", s.show_mass);
         s.show_names = b("show_names", s.show_names);
         s.show_grid = b("show_grid", s.show_grid);
@@ -112,7 +116,7 @@ impl Settings {
             let _ = std::fs::create_dir_all(dir);
         }
         let v = json!({
-            "server": self.server, "nick": self.nick, "auto_zoom": self.auto_zoom,
+            "server": self.server, "nick": self.nick, "auto_zoom": self.auto_zoom, "spectate_whole_map": self.spectate_whole_map,
             "show_mass": self.show_mass, "show_names": self.show_names, "show_grid": self.show_grid,
             "show_fps": self.show_fps, "vsync": self.vsync, "fps_cap": self.fps_cap,
             "smoothing": self.smoothing, "outline": self.outline, "dark": self.dark,

@@ -223,6 +223,11 @@ impl Game {
         let mut auto = vec![0xCA];  // follow the largest player (arena extension: name prefix, "" = auto)
         auto.extend_from_slice(b"");
         self.send(auto);
+        if self.set.spectate_whole_map {
+            self.send(vec![18]); // Q: the server's free roam = the whole map
+            self.send(vec![19]);
+            self.whole_map = true;
+        }
     }
 
     /// Tab while spectating: follow the next player on the leaderboard (wraps around; arena extension 0xCA).
