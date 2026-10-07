@@ -3,7 +3,7 @@
 //!   background 40, outside the border 0, pellets / ejected 150, viruses a bright spiky ring,
 //!   our own cells 255 (a human sees their own name), other players one shade per player (the client's colour cue
 //!   for "these pieces belong together") with a darker outline.
-//! Edges are anti-aliased (4x4 subsamples), so pellets smaller than a pixel still show as faint dots.
+//! Edges are anti-aliased by distance; pellets smaller than a pixel still show as faint dots.
 
 use arena_client::game::{Kind, Snapshot};
 
@@ -22,13 +22,8 @@ fn shade(color: u32) -> f32 {
 /// Reusable buffers for `render_into` (one per worker thread).
 #[derive(Default)]
 pub struct Scratch {
-    img: Vec<f32>,
     order: Vec<(f32, bool, usize)>,
-    colin: Vec<bool>,
 }
-
-/// 4x4 subsample offsets inside a pixel.
-const SUB: [f32; 4] = [0.125, 0.375, 0.625, 0.875];
 
 /// Grayscale `px` x `px` frame of the square world area of half-width `half` around (`cx`, `cy`).
 pub fn render(s: &Snapshot, cx: f64, cy: f64, half: f64, px: usize) -> Vec<u8> {
@@ -37,31 +32,31 @@ pub fn render(s: &Snapshot, cx: f64, cy: f64, half: f64, px: usize) -> Vec<u8> {
     out
 }
 
-/// `render` into a caller buffer (`out.len() == px * px`). Only edge pixels are supersampled (4x4); pixels
-/// well inside a disc take its fill directly, cells under ~1.6 px across are one coverage-weighted dot.
-pub fn render_into(s: &Snapshot, cx: f64, cy: f64, half: f64, px: usize, sc: &mut Scratch, out: &mut [u8]) {
+/// `render` into a caller buffer (`out.len() == px * px`). Works directly in u8 (blends round per write). Only edge
+/// pixels are supersampled (4x4); pixels well inside a disc take its fill directly, cells under ~1.6 px across
+/// are one coverage-weighted dot.
+pub fn render_into(s: &Snapshot, cx: f64, cy: f64, half: f64, px: usize, sc: &mut Scratch, img: &mut [u8]) {
     let scale = px as f64 / (2.0 * half); // pixels per world unit
     let x0 = cx - half;
     let y0 = cy - half;
-    let img = &mut sc.img;
-    img.clear();
-    img.resize(px * px, BG);
+    img.fill(BG as u8);
     let b = &s.border;
-    sc.colin.clear();
-    sc.colin.extend((0..px).map(|i| {
-        let wx = x0 + (i as f64 + 0.5) / scale;
-        wx >= b.left && wx <= b.right
-    }));
-    for j in 0..px {
-        let wy = y0 + (j as f64 + 0.5) / scale;
-        let row = &mut img[j * px..(j + 1) * px];
-        if wy < b.top || wy > b.bottom {
-            row.fill(OUTSIDE);
-        } else {
-            for (v, &inside) in row.iter_mut().zip(&sc.colin) {
-                if !inside {
-                    *v = OUTSIDE;
-                }
+    // pixel i is inside the border when its centre x0 + (i + 0.5) / scale lies in [left, right]
+    let span = |lo: f64, hi: f64, o: f64| -> (usize, usize) {
+        let a = ((lo - o) * scale - 0.5).ceil().clamp(0.0, px as f64) as usize;
+        let z = (((hi - o) * scale - 0.5).floor() + 1.0).clamp(a as f64, px as f64) as usize;
+        (a, z)
+    };
+    let (ilo, ihi) = span(b.left, b.right, x0);
+    let (jlo, jhi) = span(b.top, b.bottom, y0);
+    if ilo > 0 || ihi < px || jlo > 0 || jhi < px {
+        for j in 0..px {
+            let row = &mut img[j * px..(j + 1) * px];
+            if j < jlo || j >= jhi {
+                row.fill(OUTSIDE as u8);
+            } else {
+                row[..ilo].fill(OUTSIDE as u8);
+                row[ihi..].fill(OUTSIDE as u8);
             }
         }
     }
@@ -96,7 +91,7 @@ pub fn render_into(s: &Snapshot, cx: f64, cy: f64, half: f64, px: usize, sc: &mu
                 if i >= 0.0 && j >= 0.0 && i < pxf && j < pxf {
                     let p = &mut img[j as usize * px + i as usize];
                     let a = cov * wt;
-                    *p = *p * (1.0 - a) + fill * a;
+                    *p = (*p as f32 * (1.0 - a) + fill * a + 0.5) as u8;
                 }
             }
             continue;
@@ -107,48 +102,40 @@ pub fn render_into(s: &Snapshot, cx: f64, cy: f64, half: f64, px: usize, sc: &mu
         let i1 = (fx + rmax).ceil().clamp(0.0, pxf) as usize;
         let j0 = (fy - rmax).floor().max(0.0) as usize;
         let j1 = (fy + rmax).ceil().clamp(0.0, pxf) as usize;
-        let r_in = r - edge_w - 0.75; // pixels whose centre is this close (or closer) are entirely fill
+        let fill_u8 = (fill + 0.5) as u8;
+        let r_in = if virus { r * 0.93 } else { r } - edge_w - 0.75; // pixels this close to the centre are entirely fill
         let r_out = if virus { r * 1.07 } else { r } + 0.75; // ... and entirely outside beyond this
         for j in j0..j1 {
-            let cy_ = j as f32 + 0.5 - fy;
+            let dy = j as f32 + 0.5 - fy;
             for i in i0..i1 {
-                let cx_ = i as f32 + 0.5 - fx;
-                let d2 = cx_ * cx_ + cy_ * cy_;
+                let dx = i as f32 + 0.5 - fx;
+                let d2 = dx * dx + dy * dy;
                 let p = &mut img[j * px + i];
                 if r_in > 0.0 && d2 <= r_in * r_in {
-                    *p = fill;
+                    *p = fill_u8;
                     continue;
                 }
                 if d2 >= r_out * r_out {
                     continue;
                 }
-                let (mut n_fill, mut n_edge) = (0u32, 0u32);
-                for &sj in &SUB {
-                    let dy = j as f32 + sj - fy;
-                    for &si in &SUB {
-                        let dx = i as f32 + si - fx;
-                        let d = dx * dx + dy * dy;
-                        // viruses: spiky outline (radius wobbles with the angle)
-                        let rr = if virus { r * (1.0 + 0.07 * (18.0 * dy.atan2(dx)).cos()) } else { r };
-                        if d <= rr * rr {
-                            let ri = rr - edge_w;
-                            if ri > 0.0 && d <= ri * ri {
-                                n_fill += 1;
-                            } else {
-                                n_edge += 1;
-                            }
-                        }
-                    }
-                }
-                let cov = (n_fill + n_edge) as f32 / 16.0;
+                // anti-aliasing by distance: coverage of the disc and of its fill (inside the edge ring)
+                let d = d2.sqrt();
+                let rr = if virus {
+                    // spiky outline: radius wobbles with the angle, cos(18 theta) = T18(cos theta)
+                    let c = if d > 1e-6 { dx / d } else { 1.0 };
+                    let t3 = c * (4.0 * c * c - 3.0);
+                    let t9 = t3 * (4.0 * t3 * t3 - 3.0);
+                    r * (1.0 + 0.07 * (2.0 * t9 * t9 - 1.0))
+                } else {
+                    r
+                };
+                let cov = (rr - d + 0.5).clamp(0.0, 1.0);
                 if cov > 0.0 {
-                    *p = *p * (1.0 - cov) + (n_fill as f32 * fill + n_edge as f32 * edge) / 16.0;
+                    let wf = (rr - edge_w - d + 0.5).clamp(0.0, cov);
+                    *p = (*p as f32 * (1.0 - cov) + fill * wf + edge * (cov - wf) + 0.5) as u8;
                 }
             }
         }
-    }
-    for (o, v) in out.iter_mut().zip(img.iter()) {
-        *o = (v + 0.5).clamp(0.0, 255.0) as u8;
     }
 }
 

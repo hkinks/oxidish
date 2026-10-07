@@ -124,6 +124,12 @@ impl VecEnv {
         Ok((obs, reward, done, info))
     }
 
+    /// The info dict of the current observation (teacher label, mass, rank, leader, ncells), e.g. right after reset().
+    #[pyo3(signature = (copy=false))]
+    fn info<'py>(slf: &Bound<'py, Self>, py: Python<'py>, copy: bool) -> PyResult<Bound<'py, PyDict>> {
+        info_dict(slf, py, copy)
+    }
+
     /// Per-learner switch: True / 1 = the teacher drives that learner (its action is ignored). A bool sets all.
     fn set_teacher(&mut self, mask: &Bound<'_, PyAny>) -> PyResult<()> {
         if let Ok(b) = mask.extract::<bool>() {
@@ -138,6 +144,15 @@ impl VecEnv {
             *m = b as u8;
         }
         Ok(())
+    }
+
+    /// The teachers' decision counters summed over learners, e.g. plan_steps / plan_gated / plan_deep / plan_us.
+    fn teacher_counters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new(py);
+        for (k, v) in self.core.lock().unwrap().teacher_counters() {
+            d.set_item(k, v)?;
+        }
+        Ok(d)
     }
 
     /// Wall-time breakdown in seconds summed over all worlds (divide by threads for wall time).

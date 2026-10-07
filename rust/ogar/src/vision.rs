@@ -436,6 +436,20 @@ impl VecEnv {
         t
     }
 
+    /// The teachers' decision counters summed over all learners (for the planner: plan_gated, plan_deep, plan_us, ...).
+    pub fn teacher_counters(&self) -> Vec<(String, i64)> {
+        let mut out: Vec<(String, i64)> = Vec::new();
+        for l in self.worlds.iter().flat_map(|w| w.learners.iter()) {
+            for (k, v) in &l.teacher.counters().0 {
+                match out.iter_mut().find(|e| &e.0 == k) {
+                    Some(e) => e.1 += v,
+                    None => out.push((k.clone(), *v)),
+                }
+            }
+        }
+        out
+    }
+
     /// For tests: each learner's camera of the current observation and the teacher's raw world target.
     pub fn debug_teacher(&self) -> Vec<(Camera, (f64, f64))> {
         self.worlds.iter().flat_map(|w| w.learners.iter().map(|l| (l.cam, l.t_world))).collect()

@@ -102,3 +102,83 @@ death penalty. The value head sees the leaderboard rank as a scalar.
 | M4 | multi-day training with checkpoints in between |
 
 Each gate is a natural point to decide whether to continue.
+
+## M1 status: `ogar_py` VecEnv (2026-10-07, branch `worktree-agent-ad386154cc2767e6b`)
+
+**Code.** Engine-side env in `rust/ogar/src/vision.rs` (pure Rust, unit-tested); Python bindings in `rust/ogar_py`
+(PyO3 0.25 + rust-numpy, abi3-py310); renderer speed-up in `rust/ogar/src/render.rs`; tools in `rl/vision/`
+(`test_env.py`, `bench.py`, `collect.py`).
+
+**Build** (maturin is a dev dependency in `pyproject.toml`; a light venv is enough, no torch needed):
+
+```
+uv venv .venv --python 3.10 && uv pip install --python .venv/Scripts/python.exe maturin numpy pytest
+# from rust/ogar_py, venv active (VIRTUAL_ENV set); -j 2 keeps the build polite
+maturin develop --release -j 2
+# from the repo root (specs like bot/c3_4.json are relative to the cwd)
+python -m pytest rl/vision -q          # Python smoke tests;  cargo test --release (in rust/ogar) for the Rust ones
+```
+
+**API**
+
+```python
+env = ogar_py.VecEnv(n_worlds, learners_per_world, opponents=[("c34", "bot/c3_4.json", 4)],
+                     teacher="bot/plan_c34.json", px=256, sync=2, bots=8, food_mult=2, map=7000,
+                     seed=1, threads=8, warmup=0, label=True)
+obs = env.reset()                                   # {"view": u8[N,2,px,px], "wide": u8[N,2,px/2,px/2]}
+obs, reward, done, info = env.step(actions)         # actions f32[N,4] = (u, v, split, eject)
+env.set_teacher(True | bool_list)                   # teacher drives (actions ignored); per learner for DAgger
+env.info(); env.timing(); env.teacher_counters()
+```
+
+- `N = n_worlds * learners_per_world`. Each world = server bots + the opponent rule bots (in-process `AgentDriver`s,
+  decide every `sync` ticks) + the learners (`PKind::Agent`, controlled from outside).
+- Frames: channel 0 = this decision, channel 1 = the previous decision (2-frame stack; a new life starts with both
+  equal). `view` = camera square (centre = view centre, half-width = view-box half-width), `wide` = 2x extent at px/2.
+  Arrays are zero-copy views of the env's buffers (valid until the next step/reset; `copy=True` for private copies).
+- Action: target point in the **view frame's pixel coordinates** (continuous, 0..px), mapped to world through the
+  camera of the observation it was chosen from; split and eject flags (> 0.5).
+- `info["teacher"]` f32[N,4]: the teacher's decision **for the current observation**, in the same format (BC label).
+  The rule bots' `Out` is a world-space cursor target; it is converted with the exact camera inverse and, when it is
+  outside the frame, pulled in along the ray from the frame centre (heading preserved). A Rust test checks that
+  teacher target -> pixel -> world lands within 1 px (it is exact up to float).
+- `info`: `mass`, `rank` (0 = largest player in the world, exact, computed every decision), `leader` (rank 0), `ncells`.
+  `reward` = change of own total mass, a death gives `-mass_before`. On death the learner respawns at once
+  (`done = 1`, the returned obs is the new life's first frame). Worlds never end; `reset()` builds fresh worlds
+  (new seeds per call). Log-mass reward / leader bonus are computed in Python from `mass` / `leader`.
+- Worlds step in parallel on `threads` scoped worker threads; the GIL is released during `step`.
+- The teacher runs on every decision (state-keeping and labels) even when the student drives (DAgger). `label=False`
+  skips it for pure evaluation.
+
+**Renderer optimisation** (look kept: before/after PNGs in `logs/vision/before` and `logs/vision/after`, RMSE 0.3% on
+a 256 px frame): `render_into` works in u8 with a reusable scratch; background/border by row spans; pixels well inside
+a disc take the fill directly; edge pixels use distance-based anti-aliasing instead of 4x4 supersampling; viruses use
+a polynomial `cos(18 theta)` instead of `atan2` per sample; sub-1.6 px discs (pellets) are one coverage-weighted dot.
+256 px frame: 187 us -> 22 us, 128 px frame: 29 us -> 4 us (`cargo run --release --example render_bench`).
+
+**Benchmark** (32 worlds x 4 learners = 128 learners, px 256, 4 `c3_4` opponents + 8 server bots per world, teacher-driven,
+learner decisions/s including world ticks, opponents, render and teacher; 8 physical / 16 logical cores, machine ~50% busy
+otherwise; 1500 warm-up ticks):
+
+| teacher | threads 4 | threads 8 | threads 10 | gate 20k at 10 |
+|---|---|---|---|---|
+| planner (`plan_c34.json`) | 9.2k | 13.6k | 14.8k (15.9k after 5 min of game; 17.5k in a 600-step run) | **missed** |
+| c3_4 rule bot | 18.6k | 31.2k | 35.3k | met |
+| none (`label=False`, student evaluation) | | | 54k | met |
+| planner, renderer before optimisation | 7.4k | 12.6k | 14.5k (render was 51% of the cost) | |
+
+CPU per decision at 10 threads (planner teacher): world ticks 30 us, opponents 84 us (4 per world), snapshot 1 us,
+render 36 us (2 frames), teacher 265 us. So the **planner is 64% of the cost** (c3_4 base rule ~70 us + deep eval
+~155-195 us). The plan assumed the deep eval fires on ~6% of steps; measured, the gate passes on **61-67%** of steps at
+0.25-0.29 ms each. Without optimising the planner itself (out of scope, behaviour must not change) the options are:
+planner labels for DAgger / evaluation sets only and `c3_4` labels for bulk BC (35k/s), fewer opponents per world
+(2 opponents: 42 us instead of 84), or accept ~15-17k/s for planner data (about 5.5e7 labelled frames per hour,
+which is still above the 1e7 per hour M2 needs). Pure student rollouts (M4) run at 54k decisions/s before the network.
+
+**Data collector** `rl/vision/collect.py`: time-major shards (`view`, `wide`, `teacher`, `action`, `reward`, `done`,
+`mass`, `rank`, `leader`, `first`; current frame only, the previous frame of the stack is the previous row unless
+`first`). Raw 82 KB per decision (about 3 TB/h at full speed); with `--compress` (deflate level 1) **2.3 KB per decision,
+about 50 GB/h at 6k decisions/s end to end**; zlib, not the engine, then limits collection (about 0.7 ms CPU per
+decision), so for M2 prefer streaming straight from the env into the trainer (labels come with every step) and keep
+shards only for fixed validation sets. `--noise S` executes teacher + Gaussian pixel noise (DART-style) while the
+label stays the clean teacher action.

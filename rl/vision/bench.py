@@ -30,6 +30,10 @@ def run(args, threads):
     print(f"threads {threads:2d}: {dec / wall:8.0f} decisions/s  ({wall:.1f}s)  "
           + "  ".join(f"{k} {1e6 * v / dec:.0f}us ({100 * v / tot:.0f}%)" for k, v in row.items())
           + "  [cpu-us per decision]")
+    c = env.teacher_counters()
+    if c.get("plan_steps"):
+        print(f"           planner: deep eval on {100 * c['plan_gated'] / c['plan_steps']:.1f}% of steps, "
+              f"{c['plan_us'] / max(c['plan_gated'], 1) / 1000:.2f} ms each, {c['plan_us'] / c['plan_steps']:.0f} us/decision avg")
     return dec / wall
 
 
