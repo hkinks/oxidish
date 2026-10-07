@@ -27,4 +27,4 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["bot", "sim"]
+testpaths = ["bot", "sim", "arena"]

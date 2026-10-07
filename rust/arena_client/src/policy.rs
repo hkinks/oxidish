@@ -274,6 +274,7 @@ pub struct HeuristicPolicy {
     tactics: Tactics,
     pub counters: Counters,
     prev: HashMap<u32, (f64, f64)>,
+    flee_dir: Option<(f64, f64)>,
     /// plan and genome stage ("small" / "big" / "giant") of the last `act` (read-only, for recordings)
     pub last_plan: Option<(Plan, &'static str)>,
 }
@@ -298,6 +299,7 @@ impl HeuristicPolicy {
             tactics: Tactics::new(),
             counters,
             prev: HashMap::new(),
+            flee_dir: None,
             last_plan: None,
         }
     }
@@ -342,10 +344,45 @@ impl HeuristicPolicy {
         let plan = heuristic_plan(s, p);
         self.last_plan = Some((plan, stage));
         let out = match self.tactics.act(s, &plan, p, &mut self.counters) {
-            Some(o) => o,
+            Some(o) => {
+                if plan.mode != Mode::Flee {
+                    self.flee_dir = None;
+                }
+                o
+            }
             None => {
                 let (x, y, split) = steer(s, &plan, self.router.as_mut(), p);
-                Out { x, y, split, eject: false }
+                let mut o = Out { x, y, split, eject: false };
+                // flee_smooth (Python: HeuristicPolicy._smooth_flee): commit to one escape heading
+                if plan.mode != Mode::Flee || p.flee_smooth <= 0.0 || o.split {
+                    if plan.mode != Mode::Flee {
+                        self.flee_dir = None;
+                    }
+                } else {
+                    let me = *s.main().unwrap();
+                    let (dx, dy) = (o.x - me.x, o.y - me.y);
+                    let d = {
+                        let h = dx.hypot(dy);
+                        if h == 0.0 { 1.0 } else { h }
+                    };
+                    let (mut ux, mut uy) = (dx / d, dy / d);
+                    if let Some((px, py)) = self.flee_dir {
+                        let dot = ux * px + uy * py;
+                        if (-0.2..0.5).contains(&dot) {
+                            let (bx, by) = (p.flee_smooth * px + (1.0 - p.flee_smooth) * ux,
+                                            p.flee_smooth * py + (1.0 - p.flee_smooth) * uy);
+                            let n = bx.hypot(by);
+                            if n > 1e-9 {
+                                ux = bx / n;
+                                uy = by / n;
+                                o.x = me.x + ux * d;
+                                o.y = me.y + uy * d;
+                            }
+                        }
+                    }
+                    self.flee_dir = Some((ux, uy));
+                }
+                o
             }
         };
         self.counters.bump("steps", 1);
@@ -356,6 +393,7 @@ impl HeuristicPolicy {
 
     pub fn reset(&mut self) {
         self.prev.clear();
+        self.flee_dir = None;
         self.tactics.reset();
         if let Some(r) = self.router.as_mut() {
             r.reset();

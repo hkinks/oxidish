@@ -4,6 +4,8 @@ Policies are built from picklable specs so tournament workers can construct them
     {"farm": "route" | "field", "params": {...Params fields...}}
 """
 
+import math
+
 from bot.farm import FoodRouter
 from bot.game import Snapshot
 from bot.modes import heuristic_plan
@@ -24,6 +26,7 @@ class HeuristicPolicy:
         self._tactics = Tactics()
         self.counters = self._tactics.counters
         self._prev: dict[int, tuple[float, float]] = {}  # last positions, for velocities
+        self._flee_dir: tuple[float, float] | None = None    # flee_smooth: last flee heading
 
     def act(self, s: Snapshot):
         """Return (x, y, split, eject)."""
@@ -44,6 +47,9 @@ class HeuristicPolicy:
         out = self._tactics.act(s, plan, self._p)
         if out is None:
             out = (*steer(s, plan, self._router, self._p), False)
+            out = self._smooth_flee(s, plan, out)
+        elif plan.mode != "flee":
+            self._flee_dir = None
         # Playstyle counters (quality-diversity niches): how it plays, not how well.
         c = self.counters
         c["steps"] = c.get("steps", 0) + 1
@@ -51,8 +57,31 @@ class HeuristicPolicy:
         c["splits"] = c.get("splits", 0) + bool(out[2])
         return out
 
+    def _smooth_flee(self, s: Snapshot, plan, out):
+        """flee_smooth: keep fleeing the way we were going unless the new heading is close to it."""
+        p = self._p
+        if plan.mode != "flee" or p.flee_smooth <= 0 or out[2]:
+            self._flee_dir = None if plan.mode != "flee" else self._flee_dir
+            return out
+        me = s.main
+        dx, dy = out[0] - me.x, out[1] - me.y
+        d = math.hypot(dx, dy) or 1.0
+        ux, uy = dx / d, dy / d
+        if self._flee_dir is not None:
+            px, py = self._flee_dir
+            dot = ux * px + uy * py
+            if -0.2 <= dot < 0.5:   # dithering between nearby escapes; a real reversal (threat switched side) passes
+                bx, by = p.flee_smooth * px + (1 - p.flee_smooth) * ux, p.flee_smooth * py + (1 - p.flee_smooth) * uy
+                n = math.hypot(bx, by)
+                if n > 1e-9:
+                    ux, uy = bx / n, by / n
+                    out = (me.x + ux * d, me.y + uy * d, out[2], out[3])
+        self._flee_dir = (ux, uy)
+        return out
+
     def reset(self) -> None:
         self._prev = {}
+        self._flee_dir = None
         self._tactics.reset()
         if self._router:
             self._router.reset()
