@@ -6,12 +6,13 @@
 //! move with a cheap greedy rule (flee what can eat them, chase what they can eat, split-kill us when in
 //! range). The opening with the best score replaces the base action when it beats the base's own by a margin.
 
+use std::collections::HashMap;
 use std::time::Instant;
 
 use crate::game::{Border, Cell, Kind, Snapshot};
 use crate::params::Params;
 use crate::policy::{heuristic_plan, HeuristicPolicy, Out};
-use crate::steer::{steer, tick_speed, EAT_RATIO};
+use crate::steer::{steer, tick_speed, Mode, EAT_RATIO};
 
 const SIZE_EAT: f64 = 1.15; // eater.size >= 1.15 * victim.size (server rule, on radius)
 const VIRUS_EAT: f64 = 1.1576;
@@ -52,6 +53,16 @@ pub struct PlanCfg {
     pub max_food: usize,
     pub sync: f64,
     pub min_rival_mass: f64,
+    /// rule-bot rival model: how many of the nearest rivals are simulated with a rule bot (scenario >= 3)
+    pub rule_rivals: usize,
+    /// view radius around a rival for its rule-bot snapshot
+    pub rule_view: f64,
+    /// blend of the old heading into the rule bot's heading
+    pub rule_inert: f64,
+    /// farming rival with fewer than this many known pellets in view keeps its heading (the sim knows few pellets)
+    pub rule_food: f64,
+    /// scenario 7: fraction of the observed turn rate that is carried on
+    pub turn_damp: f64,
 }
 
 impl Default for PlanCfg {
@@ -87,6 +98,11 @@ impl Default for PlanCfg {
             max_food: 48,
             sync: 2.0,
             min_rival_mass: 0.0,
+            rule_rivals: 4,
+            rule_view: 1100.0,
+            rule_inert: 0.3,
+            rule_food: 3.0,
+            turn_damp: 0.8,
         }
     }
 }
@@ -98,11 +114,11 @@ impl PlanCfg {
         macro_rules! set {
             ($($n:ident),*) => { $( if let Some(x) = f(stringify!($n)) { c.$n = x; } )* };
         }
-        set!(need_loss, virus_gain, min_w, gate, margin, loss_w, eat_w, death_w, near_w, near_range, lead_w, frag_w, r_food, r_prey, r_flee, r_inert, pop_w, sync, min_rival_mass);
+        set!(need_loss, virus_gain, min_w, gate, margin, loss_w, eat_w, death_w, near_w, near_range, lead_w, frag_w, r_food, r_prey, r_flee, r_inert, pop_w, sync, min_rival_mass, rule_view, rule_inert, rule_food, turn_damp);
         macro_rules! seti {
             ($($n:ident),*) => { $( if let Some(x) = f(stringify!($n)) { c.$n = x as usize; } )* };
         }
-        seti!(horizon, hold, headings, replan, rival_every, split_cands, max_rivals, max_food);
+        seti!(rule_rivals, horizon, hold, headings, replan, rival_every, split_cands, max_rivals, max_food);
         if let Some(a) = v.get("scenarios").and_then(|x| x.as_array()) {
             c.scen = a.iter().filter_map(|x| x.as_u64()).map(|x| x as u8).collect();
         }
@@ -146,6 +162,8 @@ struct Sim {
     border: Border,
     mouse: Vec<(f64, f64)>, // per owner
     dir: Vec<(f64, f64)>,   // rival heading
+    spd: Vec<f64>,          // rival observed speed as a fraction of its full speed
+    turn: Vec<f64>,         // rival heading turn rate (rad per tick)
     split_used: Vec<bool>,
     n_owners: usize,
     next_id: u32,
@@ -169,7 +187,7 @@ fn unit(dx: f64, dy: f64) -> (f64, f64) {
 }
 
 impl Sim {
-    fn from_snapshot(s: &Snapshot, cfg: &PlanCfg) -> Sim {
+    fn from_snapshot(s: &Snapshot, cfg: &PlanCfg, turns: &HashMap<u32, f64>) -> Sim {
         let mut cells: Vec<PC> = Vec::with_capacity(48);
         for c in &s.mine {
             cells.push(PC { id: c.id, x: c.x, y: c.y, size: c.size, owner: 0, bdx: 0.0, bdy: 0.0, boost: 0.0, vx: 0.0, vy: 0.0, color: c.color, alive: true });
@@ -202,6 +220,8 @@ impl Sim {
         groups.truncate(cfg.max_rivals);
         let n_owners = groups.len() + 1;
         let mut dir = vec![(0.0, 0.0); n_owners];
+        let mut spd = vec![1.0; n_owners];
+        let mut turn = vec![0.0; n_owners];
         for (gi, g) in groups.iter().enumerate() {
             let owner = (gi + 1) as u8;
             let mut vsum = (0.0, 0.0);
@@ -220,6 +240,8 @@ impl Sim {
                 if c.size > big {
                     big = c.size;
                     vsum = (vx, vy);
+                    spd[gi + 1] = (sp / ts).min(1.0);
+                    turn[gi + 1] = turns.get(&c.id).copied().unwrap_or(0.0) / cfg.sync;
                 }
                 cells.push(PC { id: c.id, x: c.x, y: c.y, size: c.size, owner, bdx, bdy, boost, vx, vy, color: c.color, alive: true });
             }
@@ -249,6 +271,8 @@ impl Sim {
             border: s.border,
             mouse: vec![(cx, cy); n_owners],
             dir,
+            spd,
+            turn,
             split_used: vec![false; n_owners],
             n_owners,
             next_id: 1 << 30,
@@ -469,7 +493,41 @@ impl Sim {
     }
 
     /// Greedy rival steering (server-bot-like): chase what they can eat, flee what can eat them; keep heading otherwise.
-    fn rivals_think(&mut self, cfg: &PlanCfg) {
+    fn rivals_think(&mut self, cfg: &PlanCfg, models: &[HeuristicPolicy]) {
+        if self.scen == 5 {
+            for owner in 1..self.n_owners as u8 {
+                if let Some(mi) = self.main_of(owner) {
+                    self.mouse[owner as usize] = (self.cells[mi].x, self.cells[mi].y);
+                }
+            }
+            return;
+        }
+        if self.scen == 7 {
+            // inertial with the observed turn rate carried on (damped): rivals orbit / curve towards a fixed target
+            for owner in 1..self.n_owners as u8 {
+                if let Some(mi) = self.main_of(owner) {
+                    let m = self.cells[mi];
+                    let (ux, uy) = self.dir[owner as usize];
+                    let a = cfg.turn_damp * self.turn[owner as usize] * cfg.rival_every as f64;
+                    let (c, sn) = (a.cos(), a.sin());
+                    let nd = (ux * c - uy * sn, ux * sn + uy * c);
+                    self.dir[owner as usize] = nd;
+                    self.mouse[owner as usize] = if nd.0 == 0.0 && nd.1 == 0.0 { (m.x, m.y) } else { (m.x + nd.0 * FAR, m.y + nd.1 * FAR) };
+                }
+            }
+            return;
+        }
+        if self.scen == 6 {
+            for owner in 1..self.n_owners as u8 {
+                if let Some(mi) = self.main_of(owner) {
+                    let m = self.cells[mi];
+                    let (ux, uy) = self.dir[owner as usize];
+                    let reach = if self.spd[owner as usize] > 0.95 { FAR } else { 32.0 * self.spd[owner as usize] };
+                    self.mouse[owner as usize] = if ux == 0.0 && uy == 0.0 { (m.x, m.y) } else { (m.x + ux * reach, m.y + uy * reach) };
+                }
+            }
+            return;
+        }
         if self.scen == 1 {
             // inertial: every rival keeps its observed heading
             for owner in 1..self.n_owners as u8 {
@@ -485,6 +543,28 @@ impl Sim {
         for owner in 1..self.n_owners as u8 {
             let Some(mi) = self.main_of(owner) else { continue };
             let m = self.cells[mi];
+            if self.scen >= 3 && self.scen != 5 && (owner as usize) <= cfg.rule_rivals && !models.is_empty() {
+                // rule-bot model: this rival decides like the rule bot with genome `scen - 3`, from its own view
+                let model = &models[(self.scen as usize - 3) % models.len()];
+                if let Some(sn) = self.rival_snapshot(owner, cfg.rule_view) {
+                    let p = model.params_for(sn.total_mass());
+                    let plan = heuristic_plan(&sn, p);
+                    let (ax, ay, sp) = steer(&sn, &plan, None, p);
+                    let od = self.dir[owner as usize];
+                    let blind = plan.mode == Mode::Farm && ((sn.others.iter().filter(|c| c.kind == Kind::Food).count() as f64) < cfg.rule_food);
+                    let (rx, ry) = if blind { od } else { unit(ax - m.x, ay - m.y) };
+                    let (nx, ny) = (cfg.rule_inert * od.0 + (1.0 - cfg.rule_inert) * rx, cfg.rule_inert * od.1 + (1.0 - cfg.rule_inert) * ry);
+                    let nn = nx.hypot(ny);
+                    let nd = if nn > 1e-9 { (nx / nn, ny / nn) } else { od };
+                    self.dir[owner as usize] = nd;
+                    self.mouse[owner as usize] = if nd.0 == 0.0 && nd.1 == 0.0 { (m.x, m.y) } else { (m.x + nd.0 * FAR, m.y + nd.1 * FAR) };
+                    if sp && !self.split_used[owner as usize] && cfg.rival_split {
+                        self.split_used[owner as usize] = true;
+                        self.split(owner, ax, ay);
+                    }
+                }
+                continue;
+            }
             let (mut fx, mut fy) = (0.0f64, 0.0f64);
             let mut split_at: Option<(f64, f64)> = None;
             let mut best_split = 0.0;
@@ -568,6 +648,38 @@ impl Sim {
         }
     }
 
+    /// The snapshot a rival's rule bot would see: its cells as `mine`, everything within `view` of its main cell as others.
+    fn rival_snapshot(&self, owner: u8, view: f64) -> Option<Snapshot> {
+        let mi = self.main_of(owner)?;
+        let m = self.cells[mi];
+        let mine: Vec<Cell> = self
+            .cells
+            .iter()
+            .filter(|c| c.alive && c.owner == owner)
+            .map(|c| {
+                let mut k = Cell::new(c.id, c.x, c.y, c.size, Kind::Mine);
+                k.color = c.color;
+                k
+            })
+            .collect();
+        let near = |x: f64, y: f64, r: f64| (x - m.x).hypot(y - m.y) < view + r;
+        let mut others: Vec<Cell> = Vec::with_capacity(self.cells.len() + self.food.len() + self.viruses.len());
+        for c in self.cells.iter().filter(|c| c.alive && c.owner != owner && near(c.x, c.y, c.size)) {
+            let mut k = Cell::new(c.id, c.x, c.y, c.size, Kind::Player);
+            k.vx = c.vx * 2.0;
+            k.vy = c.vy * 2.0;
+            k.color = c.color;
+            others.push(k);
+        }
+        for v in self.viruses.iter().filter(|v| v.4 && near(v.1, v.2, v.3)) {
+            others.push(Cell::new(v.0, v.1, v.2, v.3, Kind::Virus));
+        }
+        for f in self.food.iter().filter(|f| f.3 && near(f.1, f.2, 0.0)) {
+            others.push(Cell::new(f.0, f.1, f.2, 10.0, Kind::Food));
+        }
+        Some(Snapshot { mine, others, border: self.border, dead: false })
+    }
+
     /// The snapshot the rule bot would see from our main cell.
     fn snapshot(&self, border: Border, buf_ids: &mut u32) -> Option<Snapshot> {
         let mine: Vec<Cell> = self
@@ -610,8 +722,12 @@ pub struct PlanPolicy {
     pub base: HeuristicPolicy,
     cfg: PlanCfg,
     step: i64,
-    pending: Vec<(i64, usize, Vec<PC>)>,
+    pending: Vec<(i64, usize, Vec<PC>, Vec<u32>)>,
     val: bool,
+    val_scen: u8,
+    models: Vec<HeuristicPolicy>,
+    /// per rival cell id: (last velocity angle, smoothed turn rate per step, step of the last sample)
+    heading: HashMap<u32, (f64, f64, i64)>,
 }
 
 struct Opening {
@@ -635,11 +751,54 @@ impl PlanPolicy {
         for k in ["plan_steps", "plan_gated", "plan_deep", "plan_override", "plan_split", "plan_us"] {
             base.counters.0.push((k.to_string(), 0));
         }
-        PlanPolicy { base, cfg: PlanCfg::from_json(spec), step: 0, pending: Vec::new(), val: std::env::var("AGAR_PLAN_VAL").is_ok() }
+        // rival_bots: rule-bot specs (path or inline) that scenarios 3, 4, ... simulate rivals with
+        let models: Vec<HeuristicPolicy> = spec
+            .get("rival_bots")
+            .and_then(|x| x.as_array())
+            .map(|a| {
+                a.iter()
+                    .map(|v| match v {
+                        serde_json::Value::String(path) => {
+                            let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("rival bot {path}: {e}"));
+                            HeuristicPolicy::from_spec(&serde_json::from_str(&text).unwrap_or_else(|e| panic!("rival bot {path}: {e}")))
+                        }
+                        v => HeuristicPolicy::from_spec(v),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let val_scen = std::env::var("AGAR_PLAN_VAL_SCEN").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+        PlanPolicy { base, cfg: PlanCfg::from_json(spec), step: 0, pending: Vec::new(), val: std::env::var("AGAR_PLAN_VAL").is_ok(), val_scen, models, heading: HashMap::new() }
     }
 
     pub fn reset(&mut self) {
         self.base.reset();
+    }
+
+    /// Track every visible rival cell's heading and its smoothed turn rate (rad per decision step).
+    fn track_headings(&mut self, s: &Snapshot) {
+        let step = self.step;
+        for c in s.others.iter().filter(|c| c.kind == Kind::Player) {
+            if c.vx.hypot(c.vy) < 4.0 {
+                self.heading.remove(&c.id);
+                continue;
+            }
+            let a = c.vy.atan2(c.vx);
+            let e = self.heading.entry(c.id).or_insert((a, 0.0, step));
+            if e.2 == step - 1 {
+                let mut d = a - e.0;
+                while d > std::f64::consts::PI { d -= 2.0 * std::f64::consts::PI; }
+                while d < -std::f64::consts::PI { d += 2.0 * std::f64::consts::PI; }
+                e.1 = 0.5 * e.1 + 0.5 * d;
+            } else {
+                e.1 = 0.0;
+            }
+            e.0 = a;
+            e.2 = step;
+        }
+        if step % 50 == 0 {
+            self.heading.retain(|_, v| v.2 > step - 10);
+        }
     }
 
     fn gated(&self, s: &Snapshot) -> bool {
@@ -687,7 +846,7 @@ impl PlanPolicy {
         }
         for t in 0..cfg.horizon {
             if t % cfg.rival_every == 0 {
-                sim.rivals_think(cfg);
+                sim.rivals_think(cfg, &self.models);
             }
             if t >= cfg.hold && (t - cfg.hold) % cfg.replan == 0 {
                 match sim.snapshot(border, &mut ids) {
@@ -744,15 +903,17 @@ impl PlanPolicy {
         let out = self.base.act(s);
         self.base.counters.bump("plan_steps", 1);
         self.step += 1;
+        self.track_headings(s);
         if self.val {
             let step = self.step;
             let mut keep = Vec::new();
-            for (due, h, cells) in std::mem::take(&mut self.pending) {
+            for (due, h, cells, near) in std::mem::take(&mut self.pending) {
                 if due != step {
-                    keep.push((due, h, cells));
+                    keep.push((due, h, cells, near));
                     continue;
                 }
                 let (mut n, mut perr, mut serr) = (0, 0.0, 0.0);
+                let (mut nn, mut nerr) = (0, 0.0);
                 let (mut pred_mine, mut pred_n) = (0.0, 0);
                 for c in &cells {
                     if c.owner == 0 {
@@ -763,14 +924,20 @@ impl PlanPolicy {
                     if let Some(a) = s.others.iter().find(|a| a.id == c.id) {
                         n += 1;
                         perr += (a.x - c.x).hypot(a.y - c.y);
+                        if std::env::var("AGAR_PLAN_VALV").is_ok() && near.contains(&c.id) { eprintln!("VALV id={} h={} pred=({:.0},{:.0}) act=({:.0},{:.0}) size={:.0} actv=({:.1},{:.1})", c.id, h, c.x, c.y, a.x, a.y, a.size, a.vx, a.vy); }
+                        if near.contains(&c.id) {
+                            nn += 1;
+                            nerr += (a.x - c.x).hypot(a.y - c.y);
+                        }
                         serr += a.size - c.size;
                     }
                 }
                 let npred = cells.iter().filter(|c| c.owner != 0).count();
-                eprintln!("VAL dec={} h={} matched={} of {} perr={:.0} serr={:.1} mine_pred={:.0}({}) mine_act={:.0}({})", step - (h as i64 % 1000) / 2, h, n, npred, perr / n.max(1) as f64, serr / n.max(1) as f64, pred_mine, pred_n, s.total_mass(), s.mine.len());
+                eprintln!("VAL dec={} h={} matched={} of {} perr={:.0} serr={:.1} near={} nerr={:.0} mine_pred={:.0}({}) mine_act={:.0}({})", step - (h as i64 % 1000) / 2, h, n, npred, perr / n.max(1) as f64, serr / n.max(1) as f64, nn, nerr / nn.max(1) as f64, pred_mine, pred_n, s.total_mass(), s.mine.len());
             }
             self.pending = keep;
         }
+        if self.val && std::env::var("AGAR_PLAN_VALV").is_ok() { for c in s.others.iter().filter(|c| c.kind == Kind::Player) { eprintln!("VALV0 step={} id={} pos=({:.0},{:.0}) v=({:.1},{:.1}) size={:.0}", self.step, c.id, c.x, c.y, c.vx, c.vy, c.size); } }
         if out.eject || !self.gated(s) {
             return out;
         }
@@ -778,7 +945,8 @@ impl PlanPolicy {
         self.base.counters.bump("plan_gated", 1);
         let tm = s.total_mass();
         let p = self.base.params_for(tm).clone();
-        let sim = Sim::from_snapshot(s, &self.cfg);
+        let turns: HashMap<u32, f64> = self.heading.iter().map(|(k, v)| (*k, v.1)).collect();
+        let sim = Sim::from_snapshot(s, &self.cfg, &turns);
         let me = *s.main().unwrap();
         let mut openings: Vec<Opening> = vec![Opening { aim: (out.x, out.y), split: out.split, trace: false }];
         for k in 0..self.cfg.headings {
@@ -818,10 +986,11 @@ impl PlanPolicy {
         self.base.counters.bump("plan_us", t0.elapsed().as_micros() as i64);
         if self.val {
             let ch = if best.1 != 0 && best.0 > base_score + self.cfg.margin * tm && base_lost >= self.cfg.need_loss * tm { best.1 } else { 0 };
-            let (_, _, snaps) = self.evaluate_rec(&sim, s, &p, &openings[ch], true, 0);
+            let (_, _, snaps) = self.evaluate_rec(&sim, s, &p, &openings[ch], true, self.val_scen);
             for (t, cells) in snaps {
                 let tag = if ch != 0 { t + 2000 + if openings[ch].split { 1000 } else { 0 } } else { t };
-                self.pending.push((self.step + (t as i64) / 2, tag, cells));
+                let near: Vec<u32> = s.others.iter().filter(|c| c.kind == Kind::Player && s.mine.iter().any(|q| q.dist(c) - q.size - c.size < 600.0)).map(|c| c.id).collect();
+                self.pending.push((self.step + (t as i64) / 2, tag, cells, near));
             }
         }
         if std::env::var("AGAR_PLAN_TRACE").ok().and_then(|v| v.parse::<i64>().ok()) == self.base.counters.0.iter().find(|e| e.0 == "plan_steps").map(|e| e.1) {
@@ -865,7 +1034,7 @@ mod tests {
     #[test]
     fn bigger_cell_eats_smaller_owner() {
         let s = snap(vec![Cell::new(1, 0.0, 0.0, 100.0, Kind::Mine)], vec![Cell::new(2, 20.0, 0.0, 50.0, Kind::Player)]);
-        let mut sim = Sim::from_snapshot(&s, &PlanCfg::default());
+        let mut sim = Sim::from_snapshot(&s, &PlanCfg::default(), &HashMap::new());
         sim.tick(0.0);
         assert_eq!(sim.count(1), 0);
         assert!(sim.total(0) > 100.0);
@@ -876,7 +1045,7 @@ mod tests {
     fn standing_next_to_an_eater_is_priced() {
         let s = snap(vec![Cell::new(1, 0.0, 0.0, 60.0, Kind::Mine)], vec![Cell::new(2, 90.0, 0.0, 120.0, Kind::Player)]);
         let pol = PlanPolicy::from_spec(&serde_json::json!({"kind": "plan"}));
-        let sim = Sim::from_snapshot(&s, &pol.cfg);
+        let sim = Sim::from_snapshot(&s, &pol.cfg, &HashMap::new());
         let p = Params::default();
         let stay = Opening { aim: (0.0, 0.0), split: false, trace: false };
         let (score, lost) = pol.evaluate(&sim, &s, &p, &stay);
