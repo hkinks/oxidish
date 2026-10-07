@@ -21,7 +21,7 @@ import torch.nn.functional as F
 from common import FIELD, ROOT, TEACHER, VAL_DIR, pin_cores, target_metrics
 from evalval import evaluate, load_windows
 from model import VisionNet, decode_target, heat_target
-from store import FrameStore
+from store import FrameStore, PosStore
 
 import ogar_py
 
@@ -60,7 +60,7 @@ class Shared:
         self.error = None
 
 
-def collector(a, sh, store, infer):
+def collector(a, sh, store, pos, infer):
     try:
         env = ogar_py.VecEnv(a.worlds, a.learners, opponents=FIELD, teacher=TEACHER, px=256, threads=a.threads,
                              seed=a.seed, warmup=0)
@@ -86,6 +86,9 @@ def collector(a, sh, store, infer):
             wide = torch.from_numpy(obs["wide"]).cuda()
             teacher = torch.from_numpy(info["teacher"]).cuda()
             store.push(view[:, 0], wide[:, 0], teacher, first, prev_student)
+            hit = ((teacher[:, 2] > 0.5) & ~first).nonzero().flatten()
+            if len(hit):
+                pos.add(view[hit], wide[hit], teacher[hit])
             sh.collected += n
             # per-learner driver switching (segments of ~150 decisions)
             flip = rng.random(n) < 1 / 150
@@ -141,6 +144,8 @@ def main():
     p.add_argument("--pmax", type=float, default=0.7, help="DAgger: final fraction of student-driven learners")
     p.add_argument("--d0", type=float, default=0.05, help="DAgger ramp start, fraction of the time budget")
     p.add_argument("--d1", type=float, default=0.5, help="DAgger ramp end")
+    p.add_argument("--pos-frac", type=float, default=0.03, help="fraction of each batch drawn from the split-event store")
+    p.add_argument("--pos-cap", type=int, default=16000)
     p.add_argument("--no-aug", action="store_true")
     p.add_argument("--eval-min", type=float, default=10.0)
     p.add_argument("--seed", type=int, default=1000)
@@ -179,8 +184,9 @@ def main():
 
     N = a.worlds * a.learners
     store = FrameStore(a.ring, N)
+    pos = PosStore(a.pos_cap)
     sh = Shared()
-    th = threading.Thread(target=collector, args=(a, sh, store, infer), daemon=True)
+    th = threading.Thread(target=collector, args=(a, sh, store, pos, infer), daemon=True)
     th.start()
     budget = a.hours * 3600
     t_start = time.time()
@@ -210,12 +216,16 @@ def main():
             g["lr"] = lr
         sh.p_student = a.pmax * min(1.0, max(0.0, (frac - a.d0) / max(a.d1 - a.d0, 1e-6)))
 
-        rows, cols = store.sample_index(a.batch)
+        k_pos = int(round(a.pos_frac * a.batch)) if pos.filled >= 64 else 0
+        rows, cols = store.sample_index(a.batch - k_pos)
         view, wide, teacher, stud = store.gather(rows, cols)
-        tgt = teacher[:, :2]
-        if not a.no_aug:
-            view, wide, tgt = augment(view, wide, tgt)
-            order = None  # chunks keep sample order, so teacher[:, 2:] still lines up
+        if k_pos:
+            pv, pw, pt = pos.sample(k_pos)
+            view, wide, teacher = torch.cat([view, pv]), torch.cat([wide, pw]), torch.cat([teacher, pt])
+        if not a.no_aug:   # chunks keep the sample order, so teacher[:, 2:] still lines up
+            view, wide, tgt = augment(view, wide, teacher[:, :2])
+        else:
+            tgt = teacher[:, :2]
         with torch.autocast("cuda", torch.bfloat16):
             heat, s, e, _ = model(view, wide)
         heat = heat.float()
@@ -242,8 +252,6 @@ def main():
                 acc.setdefault("heat", []).append(l_heat.item())
                 acc.setdefault("split", []).append(l_split.item())
                 acc.setdefault("ok", []).append(ok.mean().item())
-                if stud.any() and not a.no_aug:
-                    pass
             sh.infer_sd = {k: v.clone() for k, v in ema.state_dict().items()}
             sh.infer_ver += 1
         if step % 500 == 0:
@@ -251,7 +259,7 @@ def main():
             rec = dict(t=round(el), step=step, samples=sh.trained, lr=lr, p_student=sh.p_student,
                        heat=np.mean(acc["heat"]), split=np.mean(acc["split"]), train_agree=np.mean(acc["ok"]),
                        gnorm=gn.item(), train_rate=500 * a.batch / (now - t_log), env_rate=sh.env_rate,
-                       deaths=sh.deaths)
+                       deaths=sh.deaths, pos_events=pos.t)
             acc.clear()
             t_log = now
             print(json.dumps({k: (round(v, 4) if isinstance(v, float) else v) for k, v in rec.items()}), flush=True)
@@ -259,13 +267,14 @@ def main():
             logf.flush()
         if time.time() >= next_eval:
             res = evaluate(ema, val_main, val_ev)
-            sh.split_thr = float(np.clip(res["split_best"]["thr"], 0.2, 0.8))
+            sh.split_thr = float(np.clip(res["split_best"]["thr"], 0.05, 0.9))
             res.update(kind="val", t=round(time.time() - t_start), step=step, samples=sh.trained, p_student=sh.p_student)
             print("VAL", json.dumps({k: v for k, v in res.items() if not isinstance(v, dict)}), "split",
                   json.dumps(res["split_best"]), flush=True)
             logf.write(json.dumps(res) + "\n")
             logf.flush()
             save("last", res)
+            save(f"ck_{int(time.time() - t_start):05d}", res)
             if res["target_agree15"] > best:
                 best = res["target_agree15"]
                 save("best", res)

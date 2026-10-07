@@ -60,7 +60,7 @@ def binary_report(prob, label, thr):
 
 def best_threshold(prob, label):
     best = None
-    for thr in np.linspace(0.05, 0.95, 19):
+    for thr in np.concatenate([[0.01, 0.02, 0.03], np.linspace(0.05, 0.95, 19)]):
         r = binary_report(prob, label, thr)
         if best is None or r["f1"] > best["f1"]:
             best = r

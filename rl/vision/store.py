@@ -37,3 +37,27 @@ class FrameStore:
         view = torch.stack([self.view[rows, cols], self.view[prev, cols]], 1)
         wide = torch.stack([self.wide[rows, cols], self.wide[prev, cols]], 1)
         return view, wide, self.teacher[rows, cols], self.student[rows, cols]
+
+
+class PosStore:
+    """FIFO store of rare positive frames (teacher splits): both stack channels, so no predecessor lookup is needed."""
+
+    def __init__(self, cap, px=256, device="cuda"):
+        self.cap, self.dev = cap, device
+        self.view = torch.zeros((cap, 2, px, px), dtype=torch.uint8, device=device)
+        self.wide = torch.zeros((cap, 2, px // 2, px // 2), dtype=torch.uint8, device=device)
+        self.teacher = torch.zeros((cap, 4), dtype=torch.float32, device=device)
+        self.t = 0
+        self.filled = 0
+
+    def add(self, view, wide, teacher):
+        """view [k,2,px,px] etc. (GPU)."""
+        for i in range(view.shape[0]):
+            j = self.t % self.cap
+            self.view[j], self.wide[j], self.teacher[j] = view[i], wide[i], teacher[i]
+            self.t += 1
+        self.filled = min(self.t, self.cap)
+
+    def sample(self, k):
+        idx = torch.randint(0, self.filled, (k,), device=self.dev)
+        return self.view[idx], self.wide[idx], self.teacher[idx]
