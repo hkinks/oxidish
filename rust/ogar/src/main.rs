@@ -118,6 +118,8 @@ fn run_serve_cmd(a: &Args) -> Result<(), String> {
         follow: a.kv.get("follow").cloned().unwrap_or_default(),
         log_players: a.num("log-players", 0.0f64)?,
         control_port: a.kv.get("control-port").map(|v| v.parse().map_err(|_| "bad --control-port")).transpose()?,
+        control_token: a.kv.get("control-token").cloned(),
+        control_bind: a.kv.get("control-bind").cloned().unwrap_or_else(|| "127.0.0.1".into()),
     };
     ogar::server::serve(o)
 }

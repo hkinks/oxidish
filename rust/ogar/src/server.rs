@@ -37,6 +37,8 @@ pub struct ServeOpts {
     pub follow: String,
     pub log_players: f64,
     pub control_port: Option<u16>,
+    pub control_token: Option<String>,
+    pub control_bind: String,
 }
 
 enum Ev {
@@ -86,10 +88,33 @@ async fn handle_conn(stream: TcpStream, id: usize, ev: Sender<Ev>) {
     writer.abort();
 }
 
-async fn control_conn(stream: TcpStream, ev: Sender<Ev>) {
+async fn control_conn(stream: TcpStream, ev: Sender<Ev>, token: Option<String>) {
     let (rd, mut wr) = stream.into_split();
     let mut lines = BufReader::new(rd).lines();
+    let mut authed = token.is_none();
     while let Ok(Some(line)) = lines.next_line().await {
+        let line = if let Some(t) = &token {
+            let l = line.trim();
+            if l.strip_prefix("auth ").map(str::trim) == Some(t.as_str()) {
+                authed = true;
+                if wr.write_all(b"ok\n").await.is_err() {
+                    return;
+                }
+                continue;
+            }
+            match l.strip_prefix(t.as_str()).filter(|r| r.starts_with(' ')) {
+                Some(rest) => rest.trim().to_string(),
+                None if authed => l.to_string(),
+                None => {
+                    if wr.write_all(b"error: unauthorized\n").await.is_err() {
+                        return;
+                    }
+                    continue;
+                }
+            }
+        } else {
+            line
+        };
         let (tx, rx) = oneshot::channel();
         if ev.send(Ev::Cmd(line, Some(tx))).is_err() {
             return;
@@ -109,6 +134,10 @@ pub struct Server {
     ev_rx: Receiver<Ev>,
     base_food: f64,
     quit: bool,
+    paused: bool,
+    speed_changed: bool,
+    food_mult: f64,
+    tps: f64,
 }
 
 pub fn serve(o: ServeOpts) -> Result<(), String> {
@@ -128,12 +157,13 @@ pub fn serve(o: ServeOpts) -> Result<(), String> {
         });
     }
     if let Some(cp) = o.control_port {
-        let l = rt.block_on(TcpListener::bind(("127.0.0.1", cp))).map_err(|e| format!("control port {cp}: {e}"))?;
+        let l = rt.block_on(TcpListener::bind((o.control_bind.as_str(), cp))).map_err(|e| format!("control port {cp}: {e}"))?;
         let ev = ev_tx.clone();
+        let token = o.control_token.clone().filter(|t| !t.is_empty());
         rt.spawn(async move {
             loop {
                 let Ok((stream, _)) = l.accept().await else { continue };
-                tokio::spawn(control_conn(stream, ev.clone()));
+                tokio::spawn(control_conn(stream, ev.clone(), token.clone()));
             }
         });
     }
@@ -158,7 +188,8 @@ pub fn serve(o: ServeOpts) -> Result<(), String> {
     let mut w = World::new(cfg, o.seed);
     w.full_view = o.full_view;
     w.track_eats = true;
-    let mut s = Server { o, w, conns: HashMap::new(), drivers: Vec::new(), ev_rx, base_food, quit: false };
+    let food_mult = o.food_mult;
+    let mut s = Server { o, w, conns: HashMap::new(), drivers: Vec::new(), ev_rx, base_food, quit: false, paused: false, speed_changed: false, food_mult, tps: 0.0 };
     let specs = std::mem::take(&mut s.o.agents);
     if !specs.is_empty() {
         println!("{}", s.add_agents(&specs));
@@ -204,6 +235,43 @@ impl Server {
         format!("removed {}", gone.join(" "))
     }
 
+    fn speed_val(&self) -> f64 {
+        self.o.max_tps / 25.0
+    }
+
+    fn speed_str(&self) -> String {
+        format!("speed={} paused={}", self.speed_val(), self.paused as u8)
+    }
+
+    fn status(&self) -> String {
+        let (mut bots, mut humans) = (0, 0);
+        for q in &self.w.players {
+            if q.removed {
+                continue;
+            }
+            match q.kind {
+                PKind::Bot => bots += 1,
+                PKind::Human if q.connected => humans += 1,
+                _ => {}
+            }
+        }
+        let v: Vec<String> = self.drivers.iter().map(|d| format!("{}:{:.0}", d.name, self.w.players[d.pi].total_mass(&self.w))).collect();
+        format!(
+            "tick={} tps={:.1} speed={} paused={} bots={} players={} agents={} clients={} food={} foodmult={} agentlist={}",
+            self.w.tick,
+            self.tps,
+            self.speed_val(),
+            self.paused as u8,
+            bots,
+            humans,
+            self.drivers.len(),
+            self.conns.len(),
+            self.w.cfg.food_min_amount,
+            self.food_mult,
+            v.join(",")
+        )
+    }
+
     fn command(&mut self, line: &str) -> String {
         let parts: Vec<String> = line.split_whitespace().map(String::from).collect();
         match parts.first().map(String::as_str) {
@@ -212,6 +280,28 @@ impl Server {
                 Some(p) => self.remove_agents(p),
                 None => "usage: remove <name prefix>".into(),
             },
+            Some("speed") => match parts.get(1) {
+                None => self.speed_str(),
+                Some(a) => match a.trim_end_matches('x').parse::<f64>() {
+                    Ok(x) if x >= 0.0 && x.is_finite() => {
+                        self.o.max_tps = 25.0 * x;
+                        self.speed_changed = true;
+                        self.speed_str()
+                    }
+                    _ => "usage: speed [multiple of real time; 0 = unthrottled]".into(),
+                },
+            },
+            Some("pause") => {
+                self.paused = true;
+                self.speed_changed = true;
+                "paused".into()
+            }
+            Some("resume") => {
+                self.paused = false;
+                self.speed_changed = true;
+                "resumed".into()
+            }
+            Some("status") => self.status(),
             Some("list") => {
                 let v: Vec<String> = self
                     .drivers
@@ -221,11 +311,12 @@ impl Server {
                         format!("{}({:.0})", d.name, m)
                     })
                     .collect();
-                format!("agents: {}", v.join(" "))
+                format!("speed={} paused={} agents: {}", self.speed_val(), self.paused as u8, v.join(" "))
             }
             Some("food") => match parts.get(1).and_then(|v| v.parse::<f64>().ok()) {
                 Some(m) => {
                     self.w.cfg.set_food_mult(self.base_food, (m * 100.0) as u16);
+                    self.food_mult = m;
                     format!("food target {}", self.w.cfg.food_min_amount)
                 }
                 None => "usage: food <multiplier>".into(),
@@ -234,7 +325,7 @@ impl Server {
                 self.quit = true;
                 "bye".into()
             }
-            Some("help") | None => "commands: add <name=genome.json:N ...> | remove <prefix> | list | food <mult> | quit".into(),
+            Some("help") | None => "commands: add <name=genome.json:N ...> | remove <prefix> | list | status | speed [x] | pause | resume | food <mult> | quit (token: prefix lines with 'T ' or send 'auth T')".into(),
             Some(c) => format!("unknown command {c}; try help"),
         }
     }
@@ -303,6 +394,7 @@ impl Server {
             OP_FOOD if m.len() == 3 => {
                 let pct = u16::from_le_bytes([m[1], m[2]]);
                 self.w.cfg.set_food_mult(self.base_food, pct);
+                self.food_mult = pct as f64 / 100.0;
                 println!("[arena] food target now {}", self.w.cfg.food_min_amount);
                 return;
             }
@@ -518,14 +610,27 @@ impl Server {
     }
 
     fn run(&mut self) {
-        let period = if self.o.max_tps > 0.0 { Some(Duration::from_secs_f64(1.0 / self.o.max_tps)) } else { None };
         let mut next = Instant::now();
         let (mut stat_at, mut stat_ticks) = (Instant::now(), 0u32);
+        let (mut tps_at, mut tps_ticks) = (Instant::now(), 0u32);
         let log_every = (self.o.log_players * 25.0).round() as u32;
         while !self.quit {
             self.drain_events();
+            if self.speed_changed {
+                self.speed_changed = false;
+                next = Instant::now();
+                tps_at = Instant::now();
+                tps_ticks = 0;
+            }
+            if self.paused {
+                self.tps = 0.0;
+                std::thread::sleep(Duration::from_millis(20));
+                next = Instant::now();
+                continue;
+            }
             self.w.tick();
             stat_ticks += 1;
+            tps_ticks += 1;
             self.send_updates();
             if self.w.tick as u64 % self.o.sync == 0 {
                 for d in self.drivers.iter_mut() {
@@ -537,13 +642,19 @@ impl Server {
             if log_every > 0 && self.w.tick % log_every == 0 {
                 self.log_players();
             }
+            if tps_at.elapsed() >= Duration::from_secs(1) {
+                self.tps = tps_ticks as f64 / tps_at.elapsed().as_secs_f64();
+                tps_at = Instant::now();
+                tps_ticks = 0;
+            }
             if stat_at.elapsed() >= Duration::from_secs(5) {
                 let tps = stat_ticks as f64 / stat_at.elapsed().as_secs_f64();
                 println!("[arena] tick={} tps={:.0} ({:.1}x realtime) agents={} clients={}", self.w.tick, tps, tps / 25.0, self.drivers.len(), self.conns.len());
                 stat_at = Instant::now();
                 stat_ticks = 0;
             }
-            if let Some(p) = period {
+            if self.o.max_tps > 0.0 {
+                let p = Duration::from_secs_f64(1.0 / self.o.max_tps);
                 next += p;
                 let now = Instant::now();
                 if next > now {
