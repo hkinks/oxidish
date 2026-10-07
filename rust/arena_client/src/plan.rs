@@ -63,6 +63,14 @@ pub struct PlanCfg {
     pub rule_food: f64,
     /// scenario 7: fraction of the observed turn rate that is carried on
     pub turn_damp: f64,
+    /// growth-seeking: 0 = off; else a valuable edible rival within `opp_range` triggers pricing of interception openings
+    pub opp: f64,
+    pub opp_range: f64,
+    pub opp_min_frac: f64,
+    pub opp_margin: f64,
+    pub opp_horizon: usize,
+    pub opp_lead: f64,
+    pub opp_scen: Vec<u8>,
 }
 
 impl Default for PlanCfg {
@@ -103,6 +111,13 @@ impl Default for PlanCfg {
             rule_inert: 0.3,
             rule_food: 3.0,
             turn_damp: 0.8,
+            opp: 0.0,
+            opp_range: 600.0,
+            opp_min_frac: 0.15,
+            opp_margin: 0.08,
+            opp_horizon: 30,
+            opp_lead: 20.0,
+            opp_scen: vec![1, 0],
         }
     }
 }
@@ -114,13 +129,16 @@ impl PlanCfg {
         macro_rules! set {
             ($($n:ident),*) => { $( if let Some(x) = f(stringify!($n)) { c.$n = x; } )* };
         }
-        set!(need_loss, virus_gain, min_w, gate, margin, loss_w, eat_w, death_w, near_w, near_range, lead_w, frag_w, r_food, r_prey, r_flee, r_inert, pop_w, sync, min_rival_mass, rule_view, rule_inert, rule_food, turn_damp);
+        set!(need_loss, virus_gain, min_w, gate, margin, loss_w, eat_w, death_w, near_w, near_range, lead_w, frag_w, r_food, r_prey, r_flee, r_inert, pop_w, sync, min_rival_mass, rule_view, rule_inert, rule_food, turn_damp, opp, opp_range, opp_min_frac, opp_margin, opp_lead);
         macro_rules! seti {
             ($($n:ident),*) => { $( if let Some(x) = f(stringify!($n)) { c.$n = x as usize; } )* };
         }
-        seti!(rule_rivals, horizon, hold, headings, replan, rival_every, split_cands, max_rivals, max_food);
+        seti!(opp_horizon, rule_rivals, horizon, hold, headings, replan, rival_every, split_cands, max_rivals, max_food);
         if let Some(a) = v.get("scenarios").and_then(|x| x.as_array()) {
             c.scen = a.iter().filter_map(|x| x.as_u64()).map(|x| x as u8).collect();
+        }
+        if let Some(a) = v.get("opp_scenarios").and_then(|x| x.as_array()) {
+            c.opp_scen = a.iter().filter_map(|x| x.as_u64()).map(|x| x as u8).collect();
         }
         if let Some(x) = f("adv") {
             c.adv = x > 0.5;
@@ -728,6 +746,7 @@ pub struct PlanPolicy {
     models: Vec<HeuristicPolicy>,
     /// per rival cell id: (last velocity angle, smoothed turn rate per step, step of the last sample)
     heading: HashMap<u32, (f64, f64, i64)>,
+    opp_mode: std::cell::Cell<bool>,
 }
 
 struct Opening {
@@ -748,7 +767,7 @@ impl PlanPolicy {
             None => serde_json::json!({ "farm": "route" }),
         };
         let mut base = HeuristicPolicy::from_spec(&base_spec);
-        for k in ["plan_steps", "plan_gated", "plan_deep", "plan_override", "plan_split", "plan_us"] {
+        for k in ["plan_opp", "plan_opp_override", "plan_steps", "plan_gated", "plan_deep", "plan_override", "plan_split", "plan_us"] {
             base.counters.0.push((k.to_string(), 0));
         }
         // rival_bots: rule-bot specs (path or inline) that scenarios 3, 4, ... simulate rivals with
@@ -768,7 +787,7 @@ impl PlanPolicy {
             })
             .unwrap_or_default();
         let val_scen = std::env::var("AGAR_PLAN_VAL_SCEN").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
-        PlanPolicy { base, cfg: PlanCfg::from_json(spec), step: 0, pending: Vec::new(), val: std::env::var("AGAR_PLAN_VAL").is_ok(), val_scen, models, heading: HashMap::new() }
+        PlanPolicy { base, cfg: PlanCfg::from_json(spec), step: 0, pending: Vec::new(), val: std::env::var("AGAR_PLAN_VAL").is_ok(), val_scen, models, heading: HashMap::new(), opp_mode: std::cell::Cell::new(false) }
     }
 
     pub fn reset(&mut self) {
@@ -801,6 +820,17 @@ impl PlanPolicy {
         }
     }
 
+    /// A valuable edible rival is within `opp_range` (gap) of one of our cells.
+    fn opportunity(&self, s: &Snapshot) -> bool {
+        let tm = s.total_mass();
+        s.others.iter().any(|c| {
+            c.kind == Kind::Player
+                && c.mass() * EAT_RATIO < tm
+                && c.mass() >= self.cfg.opp_min_frac * tm
+                && s.mine.iter().any(|q| q.dist(c) - q.size - c.size < self.cfg.opp_range)
+        })
+    }
+
     fn gated(&self, s: &Snapshot) -> bool {
         let me = s.main().unwrap();
         let tm = s.total_mass();
@@ -815,13 +845,14 @@ impl PlanPolicy {
     /// Score of an opening: blend of the worst and the mean over the rival-behaviour scenarios.
     fn evaluate(&self, base: &Sim, s: &Snapshot, p: &Params, o: &Opening) -> (f64, f64) {
         let (mut mn, mut sum, mut lost) = (f64::INFINITY, 0.0, 0.0f64);
-        for &sc in &self.cfg.scen {
+        let scens = if self.opp_mode.get() { &self.cfg.opp_scen } else { &self.cfg.scen };
+        for &sc in scens {
             let (v, d, _) = self.evaluate_rec(base, s, p, o, false, sc);
             mn = mn.min(v);
             sum += v;
             lost = lost.max(d[1] + if d[0] <= 0.0 { base.total(0) } else { 0.0 });
         }
-        let mean = sum / self.cfg.scen.len().max(1) as f64;
+        let mean = sum / scens.len().max(1) as f64;
         (self.cfg.min_w * mn + (1.0 - self.cfg.min_w) * mean, lost)
     }
 
@@ -844,7 +875,8 @@ impl PlanPolicy {
         if o.split {
             sim.split(0, mx, my);
         }
-        for t in 0..cfg.horizon {
+        let horizon = if self.opp_mode.get() { cfg.opp_horizon } else { cfg.horizon };
+        for t in 0..horizon {
             if t % cfg.rival_every == 0 {
                 sim.rivals_think(cfg, &self.models);
             }
@@ -938,7 +970,12 @@ impl PlanPolicy {
             self.pending = keep;
         }
         if self.val && std::env::var("AGAR_PLAN_VALV").is_ok() { for c in s.others.iter().filter(|c| c.kind == Kind::Player) { eprintln!("VALV0 step={} id={} pos=({:.0},{:.0}) v=({:.1},{:.1}) size={:.0}", self.step, c.id, c.x, c.y, c.vx, c.vy, c.size); } }
-        if out.eject || !self.gated(s) {
+        if out.eject {
+            return out;
+        }
+        let danger = self.gated(s);
+        let opp = self.cfg.opp > 0.0 && self.opportunity(s);
+        if !danger && !opp {
             return out;
         }
         let t0 = Instant::now();
@@ -965,6 +1002,16 @@ impl PlanPolicy {
                 openings.push(Opening { aim: (c.x, c.y), split: true, trace: false });
             }
         }
+        if opp {
+            // interception: aim at where a valuable edible rival will be (observed velocity, `opp_lead` ticks ahead)
+            let mut tg: Vec<&Cell> = s.others.iter().filter(|c| c.kind == Kind::Player && c.mass() * EAT_RATIO < tm && c.mass() >= self.cfg.opp_min_frac * tm).collect();
+            tg.sort_by(|a, b| me.dist(a).partial_cmp(&me.dist(b)).unwrap());
+            for c in tg.into_iter().take(3) {
+                let k = self.cfg.opp_lead / self.cfg.sync;
+                openings.push(Opening { aim: (c.x + c.vx * k, c.y + c.vy * k), split: false, trace: false });
+            }
+        }
+        let mut opp_out: Option<Out> = None;
         let mut best = (f64::NEG_INFINITY, 0usize);
         let mut base_score = 0.0;
         let mut base_lost = 0.0;
@@ -975,6 +1022,24 @@ impl PlanPolicy {
                 base_lost = lost;
                 if base_lost < self.cfg.need_loss * tm {
                     best = (sc, 0);
+                    if opp {
+                        self.opp_mode.set(true);
+                        let (b0, _) = self.evaluate(&sim, s, &p, o);
+                        let mut bb = (b0, 0usize);
+                        for (j, oj) in openings.iter().enumerate().skip(1) {
+                            let (sj, _) = self.evaluate(&sim, s, &p, oj);
+                            if sj > bb.0 {
+                                bb = (sj, j);
+                            }
+                        }
+                        self.opp_mode.set(false);
+                        self.base.counters.bump("plan_opp", 1);
+                        if bb.1 != 0 && bb.0 > b0 + self.cfg.opp_margin * tm {
+                            let oo = &openings[bb.1];
+                            opp_out = Some(Out { x: oo.aim.0, y: oo.aim.1, split: oo.split, eject: false });
+                            self.base.counters.bump("plan_opp_override", 1);
+                        }
+                    }
                     break; // nothing at stake: the base action stands, no need to price the alternatives
                 }
                 self.base.counters.bump("plan_deep", 1);
@@ -1009,6 +1074,9 @@ impl PlanPolicy {
             eprintln!("PLAN step={} m={:.0} cells={} me=({:.0},{:.0}) riv={} base_ang={} {} best={} ang={} split={} scores={:?}",
                 self.base.counters.0.iter().find(|e| e.0 == "plan_steps").map(|e| e.1).unwrap_or(0), tm, s.mine.len(), me.x, me.y, sim.n_owners - 1,
                 ang(&openings[0]), openings[0].split, best.1, ang(&openings[best.1]), openings[best.1].split, sc);
+        }
+        if let Some(o) = opp_out {
+            return o;
         }
         if best.1 != 0 && best.0 > base_score + self.cfg.margin * tm && base_lost >= self.cfg.need_loss * tm {
             self.base.counters.bump("plan_override", 1);
