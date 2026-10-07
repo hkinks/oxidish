@@ -93,6 +93,18 @@ class Params:
     # range, split when the mass our half can eat around the landing spot > split_ev x the mass at risk (a half that
     # some cell could eat there, or the half we keep). The fixed rules shied away from split enemies' pieces.
     split_ev: float = 0.0
+    # giant stage: above giant_mass total mass (0 = off) the bot plays these giant_* genes (on top of the caution
+    # ramp), so late-game play (an endless world's giants) can be tuned without touching the early game
+    giant_mass: float = 0.0
+    giant_hunt_range: float = 900.0
+    giant_min_prey_frac: float = 0.1
+    giant_split_safety: float = 2.0
+    giant_split_reach: float = 0.8
+    giant_farm_threat: float = 1.5
+    giant_flee_margin: float = 1.0
+    giant_danger_margin: float = 250.0
+    giant_target_bonus: float = 6.0
+    giant_food_pull: float = 3.0
     # virus staging (bot/tactics.py): >0.5: with the shoot skill on and no shot lined up, walk round a virus
     # (within shoot_walk) to its far side from a big player (the way AposBot stages a feed), shoot_standoff
     # from its edge, so the next tick's shot goes through the virus at them. Off by default; not evolved.
@@ -106,6 +118,12 @@ class Params:
         """These genes with the big-cell caution applied (caution ramp)."""
         return Params(**{**asdict(self), "flee_margin": self.flee_margin_big,
                          "split_safety": self.split_safety_big, "half_split_safety": 1.0})
+
+    def giant(self) -> "Params":
+        """The genes for the giant stage: the cautious genes (if the caution ramp is on) with the giant_* overrides."""
+        base = self.cautious() if self.caution_mass > 0 else self
+        return Params(**{**asdict(base), **{k[len("giant_"):]: v for k, v in asdict(self).items()
+                                            if k.startswith("giant_") and k != "giant_mass"}})
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -136,6 +154,10 @@ BOUNDS = {
     "caution_mass": (0, 3000), "flee_margin_big": (0.2, 2.5), "split_safety_big": (0.5, 4),
     "flee_plan": (0, 1), "flee_pieces": (0, 1), "contender": (0, 1), "contender_gap": (0, 800),
     "aim_all_cells": (0, 1), "wall_danger": (0, 800), "wall_wary": (0, 800), "wall_wary_ratio": (0.3, 1.3), "piece_detour": (0, 1), "split_ev": (0, 4),
+    "giant_mass": (0, 12000), "giant_hunt_range": (200, 3000), "giant_min_prey_frac": (0, 0.6),
+    "giant_split_safety": (0.5, 4), "giant_split_reach": (0.3, 1.2), "giant_farm_threat": (0.2, 6),
+    "giant_flee_margin": (0.2, 2.5), "giant_danger_margin": (0, 900), "giant_target_bonus": (1, 20),
+    "giant_food_pull": (0.3, 12),
 }
 
 DEFAULT = Params()

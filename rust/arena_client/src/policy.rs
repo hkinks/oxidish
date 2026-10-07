@@ -269,6 +269,7 @@ pub struct HeuristicPolicy {
     router: Option<FoodRouter>,
     p_small: Params,
     p_big: Params,
+    p_giant: Option<Params>,
     use_big: bool,
     tactics: Tactics,
     pub counters: Counters,
@@ -281,6 +282,7 @@ impl HeuristicPolicy {
         let farm = spec.get("farm").and_then(|f| f.as_str()).unwrap_or("route");
         let params = spec.get("params").map(Params::from_json).unwrap_or_default();
         let p_big = if params.caution_mass > 0.0 { params.cautious() } else { params.clone() };
+        let p_giant = if params.giant_mass > 0.0 { Some(params.giant()) } else { None };
         let mut counters = Counters::default();
         for k in ["ejects", "shots_started", "shots_fired", "hide_ticks", "selffeeds", "double_splits"] {
             counters.0.push((k.to_string(), 0));
@@ -288,6 +290,7 @@ impl HeuristicPolicy {
         HeuristicPolicy {
             router: if farm == "route" { Some(FoodRouter::new()) } else { None },
             p_small: params,
+            p_giant,
             p_big,
             use_big: false,
             tactics: Tactics::new(),
@@ -314,7 +317,12 @@ impl HeuristicPolicy {
         if ramp {
             self.use_big = s.total_mass() > self.p_small.caution_mass;
         }
-        let p = if ramp && self.use_big { &self.p_big } else { &self.p_small };
+        let mut p = if ramp && self.use_big { &self.p_big } else { &self.p_small };
+        if let Some(g) = &self.p_giant {
+            if s.total_mass() > self.p_small.giant_mass {
+                p = g; // giant stage: its own genes above giant_mass
+            }
+        }
         let plan = heuristic_plan(s, p);
         let out = match self.tactics.act(s, &plan, p, &mut self.counters) {
             Some(o) => o,

@@ -74,6 +74,16 @@ params! {
     wall_wary_ratio = 0.8,
     piece_detour = 0.0,
     split_ev = 0.0,
+    giant_mass = 0.0,
+    giant_hunt_range = 900.0,
+    giant_min_prey_frac = 0.1,
+    giant_split_safety = 2.0,
+    giant_split_reach = 0.8,
+    giant_farm_threat = 1.5,
+    giant_flee_margin = 1.0,
+    giant_danger_margin = 250.0,
+    giant_target_bonus = 6.0,
+    giant_food_pull = 3.0,
     shoot_stage = 0.0,
     shoot_walk = 1200.0,
     shoot_standoff = 90.0,
@@ -82,6 +92,12 @@ params! {
 }
 
 impl Params {
+    /// The genes for the giant stage (Python: Params.giant): cautious genes if the ramp is on, plus giant_* overrides.
+    pub fn giant(&self) -> Params {
+        let base = if self.caution_mass > 0.0 { self.cautious() } else { self.clone() };
+        Params { hunt_range: self.giant_hunt_range, min_prey_frac: self.giant_min_prey_frac, split_safety: self.giant_split_safety, split_reach: self.giant_split_reach, farm_threat: self.giant_farm_threat, flee_margin: self.giant_flee_margin, danger_margin: self.giant_danger_margin, target_bonus: self.giant_target_bonus, food_pull: self.giant_food_pull, ..base }
+    }
+
     /// These genes with the big-cell caution applied (caution ramp).
     pub fn cautious(&self) -> Params {
         Params { flee_margin: self.flee_margin_big, split_safety: self.split_safety_big,

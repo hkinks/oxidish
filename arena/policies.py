@@ -20,6 +20,7 @@ class HeuristicPolicy:
         self._p = Params.from_dict(params or {})
         self._p_small = self._p
         self._p_big = self._p.cautious() if self._p.caution_mass > 0 else self._p
+        self._p_giant = self._p.giant() if self._p.giant_mass > 0 else None
         self._tactics = Tactics()
         self.counters = self._tactics.counters
         self._prev: dict[int, tuple[float, float]] = {}  # last positions, for velocities
@@ -35,6 +36,10 @@ class HeuristicPolicy:
             self._prev[c.id] = (c.x, c.y)
         if self._p_big is not self._p_small:       # caution ramp: cautious genes once there is mass to lose
             self._p = self._p_big if s.total_mass > self._p_small.caution_mass else self._p_small
+        if self._p_giant is not None:              # giant stage: its own genes above giant_mass
+            self._p = self._p_giant if s.total_mass > self._p_small.giant_mass else (
+                self._p_big if self._p_big is not self._p_small and s.total_mass > self._p_small.caution_mass
+                else self._p_small)
         plan = heuristic_plan(s, self._p)
         out = self._tactics.act(s, plan, self._p)
         if out is None:
