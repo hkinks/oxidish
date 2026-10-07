@@ -446,7 +446,10 @@ impl Game {
         if alive {
             self.had_cells = true;
         }
-        if self.mode == Mode::Playing && self.had_cells && self.world.mine.is_empty() {
+        // dead when none of our cells is visible any more (an id the server announced but never showed, e.g. a piece
+        // born and eaten between two updates at high speed, must not keep us "alive")
+        if self.mode == Mode::Playing && self.had_cells && !alive {
+            self.world.mine.clear();
             self.mode = Mode::Dead;
             let _ = now;
         }

@@ -577,8 +577,14 @@ impl Server {
                 let _ = tx.send(set_border(self.w.border));
                 self.w.players[pi].rejoined = false;
             }
+            // only own cells that still exist: with updates skipped at high speed, a piece can be born and eaten
+            // between two sends; announcing it left the client believing it was alive (no death screen, no respawn)
+            let live: std::collections::HashSet<u32> =
+                self.w.players[pi].cells.iter().map(|&h| self.w.ents[h as usize].id).collect();
             for cid in std::mem::take(&mut self.w.players[pi].new_cells) {
-                let _ = tx.send(add_node(cid));
+                if live.contains(&cid) {
+                    let _ = tx.send(add_node(cid));
+                }
             }
             let p = &self.w.players[pi];
             if p.spectating && p.cells.is_empty() {
