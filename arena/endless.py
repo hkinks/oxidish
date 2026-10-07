@@ -34,12 +34,14 @@ def ogar_bin() -> Path:
     return Path(os.environ.get("OGAR_BIN", ROOT / "rust" / "ogar" / "target" / "release" / exe))
 
 
-def run_world(specs: list[str], seed: int, game_min: float, log_s: float, food_mult: float) -> list[dict]:
+def run_world(specs: list[str], seed: int, game_min: float, log_s: float, food_mult: float,
+              port: int = 0, speed: float = 0.0) -> list[dict]:
     """One endless world; returns its [players] samples ({t, p: [{n, m, c}]})."""
-    port = free_port()
+    port = port or free_port()     # a fixed port + speed make the world watchable (game_client --spectate)
     end_tick = int(game_min * TICKS_PER_MIN)
     cmd = [str(ogar_bin()), "serve", "--port", str(port), "--bind", "127.0.0.1", "--bots", "8", "--map", "7000",
-           "--food-mult", str(food_mult), "--seed", str(seed), "--max-tps", "0", "--log-players", str(log_s),
+           "--food-mult", str(food_mult), "--seed", str(seed), "--max-tps", str(25 * speed), "--log-players", str(log_s),
+           *(["--control-port", str(port + 1)] if speed else []),
            "--agents", *specs]
     proc = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                             text=True, encoding="utf-8", errors="replace")
@@ -87,6 +89,9 @@ def main() -> None:
     p.add_argument("--food-mult", type=float, default=2.0)
     p.add_argument("--seed-base", type=int, default=700)
     p.add_argument("--skip-min", type=float, default=0.0, help="ignore the first N game-minutes of each world")
+    p.add_argument("--watch-port", type=int, default=0,
+                   help="run world 0 on this port (control port +1) at --watch-speed, to watch it with the game client")
+    p.add_argument("--watch-speed", type=float, default=4.0, help="world 0's speed when watched (x real time; +/- in the client)")
     p.add_argument("--cpus", type=int, default=11)
     p.add_argument("--out", help="save every world's per-window family masses (JSON)")
     a = p.parse_args()
@@ -97,7 +102,8 @@ def main() -> None:
         families[n.rsplit("-", 1)[0]] += 1
     t0 = time.time()
     with ThreadPoolExecutor(a.worlds) as ex:
-        worlds = list(ex.map(lambda i: run_world(a.agents, a.seed_base + i, a.game_min, a.log_s, a.food_mult),
+        worlds = list(ex.map(lambda i: run_world(a.agents, a.seed_base + i, a.game_min, a.log_s, a.food_mult,
+                                                 *((a.watch_port, a.watch_speed) if i == 0 and a.watch_port else ())),
                              range(a.worlds)))
     window_ticks = int(a.window_min * TICKS_PER_MIN)
     skip = int(a.skip_min / a.window_min)
