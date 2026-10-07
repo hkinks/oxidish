@@ -1068,4 +1068,38 @@ mod tests {
         let o = a.act(&mut s);
         assert!(o.x < 1.0, "should head away from the eater, aimed at {}", o.x);
     }
+
+    /// Cost of one deep evaluation (all openings x scenarios): `cargo test --release deep_eval_cost -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn deep_eval_cost() {
+        let mine = vec![Cell::new(1, 0.0, 0.0, 90.0, Kind::Mine)];
+        let mut others: Vec<Cell> = (0..6).map(|i| {
+            let a = i as f64;
+            let mut c = Cell::new(10 + i, 500.0 * a.cos() + 300.0, 500.0 * a.sin(), 50.0 + 12.0 * a, Kind::Player);
+            c.color = 100 + i as u32;
+            c.vx = 6.0;
+            c
+        }).collect();
+        for i in 0..60 {
+            others.push(Cell::new(100 + i, (i as f64 * 37.0) % 600.0 - 300.0, (i as f64 * 53.0) % 600.0 - 300.0, 10.0, Kind::Food));
+        }
+        let s = snap(mine, others);
+        for (name, spec) in [
+            ("v1 [0,1,2]", serde_json::json!({"kind": "plan"})),
+            ("v2 [3,0,1]", serde_json::json!({"kind": "plan", "scenarios": [3, 0, 1], "rival_bots": ["../../runs/final_champion.json"]})),
+        ] {
+            let pol = PlanPolicy::from_spec(&spec);
+            let sim = Sim::from_snapshot(&s, &pol.cfg, &HashMap::new());
+            let p = Params::default();
+            let o = Opening { aim: (100.0, 0.0), split: false, trace: false };
+            let t0 = Instant::now();
+            let n = 20;
+            for _ in 0..n {
+                pol.evaluate(&sim, &s, &p, &o);
+            }
+            let per_opening = t0.elapsed().as_secs_f64() * 1000.0 / n as f64;
+            eprintln!("{name}: {per_opening:.2} ms per opening (all scenarios), x19 openings = {:.1} ms per deep eval", per_opening * 19.0);
+        }
+    }
 }
