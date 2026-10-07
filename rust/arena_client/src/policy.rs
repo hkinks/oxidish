@@ -42,15 +42,28 @@ pub fn heuristic_plan(s: &Snapshot, p: &Params) -> Plan {
     // owner = the protocol colour one player's pieces share (0 = unknown: counts as its own owner)
     let owner = |c: &Cell| -> u64 { if c.color != 0 { c.color as u64 } else { (1u64 << 32) | c.id as u64 } };
     let mut pieces: HashMap<u64, usize> = HashMap::new();
+    let mut owner_mass: HashMap<u64, f64> = HashMap::new();
     if harvest {
         for c in s.others.iter().filter(|c| c.kind == Kind::Player && !s.mine.iter().any(|m| m.id == c.id)) {
             *pieces.entry(owner(c)).or_insert(0) += 1;
+            *owner_mass.entry(owner(c)).or_insert(0.0) += c.mass();
         }
     }
+    // harvest_range: a broken big player (>= 3 pieces, together at least our mass) is hunted from farther away,
+    // while its pieces are apart (~30 s until they merge back)
+    let my_total = s.total_mass();
+    let rng_of = |c: &Cell| -> f64 {
+        let o = owner(c);
+        if harvest && pieces.get(&o).copied().unwrap_or(0) >= 3 && owner_mass.get(&o).copied().unwrap_or(0.0) >= my_total {
+            rng * p.harvest_range
+        } else {
+            rng
+        }
+    };
     let floor_of = |c: &Cell| -> f64 {
         if harvest && pieces.get(&owner(c)).copied().unwrap_or(0) >= 3 { floor * 0.25 } else { floor }
     };
-    for c in cl.prey.iter().filter(|c| gap(c) < rng && c.mass() >= floor_of(c)) {
+    for c in cl.prey.iter().filter(|c| gap(c) < rng_of(c) && c.mass() >= floor_of(c)) {
         let k = if harvest {
             let mut sum = 0.0;
             for o in cl.prey.iter() {
@@ -528,5 +541,30 @@ mod harvest_tests {
         assert_eq!(heuristic_plan(&s, &base).target_id, Some(10));
         let t = heuristic_plan(&s, &on).target_id.unwrap();
         assert!((20..25).contains(&t), "harvest target {t} is not in the cloud of pieces");
+    }
+}
+
+#[cfg(test)]
+mod scavenge_tests {
+    use super::*;
+    use crate::game::{Border, Cell, Kind, Snapshot};
+
+    /// A 9000 giant just popped into 12 pieces of 750, ~2200 away (beyond hunt_range 900) from our 2500 cell: with harvest_range the bot
+    /// rushes in (the user: challenge the big ones by eating them efficiently when they break).
+    #[test]
+    fn rush_a_broken_giant() {
+        let me = Cell::new(1, 0.0, 0.0, (2500.0f64 * 100.0).sqrt(), Kind::Mine);
+        let mut others = Vec::new();
+        for i in 0..12 {
+            let a = i as f64 * 0.5;
+            let mut c = Cell::new(30 + i, 2200.0 + 150.0 * a.cos(), 150.0 * a.sin(), (750.0f64 * 100.0).sqrt(), Kind::Player);
+            c.color = 0x0000ff;
+            others.push(c);
+        }
+        let s = Snapshot { mine: vec![me], others, border: Border { left: -3500.0, right: 3500.0, top: -3500.0, bottom: 3500.0 }, dead: false };
+        let harvest = Params { harvest: 1.0, ..Params::default() };
+        let scavenge = Params { harvest: 1.0, harvest_range: 2.5, ..Params::default() };
+        assert_eq!(heuristic_plan(&s, &harvest).mode, Mode::Farm, "pieces beyond hunt_range should be ignored without it");
+        assert_eq!(heuristic_plan(&s, &scavenge).mode, Mode::Hunt, "no rush onto the broken giant's pieces");
     }
 }
