@@ -852,3 +852,51 @@ impl PlanPolicy {
         out
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::{Border, Cell, Kind, Snapshot};
+
+    fn snap(mine: Vec<Cell>, others: Vec<Cell>) -> Snapshot {
+        Snapshot { mine, others, border: Border { left: -3500.0, right: 3500.0, top: -3500.0, bottom: 3500.0 }, dead: false }
+    }
+
+    #[test]
+    fn bigger_cell_eats_smaller_owner() {
+        let s = snap(vec![Cell::new(1, 0.0, 0.0, 100.0, Kind::Mine)], vec![Cell::new(2, 20.0, 0.0, 50.0, Kind::Player)]);
+        let mut sim = Sim::from_snapshot(&s, &PlanCfg::default());
+        sim.tick(0.0);
+        assert_eq!(sim.count(1), 0);
+        assert!(sim.total(0) > 100.0);
+        assert!(sim.gained > 0.0);
+    }
+
+    #[test]
+    fn standing_next_to_an_eater_is_priced() {
+        let s = snap(vec![Cell::new(1, 0.0, 0.0, 60.0, Kind::Mine)], vec![Cell::new(2, 90.0, 0.0, 120.0, Kind::Player)]);
+        let pol = PlanPolicy::from_spec(&serde_json::json!({"kind": "plan"}));
+        let sim = Sim::from_snapshot(&s, &pol.cfg);
+        let p = Params::default();
+        let stay = Opening { aim: (0.0, 0.0), split: false, trace: false };
+        let (score, lost) = pol.evaluate(&sim, &s, &p, &stay);
+        assert!(lost > 0.0 && score < 0.0);
+    }
+
+    #[test]
+    fn no_rival_in_reach_keeps_the_base_action() {
+        let mut s = snap(vec![Cell::new(1, 0.0, 0.0, 100.0, Kind::Mine)], vec![Cell::new(2, 3000.0, 3000.0, 300.0, Kind::Player)]);
+        let mut a = PlanPolicy::from_spec(&serde_json::json!({"kind": "plan"}));
+        let mut b = HeuristicPolicy::from_spec(&serde_json::json!({"farm": "route"}));
+        let (oa, ob) = (a.act(&mut s.clone()), b.act(&mut s));
+        assert_eq!((oa.x, oa.y, oa.split), (ob.x, ob.y, ob.split));
+    }
+
+    #[test]
+    fn planner_runs_away_from_a_big_rival() {
+        let mut s = snap(vec![Cell::new(1, 0.0, 0.0, 70.0, Kind::Mine)], vec![Cell::new(2, 200.0, 0.0, 160.0, Kind::Player)]);
+        let mut a = PlanPolicy::from_spec(&serde_json::json!({"kind": "plan"}));
+        let o = a.act(&mut s);
+        assert!(o.x < 1.0, "should head away from the eater, aimed at {}", o.x);
+    }
+}
