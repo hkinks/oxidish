@@ -166,7 +166,30 @@ impl Tactics {
         }
 
         if p.shoot_enable > 0.5 && (s.mine.len() as f64) <= p.shoot_max_cells && me.mass() >= p.shoot_min_mass {
-            if threats.iter().any(|t| gap(t) < danger_radius(t, &me, p) * p.shoot_safety) {
+            // shoot_threats (Python: covered): a threat that is a shot target behind a shielding virus doesn't veto
+            let covered = |t: &Cell| -> bool {
+                if p.shoot_threats <= 0.5 {
+                    return false;
+                }
+                for v in viruses.iter() {
+                    if gap(v) > p.shoot_range || (me.mass() > v.mass() * VIRUS_POP_RATIO && gap(v) < 30.0) {
+                        continue;
+                    }
+                    if me.dist(v) >= me.dist(t) || v.dist(t) > p.shoot_reach {
+                        continue;
+                    }
+                    if t.mass() < v.mass() * VIRUS_POP_RATIO * p.shoot_target_mult {
+                        continue;
+                    }
+                    let (ax, ay) = unit(me.x, me.y, v.x, v.y);
+                    let (bx, by) = unit(v.x, v.y, t.x, t.y);
+                    if ax * bx + ay * by >= p.shoot_align {
+                        return true;
+                    }
+                }
+                false
+            };
+            if threats.iter().any(|t| gap(t) < danger_radius(t, &me, p) * p.shoot_safety && !covered(t)) {
                 self.feeding = None;
                 return None;
             }

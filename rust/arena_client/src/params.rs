@@ -76,6 +76,7 @@ params! {
     split_ev = 0.0,
     escape_split = 0.0,
     flee_smooth = 0.0,
+    shoot_threats = 0.0,
     giant_mass = 0.0,
     giant_hunt_range = 900.0,
     giant_min_prey_frac = 0.1,

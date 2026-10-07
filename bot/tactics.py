@@ -90,7 +90,23 @@ class Tactics:
                 return v.x + ux * v.size * 0.6, v.y + uy * v.size * 0.6, False, False
 
         if p.shoot_enable > 0.5 and len(s.mine) <= p.shoot_max_cells and me.mass >= p.shoot_min_mass:
-            if any(gap(t) < danger_radius(t, me, p) * p.shoot_safety for t in threats):
+            def covered(t):     # shoot_threats: the threat is a shot target behind a virus that shields us
+                if p.shoot_threats <= 0.5:
+                    return False
+                for v in viruses:
+                    if gap(v) > p.shoot_range or me.mass > v.mass * VIRUS_POP_RATIO and gap(v) < 30:
+                        continue
+                    if me.dist(v) >= me.dist(t) or v.dist(t) > p.shoot_reach:
+                        continue
+                    if t.mass < v.mass * VIRUS_POP_RATIO * p.shoot_target_mult:
+                        continue
+                    ax, ay = _unit(me.x, me.y, v.x, v.y)
+                    bx, by = _unit(v.x, v.y, t.x, t.y)
+                    if ax * bx + ay * by >= p.shoot_align:
+                        return True
+                return False
+
+            if any(gap(t) < danger_radius(t, me, p) * p.shoot_safety and not covered(t) for t in threats):
                 self._feeding = None
                 return None  # survival first
             targets = [c for c in s.others if c.kind == "player"]

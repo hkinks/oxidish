@@ -100,6 +100,10 @@ class Params:
     # weight (commit to one escape). A live c3_4 flipped between two headings 80 deg apart for 2 s at a wall and
     # was eaten (human session 2026-10-07)
     flee_smooth: float = 0.0
+    # >0.5: a threat no longer vetoes virus shooting when it is itself a shot target behind a virus (closer to us than
+    # it, lined up, within shoot_reach): the virus shields us while we feed it. Mined from the human's play
+    # (2026-10-07): his shots were at rivals his own size or bigger (median 1.06x), 640-1180 beyond the virus
+    shoot_threats: float = 0.0
     # giant stage: above giant_mass total mass (0 = off) the bot plays these giant_* genes (on top of the caution
     # ramp), so late-game play (an endless world's giants) can be tuned without touching the early game
     giant_mass: float = 0.0
@@ -160,7 +164,7 @@ BOUNDS = {
     "half_split_safety": (0, 1), "piece_threats": (0, 1),
     "caution_mass": (0, 3000), "flee_margin_big": (0.2, 2.5), "split_safety_big": (0.5, 4),
     "flee_plan": (0, 1), "flee_pieces": (0, 1), "contender": (0, 1), "contender_gap": (0, 800),
-    "aim_all_cells": (0, 1), "wall_danger": (0, 800), "wall_wary": (0, 800), "wall_wary_ratio": (0.3, 1.3), "piece_detour": (0, 1), "split_ev": (0, 4), "escape_split": (0, 1), "flee_smooth": (0, 0.95),
+    "aim_all_cells": (0, 1), "wall_danger": (0, 800), "wall_wary": (0, 800), "wall_wary_ratio": (0.3, 1.3), "piece_detour": (0, 1), "split_ev": (0, 4), "escape_split": (0, 1), "flee_smooth": (0, 0.95), "shoot_threats": (0, 1),
     "giant_mass": (0, 12000), "giant_hunt_range": (200, 3000), "giant_min_prey_frac": (0, 0.6),
     "giant_split_safety": (0.5, 4), "giant_split_reach": (0.3, 1.2), "giant_farm_threat": (0.2, 6),
     "giant_flee_margin": (0.2, 2.5), "giant_danger_margin": (0, 900), "giant_target_bonus": (1, 20),

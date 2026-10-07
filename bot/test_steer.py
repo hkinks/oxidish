@@ -235,6 +235,22 @@ def test_no_escape_split_when_escape_is_possible():
     assert not split
 
 
+def test_shoot_a_bigger_rival_through_a_virus():
+    """The human's virus shots were at rivals his own size or bigger, the virus between them (2026-10-07). With
+    shoot_threats the bot feeds the virus at such a threat; without it, the threat vetoes shooting."""
+    from .steer import Plan as _Plan
+    from .tactics import Tactics
+    me = cell(1, 0, 0, 3000, "mine")
+    virus = cell(2, 700, 0, 100, "virus")
+    rival = cell(3, 1600, 0, 4500)
+    s = Snapshot([me], [virus, rival], {}, 0, 0, BORDER, False)
+    base = {"border_margin": 30.0, "shoot_enable": 1.0, "shoot_min_mass": 300.0}
+    off = Tactics().act(s, _Plan("farm"), Params.from_dict(base))
+    on = Tactics().act(s, _Plan("farm"), Params.from_dict({**base, "shoot_threats": 1.0}))
+    assert off is None, off
+    assert on is not None and on[3], f"no shot at the rival behind the virus: {on}"
+
+
 def main() -> int:
     tests = [v for k, v in globals().items() if k.startswith("test_")]
     failed = 0
