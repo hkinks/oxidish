@@ -87,8 +87,10 @@ def main() -> None:
         print(f"\nplaying matches {n + 1}-{n + batch} (seeds {seed0}-{seed0 + batch - 1})", flush=True)
         rows += play_many(a.agents, batch, a.workers, a.ticks, seed_base=seed0, food_mult=a.food_mult,
                           engine=a.engine)
-        with open(a.out, "w") as f:
+        tmp = a.out + ".tmp"     # atomic: a reader (or a crash) never sees a half-written file
+        with open(tmp, "w") as f:
             json.dump(rows, f)
+        os.replace(tmp, a.out)
     st = status(rows, a.candidate, a.p0, a.p1, a.alpha, a.beta)
     verdict = "CONSISTENTLY BEATS ALL" if all(v == "PASS" for v in st.values()) else "does not beat all"
     print(f"\nverdict: {a.candidate} {verdict} ({len({r['seed'] for r in rows})} matches)")
