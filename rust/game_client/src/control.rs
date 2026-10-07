@@ -138,6 +138,8 @@ pub struct Control {
     tx: Sender<(String, String, Req)>,
     rx: Receiver<Msg>,
     pub open: bool,
+    /// set when F2 opened the panel this frame: the same key press must not close it again in control_frame
+    pub just_opened: bool,
     pub status: Option<Status>,
     pub message: String,
     pub error: Option<String>,
@@ -161,6 +163,7 @@ impl Control {
             tx,
             rx,
             open: false,
+            just_opened: false,
             status: None,
             message: String::new(),
             error: None,
@@ -246,6 +249,7 @@ impl Game {
 
     pub fn open_control(&mut self) {
         self.ctl.open = true;
+        self.ctl.just_opened = true;
         self.ctl.focus = None;
         self.ctl.last_poll = -100.0;
         self.ctl.scan_genomes();
@@ -481,9 +485,10 @@ impl Game {
         if !cmds.is_empty() {
             self.ctl_send(cmds, now);
         }
-        if is_key_pressed(KeyCode::F2) {
+        if is_key_pressed(KeyCode::F2) && !self.ctl.just_opened {
             self.close_control();
         }
+        self.ctl.just_opened = false;
     }
 }
 
