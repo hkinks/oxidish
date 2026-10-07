@@ -377,6 +377,14 @@ impl Game {
         if is_key_pressed(KeyCode::F2) {
             self.open_control();
         }
+        // + / - step the server's simulation speed (control port), except on the name-entry screen
+        if self.mode != Mode::Menu {
+            let up = is_key_pressed(KeyCode::Equal) || is_key_pressed(KeyCode::KpAdd);
+            let down = is_key_pressed(KeyCode::Minus) || is_key_pressed(KeyCode::KpSubtract);
+            if up || down {
+                self.step_speed(up, now);
+            }
+        }
         if is_key_pressed(KeyCode::F11) {
             set_fullscreen(true);
         }
@@ -421,8 +429,8 @@ impl Game {
                 if is_key_pressed(KeyCode::Space) {
                     self.send(vec![17]);
                 }
-                if is_key_pressed(KeyCode::Equal) || is_key_pressed(KeyCode::KpAdd) {
-                    self.send(vec![205]);
+                if is_key_pressed(KeyCode::M) {
+                    self.send(vec![205]); // +500 mass (arena extension 0xCD)
                 }
                 let repeat = now - self.last_repeat >= REPEAT_SECS;
                 if is_key_pressed(KeyCode::W) || (is_key_down(KeyCode::W) && repeat) {
@@ -605,7 +613,7 @@ impl Game {
         f.outlined(&self.status, w / 2.0, h / 2.0 + 56.0, 20.0, dim, 1.0);
         let help = [
             "Mouse: steer    Space: split    W: eject (hold)    Wheel: zoom",
-            "+ : add 500 mass    Tab: spectate (Q: whole map)    Esc / F1: settings",
+            "M: add 500 mass    +/-: server speed    Tab: spectate (Q: whole map)    Esc / F1: settings",
         ];
         for (i, l) in help.iter().enumerate() {
             f.outlined(l, w / 2.0, h / 2.0 + 110.0 + 28.0 * i as f32, 20.0, dim, 1.0);

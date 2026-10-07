@@ -26,7 +26,7 @@ cd rust/game_client && cargo build --release -j 2
 ./target/release/game_client --name YourNick     # default server ws://127.0.0.1:9600 (Rust ogar); --server ws://127.0.0.1:9500 for the Node showcase; --novsync uncaps FPS
 ```
 - Start screen: type a nickname, Enter or click to play, Tab to spectate (follows the largest player; Q switches to the whole map and back). After death: Enter/click respawns, Tab spectates.
-- Mouse steers, Space split, W eject (hold repeats), `+` / numpad `+` adds 500 mass (opcode 0xCD), wheel zoom, F11 fullscreen, Esc quits.
+- Mouse steers, Space split, W eject (hold repeats), `M` adds 500 mass (opcode 0xCD), `+` / `-` (also numpad) step the server speed 0.25x .. 10x .. max via the control port, wheel zoom, F11 fullscreen, Esc quits.
 - Rendering interpolates cells over 120 ms like the web client; leaderboard top-right, score bottom-left, FPS top-left.
 - Testing without eyes: `--selftest` (scripted bot: steers, eats, dies, respawns, +500, split, eject; logs `[auto]` lines), `--screenshot out.png [--shot-at SECS]`.
 

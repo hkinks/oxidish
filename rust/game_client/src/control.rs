@@ -265,6 +265,24 @@ impl Game {
         self.apply_settings();
     }
 
+    /// +/- keys: the next speed step up or down (0.25x .. 10x, then max = unthrottled), via the control port.
+    pub fn step_speed(&mut self, up: bool, now: f64) {
+        const STEPS: [f64; 6] = [0.25, 0.5, 1.0, 2.0, 4.0, 10.0];
+        let cur = self.ctl.status.as_ref().map_or(1.0, |s| s.speed);
+        let next = if up {
+            if cur == 0.0 { 0.0 } else { STEPS.iter().copied().find(|&v| v > cur + 1e-9).unwrap_or(0.0) }
+        } else if cur == 0.0 {
+            10.0
+        } else {
+            STEPS.iter().rev().copied().find(|&v| v < cur - 1e-9).unwrap_or(0.25)
+        };
+        if let Some(st) = self.ctl.status.as_mut() {
+            st.speed = next; // show it at once; the next status poll confirms
+        }
+        self.status = if next == 0.0 { "speed: max".into() } else { format!("speed: {next}x") };
+        self.ctl_send(vec![format!("speed {next}")], now);
+    }
+
     fn ctl_send(&mut self, cmds: Vec<String>, now: f64) {
         let (a, t) = (self.control_addr(), self.set.control_token.clone());
         self.ctl.send(&a, &t, Req::Cmds(cmds), now);
