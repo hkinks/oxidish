@@ -303,3 +303,31 @@ CUDA), and no split-decision mismatches.
 The M3 gate (≥ c3_4) is met. The vision bot beats its teacher on 4 of 5 seed sets and ties the fifth. The margin
 is small (+1.8), but it was consistent across all five sets. It still dies about 1.7× as often as the planner
 (M2 in-env), which is the first thing for M4 to fix.
+
+## Fast endless evaluator (`ogar endless`)
+
+`ogar endless --agents name=spec:N ... --worlds 8 --game-min 240 --seed-base S [--threads T] [--out samples.json]` runs all
+worlds in ONE process (rust/ogar/src/endless.rs), headless and unthrottled. Each world is built exactly like
+`ogar serve --seed S+i --agents ...` (same `World::new`, agent order and names; tick, then a decision step every
+2nd tick, then the 15 s `[players]` sample), so a rule-bot lineup gives the same samples as `arena.endless`
+(**verified bit-identical**: 2 worlds x 15 min and 30 min, c3_4:2 + champ_safe:2, every sample equal). Rule bots
+step on worker threads; for vision lineups the workers render frames, a coordinator runs ONE batched net call for the
+vision agents of all worlds (16 frames for 8 worlds x 2; graph sizes are padded to powers of two inside `infer_batch`)
+and the workers apply the actions (two barriers per decision).
+
+Python: `uv run python -m arena.endless ... --engine inproc [--shards K] [--threads T]`; same output lines and `--out`
+json as the default `--engine serve` (the engine's own timing goes to stderr). `--shards K` splits the worlds over K
+`ogar endless` processes: on a GPU shared with other jobs every process gets its own time slice, which helps when
+the card is busy.
+
+**Equivalence.** Rule bots: bit-identical (above). Vision: with one world (batch 2, same as `serve`) the samples are also
+bit-identical (3 min); with larger batches the GPU kernels round differently, so worlds diverge chaotically from the
+first minutes (not a logic difference). Leader share, `v=vision_bc3:2 champ_safe:2`, 8 worlds x 60 min: seeds 700
+serve 69% / inproc 56%; seeds 900 serve 55% / inproc 70%; means 62% vs 63%, i.e. inside seed noise.
+
+**Cost.** The batched call is GPU-bound: about 4.6 ms graph run for 16 frames when the card is shared with a trainer
+(9 ms+ when busier), CPU phase about 1 ms per decision. Wall (8 worlds x 60 min, GPU shared with other jobs):
+`serve` 955 s / 828 s, `inproc` 737 s / 617 s (vision); rule-bot lineups run all worlds in parallel threads with no
+barriers. A 30 min x 8 run took 141 s (5.7 ms/call), i.e. about 19 min for 240 min. The 6-minute target is not reachable
+with this fp32 net and 16 frames per call on a shared GPU (180k sequential calls x >= 3 ms); it needs a cheaper net
+(fp16, smaller input) or an idle GPU. `--shards K` gives each process its own GPU time slice (helps only when the card is busy).

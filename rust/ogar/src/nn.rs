@@ -22,6 +22,12 @@ use ort::value::Tensor;
 
 /// Process-wide inference counters: (forward calls, frames, total ns inside `forward`).
 pub static STATS: [AtomicU64; 3] = [AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0)];
+/// CUDA-graph path breakdown in ns: (copy in, graph replay + sync, copy out)
+pub static PHASES: [AtomicU64; 3] = [AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0)];
+
+pub fn phases() -> (u64, u64, u64) {
+    (PHASES[0].load(Ordering::Relaxed), PHASES[1].load(Ordering::Relaxed), PHASES[2].load(Ordering::Relaxed))
+}
 
 pub fn stats() -> (u64, u64, u64) {
     (STATS[0].load(Ordering::Relaxed), STATS[1].load(Ordering::Relaxed), STATS[2].load(Ordering::Relaxed))
@@ -248,12 +254,20 @@ impl GraphRun {
     }
 
     fn run(&mut self, n: usize, view: &[u8], wide: &[u8], c: &Cudart) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>), String> {
+        let t0 = Instant::now();
         c.h2d(self.p_view, view)?;
         c.h2d(self.p_wide, wide)?;
         c.sync()?;
+        let t1 = Instant::now();
         self.session.run_binding(&self.binding).map_err(|x| x.to_string())?;
         c.sync()?;
-        Ok((c.d2h(self.p_heat, n * HEAT * HEAT)?, c.d2h(self.p_split, n)?, c.d2h(self.p_eject, n)?))
+        let t2 = Instant::now();
+        let r = (c.d2h(self.p_heat, n * HEAT * HEAT)?, c.d2h(self.p_split, n)?, c.d2h(self.p_eject, n)?);
+        let t3 = Instant::now();
+        PHASES[0].fetch_add((t1 - t0).as_nanos() as u64, Ordering::Relaxed);
+        PHASES[1].fetch_add((t2 - t1).as_nanos() as u64, Ordering::Relaxed);
+        PHASES[2].fetch_add((t3 - t2).as_nanos() as u64, Ordering::Relaxed);
+        Ok(r)
     }
 }
 
@@ -288,6 +302,14 @@ impl Net {
         let n = Arc::new(Net { backend, path: path.to_string(), ep: ep.to_string(), split_thr });
         c.insert(key, n.clone());
         Ok(n)
+    }
+
+    /// The batch size this net actually runs for `b` frames (CUDA graphs: the next power of two).
+    pub fn padded_batch(&self, b: usize) -> usize {
+        match self.backend {
+            Backend::Graph(_) => b.next_power_of_two(),
+            Backend::Plain(_) => b,
+        }
     }
 
     /// Raw forward pass for `b` frame stacks: view [b,2,PX,PX], wide [b,2,WPX,WPX] -> heat [b,HEAT*HEAT], split, eject.

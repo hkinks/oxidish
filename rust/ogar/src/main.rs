@@ -2,6 +2,8 @@
 //!
 //!   ogar match --agents ramp300=runs/r2g9_ramp300.json:1 champ=runs/final_champion.json:1 --ticks 22500 \
 //!              --food-mult 2 --seed 1 --matches 8 --threads 2 --out rows.json
+//!   ogar endless --agents c3_4=bot/c3_4.json:2 ... --worlds 8 --game-min 240 --seed-base 700 [--threads T] --out samples.json
+//!                (the fast endless evaluator: all worlds in one process, vision agents batched across worlds; endless.rs)
 //!   ogar vdump --agents vis=bot/vision_bc3.json:2 ... --count 1000 --out DIR   (vision parity frames, rl/vision/parity.py)
 //!   ogar serve --port 9600 --bots 8 --food-mult 2 --map 7000 [--agents name=genome.json:N] [--full-view]
 //!                [--record DIR [--record-all]]   (eat events, agent loss scenes, human frames: see record.rs)
@@ -110,6 +112,44 @@ fn run_match_cmd(a: &Args) -> Result<(), String> {
     }
     if let Some(path) = a.kv.get("out") {
         std::fs::write(path, ascii_json(&serde_json::to_string(&rows).unwrap())).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+fn run_endless_cmd(a: &Args) -> Result<(), String> {
+    let cpus = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+    let worlds: usize = a.num("worlds", 8usize)?;
+    let o = ogar::endless::EndlessOpts {
+        agents: a.agents.clone(),
+        worlds,
+        game_min: a.num("game-min", 240.0f64)?,
+        seed_base: a.num("seed-base", 700u64)?,
+        threads: a.num("threads", worlds.min(cpus))?,
+        bots: a.num("bots", 8usize)?,
+        map: a.num("map", 7000.0f64)?,
+        food_mult: a.num("food-mult", 2.0f64)?,
+        sync: a.num("sync", 2u64)?,
+        log_s: a.num("log-s", 15.0f64)?,
+    };
+    let (samples, st) = ogar::endless::run(&o)?;
+    let n: usize = samples.iter().map(|s| s.len()).sum();
+    println!("{} worlds x {:.0} game-min, {n} samples, {:.0}s wall", o.worlds, o.game_min, st.wall_s);
+    if st.infer_calls > 0 {
+        println!("vision: {} batched calls, {:.1} frames/call, {:.2} ms/call ({:.0}s of the wall inside inference)", st.infer_calls,
+                 st.infer_frames as f64 / st.infer_calls as f64, st.infer_s * 1e3 / st.infer_calls as f64, st.infer_s);
+    }
+    #[cfg(feature = "vision-net")]
+    {
+        let (c, r, d) = ogar::nn::phases();
+        if st.infer_calls > 0 {
+            let k = st.infer_calls as f64 * 1e6;
+            println!("per call: copy in {:.2} ms, graph run {:.2} ms, copy out {:.2} ms", c as f64 / k, r as f64 / k, d as f64 / k);
+        }
+    }
+    if let Some(path) = a.kv.get("out") {
+        let stats = serde_json::json!({"wall_s": st.wall_s, "infer_calls": st.infer_calls, "infer_frames": st.infer_frames, "infer_s": st.infer_s});
+        let doc = serde_json::json!({"worlds": samples, "stats": stats});
+        std::fs::write(path, ascii_json(&serde_json::to_string(&doc).unwrap())).map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -228,6 +268,7 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
         Some("match") => parse_args(&args[1..]).and_then(|a| run_match_cmd(&a)),
+        Some("endless") => parse_args(&args[1..]).and_then(|a| run_endless_cmd(&a)),
         Some("serve") => parse_args(&args[1..]).and_then(|a| run_serve_cmd(&a)),
         Some("render") => parse_args(&args[1..]).and_then(|a| run_render_cmd(&a)),
         #[cfg(feature = "vision-net")]
