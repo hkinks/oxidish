@@ -320,6 +320,14 @@ json as the default `--engine serve` (the engine's own timing goes to stderr). `
 `ogar endless` processes: on a GPU shared with other jobs every process gets its own time slice, which helps when
 the card is busy.
 
-Cost: the batched call is GPU-bound, about 4.6 ms graph run for 16 frames (5.7 ms per call with the card shared),
-CPU phase about 1 ms per decision. See the measured wall times in the commit/report; the 6-minute target needs a
-cheaper net (fp16 / smaller input), not a better scheduler.
+**Equivalence.** Rule bots: bit-identical (above). Vision: with one world (batch 2, same as `serve`) the samples are also
+bit-identical (3 min); with larger batches the GPU kernels round differently, so worlds diverge chaotically from the
+first minutes (not a logic difference). Leader share, `v=vision_bc3:2 champ_safe:2`, 8 worlds x 60 min: seeds 700
+serve 69% / inproc 56%; seeds 900 serve 55% / inproc 70%; means 62% vs 63%, i.e. inside seed noise.
+
+**Cost.** The batched call is GPU-bound: about 4.6 ms graph run for 16 frames when the card is shared with a trainer
+(9 ms+ when busier), CPU phase about 1 ms per decision. Wall (8 worlds x 60 min, GPU shared with other jobs):
+`serve` 955 s / 828 s, `inproc` 737 s / 617 s (vision); rule-bot lineups run all worlds in parallel threads with no
+barriers. A 30 min x 8 run took 141 s (5.7 ms/call), i.e. about 19 min for 240 min. The 6-minute target is not reachable
+with this fp32 net and 16 frames per call on a shared GPU (180k sequential calls x >= 3 ms); it needs a cheaper net
+(fp16, smaller input) or an idle GPU. `--shards K` gives each process its own GPU time slice (helps only when the card is busy).
