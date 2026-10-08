@@ -303,3 +303,23 @@ CUDA), and no split-decision mismatches.
 The M3 gate (≥ c3_4) is met. The vision bot beats its teacher on 4 of 5 seed sets and ties the fifth. The margin
 is small (+1.8), but it was consistent across all five sets. It still dies about 1.7× as often as the planner
 (M2 in-env), which is the first thing for M4 to fix.
+
+## Fast endless evaluator (`ogar endless`)
+
+`ogar endless --agents name=spec:N ... --worlds 8 --game-min 240 --seed-base S [--threads T] [--out samples.json]` runs all
+worlds in ONE process (rust/ogar/src/endless.rs), headless and unthrottled. Each world is built exactly like
+`ogar serve --seed S+i --agents ...` (same `World::new`, agent order and names; tick, then a decision step every
+2nd tick, then the 15 s `[players]` sample), so a rule-bot lineup gives the same samples as `arena.endless`
+(**verified bit-identical**: 2 worlds x 15 min and 30 min, c3_4:2 + champ_safe:2, every sample equal). Rule bots
+step on worker threads; for vision lineups the workers render frames, a coordinator runs ONE batched net call for the
+vision agents of all worlds (16 frames for 8 worlds x 2; graph sizes are padded to powers of two inside `infer_batch`)
+and the workers apply the actions (two barriers per decision).
+
+Python: `uv run python -m arena.endless ... --engine inproc [--shards K] [--threads T]`; same output lines and `--out`
+json as the default `--engine serve` (the engine's own timing goes to stderr). `--shards K` splits the worlds over K
+`ogar endless` processes: on a GPU shared with other jobs every process gets its own time slice, which helps when
+the card is busy.
+
+Cost: the batched call is GPU-bound, about 4.6 ms graph run for 16 frames (5.7 ms per call with the card shared),
+CPU phase about 1 ms per decision. See the measured wall times in the commit/report; the 6-minute target needs a
+cheaper net (fp16 / smaller input), not a better scheduler.
