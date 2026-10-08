@@ -5,8 +5,9 @@ use std::collections::HashMap;
 
 use crate::farm::FoodRouter;
 use crate::game::{Cell, Kind, Snapshot};
+use crate::order::{apply_plan, Order, Verb};
 use crate::params::Params;
-use crate::steer::{classify, danger_radius, danger_radius_at, eaters_of, guarded_cells, half_of, split_threats, steer, Mode, Plan, EAT_RATIO};
+use crate::steer::{classify, danger_radius, danger_radius_at, eaters_of, guarded_cells, half_of, split_threats, steer_to, Mode, Plan, EAT_RATIO};
 
 const VIRUS_POP_RATIO: f64 = 1.33;
 const EJECT_REACH: f64 = 660.0;
@@ -136,7 +137,7 @@ impl Tactics {
         self.stage = None;
     }
 
-    fn act(&mut self, s: &Snapshot, plan: &Plan, p: &Params, counters: &mut Counters) -> Option<Out> {
+    fn act(&mut self, s: &Snapshot, plan: &Plan, p: &Params, counters: &mut Counters, only: Option<&[u32]>) -> Option<Out> {
         let me = *s.main().unwrap();
         let cl = classify(s, None);
         let (threats, viruses) = (&cl.threats, &cl.viruses);
@@ -238,7 +239,7 @@ impl Tactics {
                     continue;
                 }
                 let (ax, ay) = unit(me.x, me.y, v.x, v.y);
-                for t in s.others.iter().filter(|c| c.kind == Kind::Player) {
+                for t in s.others.iter().filter(|c| c.kind == Kind::Player && only.map_or(true, |o| o.contains(&c.id))) {
                     if t.mass() < v.mass() * VIRUS_POP_RATIO * p.shoot_target_mult {
                         continue;
                     }
@@ -271,14 +272,14 @@ impl Tactics {
             }
             self.feeding = None;
             if p.shoot_stage > 0.5 {
-                return self.stage_move(&me, viruses, s, p, counters);
+                return self.stage_move(&me, viruses, s, p, counters, only);
             }
         }
         None
     }
 
     /// Walk round a virus to the side away from a big player, so that a shot through it lines up.
-    fn stage_move(&mut self, me: &Cell, viruses: &[Cell], s: &Snapshot, p: &Params, counters: &mut Counters) -> Option<Out> {
+    fn stage_move(&mut self, me: &Cell, viruses: &[Cell], s: &Snapshot, p: &Params, counters: &mut Counters, only: Option<&[u32]>) -> Option<Out> {
         let mut best: Option<(Cell, Cell)> = None;
         let mut best_score = 0.0f64;
         for v in viruses {
@@ -286,7 +287,7 @@ impl Tactics {
             if walk > p.shoot_walk || me.size + v.size + p.shoot_standoff > EJECT_REACH {
                 continue;
             }
-            for t in s.others.iter().filter(|c| c.kind == Kind::Player) {
+            for t in s.others.iter().filter(|c| c.kind == Kind::Player && only.map_or(true, |o| o.contains(&c.id))) {
                 if t.mass() < v.mass() * VIRUS_POP_RATIO * p.shoot_target_mult {
                     continue;
                 }
@@ -338,6 +339,8 @@ pub struct HeuristicPolicy {
     flee_dir: Option<(f64, f64)>,
     /// plan and genome stage ("small" / "big" / "giant") of the last `act` (read-only, for recordings)
     pub last_plan: Option<(Plan, &'static str)>,
+    /// the commander's standing order (set by the server each step; None = none)
+    pub order: Option<Order>,
 }
 
 impl HeuristicPolicy {
@@ -362,6 +365,7 @@ impl HeuristicPolicy {
             prev: HashMap::new(),
             flee_dir: None,
             last_plan: None,
+            order: None,
         }
     }
 
@@ -402,9 +406,27 @@ impl HeuristicPolicy {
                 stage = "giant";
             }
         }
-        let plan = heuristic_plan(s, p);
+        let mut plan = heuristic_plan(s, p);
+        let mut goto = None;
+        let mut forced: Option<Params> = None;
+        let mut only: Option<Vec<u32>> = None;
+        if let Some(o) = &self.order {
+            let a = apply_plan(plan, s, p, o);
+            plan = a.plan;
+            goto = a.goto;
+            self.counters.bump(if a.honoured { "order_steps" } else { "order_ignored" }, 1);
+            if o.verb == Verb::VirusSplit && plan.mode != Mode::Flee {
+                // shoot viruses at the ordered target only: every shooting gene forced on
+                forced = Some(Params { shoot_enable: 1.0, shoot_target_mult: 1.0, shoot_min_mass: 40.0, shoot_max_cells: 16.0,
+                                       shoot_stage: 1.0, shoot_range: p.shoot_range.max(700.0), ..p.clone() });
+                only = Some(o.ids.clone());
+            }
+        }
+        let p = forced.as_ref().unwrap_or(p);
         self.last_plan = Some((plan, stage));
-        let out = match self.tactics.act(s, &plan, p, &mut self.counters) {
+        let acted = self.tactics.act(s, &plan, p, &mut self.counters, only.as_deref());
+        let split_off = self.order.as_ref().map_or(false, |o| o.split == Some(false));
+        let out = match acted {
             Some(o) => {
                 if plan.mode != Mode::Flee {
                     self.flee_dir = None;
@@ -412,7 +434,7 @@ impl HeuristicPolicy {
                 o
             }
             None => {
-                let (x, y, split) = steer(s, &plan, self.router.as_mut(), p);
+                let (x, y, split) = steer_to(s, &plan, self.router.as_mut(), p, goto);
                 let mut o = Out { x, y, split, eject: false };
                 // flee_smooth (Python: HeuristicPolicy._smooth_flee): commit to one escape heading
                 if plan.mode != Mode::Flee || p.flee_smooth <= 0.0 || o.split {
@@ -446,6 +468,10 @@ impl HeuristicPolicy {
                 o
             }
         };
+        let mut out = out;
+        if split_off {
+            out.split = false;
+        }
         self.counters.bump("steps", 1);
         self.counters.bump(&format!("mode_{}", plan.mode.as_str()), 1);
         self.counters.bump("splits", out.split as i64);
@@ -483,6 +509,15 @@ impl Policy {
             Policy::Heuristic(p) => p.act(s),
             Policy::Apos(p) => p.act(s),
             Policy::Plan(p) => p.act(s),
+        }
+    }
+
+    /// Set or clear the commander's order (rule bots with modes only; AposBot ignores it).
+    pub fn set_order(&mut self, o: Option<Order>) {
+        match self {
+            Policy::Heuristic(p) => p.order = o,
+            Policy::Plan(p) => p.base.order = o,
+            Policy::Apos(_) => {}
         }
     }
 

@@ -254,7 +254,15 @@ pub fn flee_heading_scored(s: &Snapshot, me: &Cell, threats: &[Cell], poppers: &
 }
 
 /// World aim point and whether to split this tick.
-pub fn steer(s: &Snapshot, plan: &Plan, mut router: Option<&mut FoodRouter>, p: &Params) -> (f64, f64, bool) {
+pub fn steer(s: &Snapshot, plan: &Plan, router: Option<&mut FoodRouter>, p: &Params) -> (f64, f64, bool) {
+    steer_to(s, plan, router, p, None)
+}
+
+/// Pull of a commander's `goto` point (orders): strong against food, still weaker than the threat repulsion.
+const GOTO_PULL: f64 = 8.0;
+
+/// `steer` with an optional point the bot is ordered to walk to (threat repulsion and walls still apply).
+pub fn steer_to(s: &Snapshot, plan: &Plan, mut router: Option<&mut FoodRouter>, p: &Params, goto: Option<(f64, f64)>) -> (f64, f64, bool) {
     let me = *s.main().unwrap();
     let Classified { food, prey, threats, viruses } = classify(s, Some(p));
     let (w_food, w_prey, w_threat) = match plan.mode {
@@ -293,6 +301,9 @@ pub fn steer(s: &Snapshot, plan: &Plan, mut router: Option<&mut FoodRouter>, p: 
             let (wx, wy) = r.next_waypoint(s, &food, &unsafe_cell, p.switch_margin);
             pull!(wx, wy, w_food * p.food_pull);
         }
+    }
+    if let Some((gx, gy)) = goto {
+        pull!(gx, gy, GOTO_PULL);
     }
     let ahead = |c: &Cell| -> Cell {
         if p.lead == 0.0 {

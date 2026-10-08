@@ -4,6 +4,7 @@ pub mod apos;
 pub mod client;
 pub mod farm;
 pub mod game;
+pub mod order;
 pub mod params;
 pub mod plan;
 pub mod policy;
