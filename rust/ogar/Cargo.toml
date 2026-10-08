@@ -11,10 +11,11 @@ tokio-tungstenite = "0.26"
 futures-util = { version = "0.3", features = ["sink"] }
 flate2 = "1"
 ort = { version = "=2.0.0-rc.13", optional = true, default-features = false, features = ["std", "load-dynamic", "cuda"] }
+libloading = { version = "0.9", optional = true }
 
 [features]
 default = ["vision-net"]
-vision-net = ["dep:ort"]
+vision-net = ["dep:ort", "dep:libloading"]
 
 [profile.release]
 opt-level = 3

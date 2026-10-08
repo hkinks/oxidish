@@ -295,6 +295,7 @@ dependencies = [
  "arena_client",
  "flate2",
  "futures-util",
+ "libloading",
  "ort",
  "serde_json",
  "tokio",
