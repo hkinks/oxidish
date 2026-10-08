@@ -176,3 +176,66 @@ mod tests {
         assert!((20..25).contains(&a.plan.target_id.unwrap()));
     }
 }
+
+#[cfg(test)]
+mod policy_tests {
+    use super::*;
+    use crate::game::{Border, Kind};
+    use crate::policy::HeuristicPolicy;
+
+    fn snap(others: Vec<Cell>, mass: f64) -> Snapshot {
+        let me = Cell::new(1, 0.0, 0.0, (mass * 100.0).sqrt(), Kind::Mine);
+        Snapshot { mine: vec![me], others, border: Border { left: -5000.0, right: 5000.0, top: -5000.0, bottom: 5000.0 }, dead: false }
+    }
+    fn player(id: u32, x: f64, y: f64, mass: f64) -> Cell {
+        Cell::new(id, x, y, (mass * 100.0).sqrt(), Kind::Player)
+    }
+
+    /// `hunt X` changes the rule bot's target and its aim; clearing the order brings the old target back.
+    #[test]
+    fn hunt_order_retargets_the_policy() {
+        let mut pol = HeuristicPolicy::from_spec(&serde_json::json!({"farm": "field"}));
+        let others = vec![player(10, 500.0, 0.0, 800.0), player(11, -700.0, 0.0, 300.0)];
+        let mut s = snap(others.clone(), 3000.0);
+        let out = pol.act(&mut s);
+        assert_eq!(pol.last_plan.unwrap().0.target_id, Some(10));
+        assert!(out.x > 0.0);
+        pol.order = Some(Order { verb: Verb::Hunt, ids: vec![11], split: Some(false) });
+        let mut s = snap(others.clone(), 3000.0);
+        let out = pol.act(&mut s);
+        assert_eq!(pol.last_plan.unwrap().0.target_id, Some(11));
+        assert!(out.x < 0.0, "aim should turn towards the ordered target");
+        assert!(!out.split);
+        pol.order = None;
+        let mut s = snap(others, 3000.0);
+        pol.act(&mut s);
+        assert_eq!(pol.last_plan.unwrap().0.target_id, Some(10));
+    }
+
+    /// `goto` pulls the aim towards the point even with food elsewhere.
+    #[test]
+    fn goto_order_aims_at_the_point() {
+        let mut pol = HeuristicPolicy::from_spec(&serde_json::json!({"farm": "field"}));
+        pol.order = Some(Order { verb: Verb::Goto(-3000.0, 0.0), ids: vec![], split: None });
+        let mut s = snap(vec![Cell::new(50, 400.0, 0.0, 10.0, Kind::Food)], 500.0);
+        let out = pol.act(&mut s);
+        assert!(out.x < 0.0);
+    }
+
+    /// `virus-split X`: a big target behind a virus in line -> the bot ejects towards the virus (shoots it).
+    #[test]
+    fn virus_split_shoots_a_virus_at_the_target() {
+        let mut pol = HeuristicPolicy::from_spec(&serde_json::json!({"farm": "field", "params": {"flee_margin": 1.0}}));
+        pol.order = Some(Order { verb: Verb::VirusSplit, ids: vec![10], split: None });
+        let virus = Cell::new(30, 1100.0, 0.0, 100.0, Kind::Virus); // mass 100
+        // a 2000-mass target (can eat us at 1000, outside its danger radius) 600 behind the virus; we are 1000
+        let mut s = snap(vec![virus, player(10, 1900.0, 0.0, 2000.0)], 1000.0);
+        let out = pol.act(&mut s);
+        assert!(out.eject, "expected a virus shot, plan {:?}", pol.last_plan);
+        assert!(out.x > 0.0);
+        // without the order, the default genes (shoot_enable 0.45 < 0.5) do not shoot
+        let mut pol2 = HeuristicPolicy::from_spec(&serde_json::json!({"farm": "field", "params": {"flee_margin": 1.0}}));
+        let mut s = snap(vec![virus, player(10, 1900.0, 0.0, 2000.0)], 1000.0);
+        assert!(!pol2.act(&mut s).eject);
+    }
+}
