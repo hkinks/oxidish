@@ -24,6 +24,8 @@ pub struct VisionBot {
     prepared: bool,
     /// the net's answer for the prepared frames (set by the batch pass)
     pending: Option<NetOut>,
+    /// a commander's `split on`: allow the net's split decisions although the spec has `split: false`
+    pub split_override: Option<bool>,
     pub decisions: u64,
     /// the net output of the latest decision (frames of that decision are still in `frames`)
     pub last: Option<NetOut>,
@@ -44,7 +46,7 @@ impl VisionBot {
     }
 
     pub fn new(net: Arc<Net>, split: bool, split_thr: f32, eject: bool) -> VisionBot {
-        VisionBot { net, split, split_thr, eject, frames: FrameStack::new(PX), prepared: false, pending: None, decisions: 0, last: None }
+        VisionBot { net, split, split_thr, eject, frames: FrameStack::new(PX), prepared: false, pending: None, split_override: None, decisions: 0, last: None }
     }
 
     /// New life: the next frame stack starts with both channels equal.
@@ -83,7 +85,7 @@ impl VisionBot {
         self.last = Some(o);
         let sig = |l: f32| 1.0 / (1.0 + (-l).exp());
         let (x, y) = self.frames.cam.pixel_to_world(o.target.0 as f64, o.target.1 as f64);
-        Out { x, y, split: self.split && sig(o.split_logit) > self.split_thr, eject: self.eject && sig(o.eject_logit) > 0.5 }
+        Out { x, y, split: self.split_override.unwrap_or(self.split) && sig(o.split_logit) > self.split_thr, eject: self.eject && sig(o.eject_logit) > 0.5 }
     }
 }
 

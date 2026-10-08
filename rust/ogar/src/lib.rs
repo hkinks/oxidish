@@ -3,6 +3,7 @@
 
 pub mod agent;
 pub mod bots;
+pub mod commander;
 pub mod config;
 pub mod matches;
 #[cfg(feature = "vision-net")]

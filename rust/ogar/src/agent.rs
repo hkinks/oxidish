@@ -51,6 +51,8 @@ pub struct AgentDriver {
     cooldown: u32,
     /// set by `step` when the agent lost >= 30% of its mass (or died); the recorder takes it
     pub loss: Option<Loss>,
+    /// the commander's standing order (control port `order`), None = none
+    pub order: Option<crate::commander::DriverOrder>,
     /// the "vision" agent kind: decides from rendered frames with an ONNX net (see visionbot.rs); `policy` is unused
     #[cfg(feature = "vision-net")]
     pub vision: Option<Box<crate::visionbot::VisionBot>>,
@@ -121,6 +123,7 @@ impl AgentDriver {
             totals: Default::default(),
             cooldown: 0,
             loss: None,
+            order: None,
             #[cfg(feature = "vision-net")]
             vision,
         }
@@ -228,13 +231,27 @@ impl AgentDriver {
             self.stats.mass_ticks += mass * self.sync as f64;
             self.stats.peak_mass = self.stats.peak_mass.max(mass);
             let mut rec = if self.trace.is_some() { Some(self.step_rec(w)) } else { None };
+            let ord = self.current_order(w);
             #[cfg(feature = "vision-net")]
             let a = match self.vision.as_mut() {
-                Some(v) => v.decide(w, self.pi, &s),
-                None => self.policy.act(&mut s),
+                Some(v) => {
+                    v.split_override = ord.as_ref().and_then(|o| o.split).filter(|&on| on);
+                    let a = v.decide(w, self.pi, &s);
+                    match &ord {
+                        Some(o) => crate::commander::vision_override(o, &s, a),
+                        None => a,
+                    }
+                }
+                None => {
+                    self.policy.set_order(ord);
+                    self.policy.act(&mut s)
+                }
             };
             #[cfg(not(feature = "vision-net"))]
-            let a = self.policy.act(&mut s);
+            let a = {
+                self.policy.set_order(ord);
+                self.policy.act(&mut s)
+            };
             if let Some(mut r) = rec.take() {
                 r.aim = (a.x, a.y);
                 r.split = a.split;

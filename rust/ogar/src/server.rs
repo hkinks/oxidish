@@ -14,6 +14,7 @@ use tokio::sync::{mpsc::unbounded_channel, mpsc::UnboundedSender, oneshot};
 use tokio_tungstenite::tungstenite::Message;
 
 use crate::agent::{step_all, AgentDriver};
+use crate::commander::{self, DriverOrder, OrderCmd};
 use crate::config::Config;
 use crate::matches::parse_lineup;
 use crate::protocol::*;
@@ -253,6 +254,45 @@ impl Server {
         format!("removed {}", gone.join(" "))
     }
 
+    /// Index of the driver an `order`/`scene` argument names: exact name, else the only name with that prefix.
+    fn find_driver(&self, name: &str) -> Option<usize> {
+        if let Some(i) = self.drivers.iter().position(|d| d.name == name) {
+            return Some(i);
+        }
+        let m: Vec<usize> = (0..self.drivers.len()).filter(|&i| self.drivers[i].name.starts_with(name)).collect();
+        if m.len() == 1 { Some(m[0]) } else { None }
+    }
+
+    fn order_command(&mut self, parts: &[String]) -> String {
+        let cmd = match commander::parse_order(parts) {
+            Ok(c) => c,
+            Err(e) => return format!("error: {e}"),
+        };
+        let agent = match &cmd {
+            OrderCmd::Set { agent, .. } | OrderCmd::Split { agent, .. } | OrderCmd::Free { agent } => agent.clone(),
+        };
+        let Some(i) = self.find_driver(&agent) else { return format!("error: no unique agent {agent:?}; see `agents`") };
+        let now = self.w.tick;
+        let d = &mut self.drivers[i];
+        match cmd {
+            OrderCmd::Free { .. } => {
+                d.order = None;
+                format!("{}: order cleared", d.name)
+            }
+            OrderCmd::Set { verb, ttl_s, .. } => {
+                let o = d.order.get_or_insert_with(DriverOrder::default);
+                let text = verb.show();
+                o.verb = Some((verb, now + commander::ticks(ttl_s)));
+                format!("{}: {} for {}s", d.name, text, ttl_s)
+            }
+            OrderCmd::Split { on, ttl_s, .. } => {
+                let o = d.order.get_or_insert_with(DriverOrder::default);
+                o.split = Some((on, now + commander::ticks(ttl_s)));
+                format!("{}: split {} for {}s", d.name, if on { "on" } else { "off" }, ttl_s)
+            }
+        }
+    }
+
     fn speed_val(&self) -> f64 {
         self.o.max_tps / 25.0
     }
@@ -347,11 +387,52 @@ impl Server {
                 }
                 None => "usage: food <multiplier>".into(),
             },
+            Some("order") => self.order_command(&parts),
+            Some("orders") => {
+                let v: Vec<String> = self
+                    .drivers
+                    .iter()
+                    .filter(|d| d.order.is_some())
+                    .map(|d| format!("{} {}", d.name, commander::order_json(d, self.w.tick)))
+                    .collect();
+                if v.is_empty() { "no active orders".into() } else { v.join(" | ") }
+            }
+            Some("scene") => match parts.get(1).and_then(|a| self.find_driver(a)) {
+                Some(i) => commander::scene(&self.w, &self.drivers[i]).to_string(),
+                None => format!("error: no such agent {:?}; see `agents`", parts.get(1).map(String::as_str).unwrap_or("")),
+            },
+            Some("frame") => match parts.get(1).and_then(|a| self.find_driver(a)) {
+                Some(i) => match commander::frame_png(&self.w, self.drivers[i].pi) {
+                    Some(png) => match parts.get(2) {
+                        Some(path) => match std::fs::write(path, &png) {
+                            Ok(()) => format!("ok {path}"),
+                            Err(e) => format!("error: {path}: {e}"),
+                        },
+                        None => format!("png-base64:{}", commander::base64(&png)),
+                    },
+                    None => "error: agent is dead".into(),
+                },
+                None => "error: no such agent".into(),
+            },
+            Some("leaderboard") => commander::leaderboard_json(&self.w, 10).to_string(),
+            Some("agents") => {
+                let v: Vec<Value> = self
+                    .drivers
+                    .iter()
+                    .map(|d| {
+                        let p = &self.w.players[d.pi];
+                        serde_json::json!({"name": d.name, "kind": d.spec.get("kind").and_then(|k| k.as_str()).unwrap_or("rule"),
+                                           "alive": !p.cells.is_empty(), "mass": p.total_mass(&self.w).round() as i64,
+                                           "cells": p.cells.len(), "order": commander::order_json(d, self.w.tick)})
+                    })
+                    .collect();
+                serde_json::json!({"t": self.w.tick as f64 / 25.0, "speed": self.speed_val(), "paused": self.paused, "agents": v}).to_string()
+            }
             Some("quit") => {
                 self.quit = true;
                 "bye".into()
             }
-            Some("help") | None => "commands: add <name=genome.json:N ...> | remove <prefix> | list | status | speed [x] | pause | resume | food <mult> | quit (token: prefix lines with 'T ' or send 'auth T')".into(),
+            Some("help") | None => "commands: add <name=genome.json:N ...> | remove <prefix> | list | status | speed [x] | pause | resume | food <mult> | order <agent> <verb> ... | orders | scene <agent> | frame <agent> [path] | leaderboard | agents | quit (token: prefix lines with 'T ' or send 'auth T')".into(),
             Some(c) => format!("unknown command {c}; try help"),
         }
     }
