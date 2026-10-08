@@ -25,6 +25,23 @@ import ogar_py
 
 DT = 0.08
 
+# League pool: the endless field (champ, r2g9, safe, ramp_r2, ramp300) + c3_4, shoot, two hunters and other rule-bot
+# variants. DISJOINT from the held-out field (plan_c34, plan2_c34, vision_bc3, apos, hunter_virus, see endlessH.sh).
+# Each world draws `--pick` of them. (Vision-net opponents are not available inside ogar_py.)
+LEAGUE = FIELD + [
+    ("c3_4", "bot/c3_4.json", 1),
+    ("shoot", "runs/ab/c34_shootthr.json", 1),
+    ("hhunt", "bot/sparring/hunter_hunt.json", 1),
+    ("hreck", "bot/sparring/hunter_reckless.json", 1),
+    ("cm500", "runs/ab/c34_cm500.json", 1),
+    ("esc", "runs/ab/c34_esc.json", 1),
+    ("ev1", "runs/ab/c34_ev1.json", 1),
+    ("fs", "runs/ab/c34_fs.json", 1),
+    ("pd", "runs/ab/c3_4_pd.json", 1),
+    ("wd400", "runs/ab/r300_wd400_ww800.json", 1),
+    ("ww400pd", "runs/ab/ww400_pd.json", 1),
+]
+
 
 def cell_to_uv(idx, H=64, px=256):
     cell = px / H
@@ -82,6 +99,9 @@ def main():
     p.add_argument("--vpre", type=int, default=40, help="value-pretrain iterations (policy fixed)")
     p.add_argument("--save-every", type=int, default=20)
     p.add_argument("--seed", type=int, default=7000)
+    p.add_argument("--league", action="store_true", help="randomised league per world (LEAGUE pool) instead of the fixed endless field")
+    p.add_argument("--pick", type=int, default=6, help="league entries drawn per world")
+    p.add_argument("--giant-p", type=float, default=0.0, help="probability that a world has a giant opponent")
     a = p.parse_args()
 
     os.chdir(ROOT)
@@ -103,8 +123,12 @@ def main():
     opt = torch.optim.AdamW([dict(params=rest, lr=a.lr), dict(params=head_params, lr=a.vlr)], weight_decay=1e-4,
                             betas=(0.9, 0.99))
 
-    env = ogar_py.VecEnv(a.worlds, a.learners, opponents=FIELD, teacher=TEACHER, px=256, threads=a.threads,
-                         seed=a.seed, warmup=0)
+    if a.league:
+        env = ogar_py.VecEnv(a.worlds, a.learners, opponents=[], pool=LEAGUE, pool_pick=a.pick, giant_p=a.giant_p,
+                             teacher=TEACHER, px=256, threads=a.threads, seed=a.seed, warmup=0)
+    else:
+        env = ogar_py.VecEnv(a.worlds, a.learners, opponents=FIELD, teacher=TEACHER, px=256, threads=a.threads,
+                             seed=a.seed, warmup=0, giant_p=a.giant_p)
     n = env.n
     env.set_teacher(False)
     obs = env.reset()
