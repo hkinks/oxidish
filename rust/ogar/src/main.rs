@@ -138,6 +138,14 @@ fn run_endless_cmd(a: &Args) -> Result<(), String> {
         println!("vision: {} batched calls, {:.1} frames/call, {:.2} ms/call ({:.0}s of the wall inside inference)", st.infer_calls,
                  st.infer_frames as f64 / st.infer_calls as f64, st.infer_s * 1e3 / st.infer_calls as f64, st.infer_s);
     }
+    #[cfg(feature = "vision-net")]
+    {
+        let (c, r, d) = ogar::nn::phases();
+        if st.infer_calls > 0 {
+            let k = st.infer_calls as f64 * 1e6;
+            println!("per call: copy in {:.2} ms, graph run {:.2} ms, copy out {:.2} ms", c as f64 / k, r as f64 / k, d as f64 / k);
+        }
+    }
     if let Some(path) = a.kv.get("out") {
         let stats = serde_json::json!({"wall_s": st.wall_s, "infer_calls": st.infer_calls, "infer_frames": st.infer_frames, "infer_s": st.infer_s});
         let doc = serde_json::json!({"worlds": samples, "stats": stats});

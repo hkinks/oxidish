@@ -59,11 +59,8 @@ def run_world(specs: list[str], seed: int, game_min: float, log_s: float, food_m
     return samples
 
 
-def run_inproc(specs: list[str], worlds: int, seed_base: int, game_min: float, log_s: float, food_mult: float,
-               threads: int = 0) -> list[list[dict]]:
-    """All worlds in ONE `ogar endless` process (rust/ogar/src/endless.rs): the same samples run_world() returns for
-    seeds seed_base+i (bit-identical for rule bots), but the worlds step in lockstep on worker threads and every vision
-    agent of every world decides in one batched net call. Much faster for vision lineups (no GPU contention)."""
+def _inproc_shard(specs: list[str], worlds: int, seed_base: int, game_min: float, log_s: float, food_mult: float,
+                  threads: int) -> list[list[dict]]:
     import tempfile
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "samples.json"
@@ -74,8 +71,23 @@ def run_inproc(specs: list[str], worlds: int, seed_base: int, game_min: float, l
                            text=True, encoding="utf-8", errors="replace")
         if r.returncode:
             raise RuntimeError(f"ogar endless failed ({r.returncode}): " + r.stdout[-2000:])
-        print("\n".join("   " + l for l in r.stdout.splitlines() if "wall" in l or l.startswith("vision")), file=sys.stderr)
+        print("\n".join("   " + l for l in r.stdout.splitlines() if "wall" in l or l.startswith(("vision", "per call"))), file=sys.stderr)
         return json.loads(out.read_text())["worlds"]
+
+
+def run_inproc(specs: list[str], worlds: int, seed_base: int, game_min: float, log_s: float, food_mult: float,
+               threads: int = 0, shards: int = 1) -> list[list[dict]]:
+    """Worlds in `ogar endless` processes (rust/ogar/src/endless.rs): the same samples run_world() returns for seeds
+    seed_base+i (bit-identical for rule bots), but the worlds of a process step in lockstep on worker threads and every
+    vision agent of every world decides in one batched net call. `shards` > 1 splits the worlds over that many
+    processes (one batched call each): on a GPU shared with other jobs each process gets its own time slice."""
+    shards = max(1, min(shards, worlds))
+    bounds = [worlds * k // shards for k in range(shards + 1)]
+    parts = [(bounds[k + 1] - bounds[k], seed_base + bounds[k]) for k in range(shards)]
+    with ThreadPoolExecutor(shards) as ex:
+        res = list(ex.map(lambda ns: _inproc_shard(specs, ns[0], ns[1], game_min, log_s, food_mult,
+                                                   max(1, threads * ns[0] // worlds) if threads else 0), parts))
+    return [w for r in res for w in r]
 
 
 def family_masses(samples: list[dict], families: dict[str, int], window_ticks: int) -> list[dict[str, float]]:
@@ -115,7 +127,9 @@ def main() -> None:
     p.add_argument("--engine", choices=["serve", "inproc"], default="serve",
                    help="serve: one `ogar serve` process per world (default); inproc: one `ogar endless` process, all worlds "
                         "in lockstep, vision agents batched across worlds (same samples, much faster with vision agents)")
-    p.add_argument("--threads", type=int, default=0, help="inproc: worker threads (default min(worlds, cores))")
+    p.add_argument("--threads", type=int, default=0, help="inproc: worker threads in total (default min(worlds, --cpus))")
+    p.add_argument("--shards", type=int, default=1, help="inproc: split the worlds over this many ogar endless processes "
+                   "(helps when the GPU is shared with other jobs: one time slice per process)")
     p.add_argument("--cpus", type=int, default=11)
     p.add_argument("--out", help="save every world's per-window family masses (JSON)")
     a = p.parse_args()
@@ -128,7 +142,7 @@ def main() -> None:
     if a.engine == "inproc":
         if a.watch_port:
             p.error("--watch-port needs --engine serve")
-        worlds = run_inproc(a.agents, a.worlds, a.seed_base, a.game_min, a.log_s, a.food_mult, a.threads or min(a.worlds, a.cpus))
+        worlds = run_inproc(a.agents, a.worlds, a.seed_base, a.game_min, a.log_s, a.food_mult, a.threads or min(a.worlds, a.cpus), a.shards)
     else:
         with ThreadPoolExecutor(a.worlds) as ex:
             worlds = list(ex.map(lambda i: run_world(a.agents, a.seed_base + i, a.game_min, a.log_s, a.food_mult,
