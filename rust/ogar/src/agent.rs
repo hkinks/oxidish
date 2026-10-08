@@ -51,6 +51,9 @@ pub struct AgentDriver {
     cooldown: u32,
     /// set by `step` when the agent lost >= 30% of its mass (or died); the recorder takes it
     pub loss: Option<Loss>,
+    /// the "vision" agent kind: decides from rendered frames with an ONNX net (see visionbot.rs); `policy` is unused
+    #[cfg(feature = "vision-net")]
+    pub vision: Option<Box<crate::visionbot::VisionBot>>,
 }
 
 fn color_of(c: [u8; 3]) -> u32 {
@@ -95,10 +98,19 @@ impl AgentDriver {
     pub fn new(w: &mut World, name: &str, spec: &Value, sync: u64) -> AgentDriver {
         let pi = w.add_player(PKind::Agent);
         w.players[pi].name = name.to_string();
+        let is_vision = spec.get("kind").and_then(|k| k.as_str()) == Some("vision");
+        #[cfg(feature = "vision-net")]
+        let vision = if is_vision {
+            Some(Box::new(crate::visionbot::VisionBot::from_spec(spec).unwrap_or_else(|e| panic!("vision agent {name}: {e}"))))
+        } else {
+            None
+        };
+        #[cfg(not(feature = "vision-net"))]
+        assert!(!is_vision, "this ogar build has no vision-net feature");
         AgentDriver {
             pi,
             name: name.to_string(),
-            policy: Policy::from_spec(spec),
+            policy: Policy::from_spec(&if is_vision { json!({}) } else { spec.clone() }),
             spec: spec.clone(),
             stats: AgentStats { name: name.to_string(), ..Default::default() },
             sync,
@@ -109,6 +121,8 @@ impl AgentDriver {
             totals: Default::default(),
             cooldown: 0,
             loss: None,
+            #[cfg(feature = "vision-net")]
+            vision,
         }
     }
 
@@ -193,6 +207,10 @@ impl AgentDriver {
             }
             self.alive = false;
             self.policy.reset();
+            #[cfg(feature = "vision-net")]
+            if let Some(v) = self.vision.as_mut() {
+                v.reset();
+            }
             let name = self.name.clone();
             w.join_game(self.pi, &name, None);
         } else {
@@ -210,6 +228,12 @@ impl AgentDriver {
             self.stats.mass_ticks += mass * self.sync as f64;
             self.stats.peak_mass = self.stats.peak_mass.max(mass);
             let mut rec = if self.trace.is_some() { Some(self.step_rec(w)) } else { None };
+            #[cfg(feature = "vision-net")]
+            let a = match self.vision.as_mut() {
+                Some(v) => v.decide(w, self.pi, &s),
+                None => self.policy.act(&mut s),
+            };
+            #[cfg(not(feature = "vision-net"))]
             let a = self.policy.act(&mut s);
             if let Some(mut r) = rec.take() {
                 r.aim = (a.x, a.y);
@@ -252,5 +276,33 @@ impl AgentDriver {
         self.stats.virus_pop_mass = p.pop_mass as f64;
         self.stats.counters = self.policy.counters().clone();
         self.stats
+    }
+}
+
+/// One decision step for all drivers of a world, in order. The vision agents' forward passes are batched: their
+/// frames are rendered first and answered by one net call, then every driver steps as usual (a driver without a
+/// vision net behaves exactly as `AgentDriver::step`).
+pub fn step_all(drivers: &mut [AgentDriver], w: &mut World) {
+    #[cfg(feature = "vision-net")]
+    batch_vision(drivers, w);
+    for d in drivers.iter_mut() {
+        d.step(w);
+    }
+}
+
+#[cfg(feature = "vision-net")]
+fn batch_vision(drivers: &mut [AgentDriver], w: &World) {
+    let mut bots: Vec<&mut crate::visionbot::VisionBot> = Vec::new();
+    for d in drivers.iter_mut() {
+        if let Some(v) = d.vision.as_mut() {
+            let s = snapshot(w, d.pi);
+            if !s.dead {
+                v.prepare(w, d.pi, &s);
+                bots.push(v);
+            }
+        }
+    }
+    if bots.len() > 1 {
+        crate::visionbot::infer_batch(&mut bots);
     }
 }

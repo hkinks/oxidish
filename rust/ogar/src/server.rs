@@ -13,7 +13,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc::unbounded_channel, mpsc::UnboundedSender, oneshot};
 use tokio_tungstenite::tungstenite::Message;
 
-use crate::agent::AgentDriver;
+use crate::agent::{step_all, AgentDriver};
 use crate::config::Config;
 use crate::matches::parse_lineup;
 use crate::protocol::*;
@@ -681,9 +681,7 @@ impl Server {
             tps_ticks += 1;
             self.send_updates();
             if self.w.tick as u64 % self.o.sync == 0 {
-                for d in self.drivers.iter_mut() {
-                    d.step(&mut self.w);
-                }
+                step_all(&mut self.drivers, &mut self.w);
                 self.w.kill_log.clear();
                 if let Some(r) = self.rec.as_mut() {
                     r.after_step(&self.w, &mut self.drivers);

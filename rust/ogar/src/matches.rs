@@ -5,7 +5,7 @@ use std::sync::Mutex;
 
 use serde_json::{json, Value};
 
-use crate::agent::AgentDriver;
+use crate::agent::{step_all, AgentDriver};
 use crate::config::Config;
 use crate::world::World;
 use arena_client::client::AgentStats;
@@ -61,9 +61,7 @@ pub fn run_match(lineup: &[(String, Value)], o: &MatchOpts, seed: u64) -> Vec<Ag
             continue;
         }
         let start = *started.get_or_insert(w.tick);
-        for a in agents.iter_mut() {
-            a.step(&mut w);
-        }
+        step_all(&mut agents, &mut w);
         w.kill_log.clear();
         if (w.tick - start) as u64 >= o.ticks {
             break;

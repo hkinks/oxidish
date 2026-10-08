@@ -8,7 +8,7 @@ name = "ogar_py"
 crate-type = ["cdylib"]
 
 [dependencies]
-ogar = { path = "../ogar" }
+ogar = { path = "../ogar", default-features = false }
 pyo3 = { version = "0.25", features = ["extension-module", "abi3-py310"] }
 numpy = "0.25"
 serde_json = "1"

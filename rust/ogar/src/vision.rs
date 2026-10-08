@@ -14,7 +14,7 @@ use std::time::Instant;
 use arena_client::policy::Policy;
 use serde_json::Value;
 
-use crate::agent::{snapshot, AgentDriver};
+use crate::agent::{snapshot, step_all, AgentDriver};
 use crate::config::Config;
 use crate::render::{render_into, Scratch};
 use crate::world::{PKind, World};
@@ -92,6 +92,56 @@ impl Camera {
             dv *= lim / m;
         }
         (c + du, c + dv)
+    }
+}
+
+/// The 2-frame stack of one player exactly as `WorldEnv::observe` builds it for a learner: `view` [2, px, px] (the
+/// camera square) and `wide` [2, px/2, px/2] (2x that extent), channel 0 = this decision, channel 1 = the previous
+/// decision (a new life starts with both equal). Used by the in-server "vision" agent (visionbot.rs).
+pub struct FrameStack {
+    pub px: usize,
+    pub view: Vec<u8>,
+    pub wide: Vec<u8>,
+    pub cam: Camera,
+    have_prev: bool,
+    scratch: Scratch,
+}
+
+impl FrameStack {
+    pub fn new(px: usize) -> FrameStack {
+        FrameStack {
+            px,
+            view: vec![0; 2 * px * px],
+            wide: vec![0; 2 * (px / 2) * (px / 2)],
+            cam: Camera::default(),
+            have_prev: false,
+            scratch: Scratch::default(),
+        }
+    }
+
+    /// New life: the next `prepare` fills both channels with the same frame.
+    pub fn reset(&mut self) {
+        self.have_prev = false;
+    }
+
+    /// Shift in this decision's frames from the player's own snapshot `s` and view box.
+    pub fn prepare(&mut self, w: &World, pi: usize, s: &arena_client::game::Snapshot) {
+        let px = self.px;
+        let (vs, ws) = (px * px, (px / 2) * (px / 2));
+        let (vx0, vy0, vx1, vy1) = w.view_box(pi);
+        let (cx, cy, half) = ((vx0 + vx1) / 2.0, (vy0 + vy1) / 2.0, (vx1 - vx0) / 2.0);
+        self.cam = Camera { cx, cy, half, px };
+        if self.have_prev {
+            self.view.copy_within(0..vs, vs);
+            self.wide.copy_within(0..ws, ws);
+        }
+        render_into(s, cx, cy, half, px, &mut self.scratch, &mut self.view[..vs]);
+        render_into(s, cx, cy, half * 2.0, px / 2, &mut self.scratch, &mut self.wide[..ws]);
+        if !self.have_prev {
+            self.view.copy_within(0..vs, vs);
+            self.wide.copy_within(0..ws, ws);
+            self.have_prev = true;
+        }
     }
 }
 
@@ -244,9 +294,7 @@ impl WorldEnv {
         }
         self.timing.tick += t.elapsed().as_nanos() as u64;
         let t = Instant::now();
-        for a in self.opps.iter_mut() {
-            a.step(&mut self.w);
-        }
+        step_all(&mut self.opps, &mut self.w);
         self.w.kill_log.clear();
         self.timing.opponents += t.elapsed().as_nanos() as u64;
     }
@@ -508,6 +556,54 @@ mod tests {
             env.step(&vec![0.0; env.n * 4]);
         }
         assert!(unclipped * 2 > checked, "most teacher targets should be inside the frame ({unclipped}/{checked})");
+    }
+
+    /// The in-server agent's frames (FrameStack, fed by the agent's own snapshot) are bit-identical to what the
+    /// VecEnv rendered for the training: same world state, 400 decisions incl. deaths / respawns, 2 learners.
+    #[test]
+    fn frame_stack_matches_vecenv_frames() {
+        let mut o = VisionOpts::new(spec());
+        o.n_worlds = 2;
+        o.learners_per_world = 2;
+        o.px = 256;
+        o.threads = 2;
+        o.opponents = vec![("c34".into(), spec(), 4)];
+        o.warmup = 50;
+        let mut env = VecEnv::new(o);
+        env.reset();
+        let mut stacks: Vec<FrameStack> = (0..4).map(|_| FrameStack::new(256)).collect();
+        let (vs, ws) = (2 * 256 * 256, 2 * 128 * 128);
+        let (mut checked, mut resets) = (0, 0);
+        let mut rng = 12345u64;
+        for step in 0..1500 {
+            for (i, st) in stacks.iter_mut().enumerate() {
+                let (wi, li) = (i / 2, i % 2);
+                let we = &env.worlds[wi];
+                let l = &we.learners[li];
+                if env.done[i] != 0 || step == 0 {
+                    st.reset();
+                    resets += 1;
+                }
+                let s = snapshot(&we.w, l.pi);
+                assert!(!s.dead);
+                st.prepare(&we.w, l.pi, &s);
+                assert_eq!(&st.view[..], &env.view[i * vs..(i + 1) * vs], "view differs (learner {i}, step {step})");
+                assert_eq!(&st.wide[..], &env.wide[i * ws..(i + 1) * ws], "wide differs (learner {i}, step {step})");
+                let (c, d) = (st.cam, l.cam);
+                assert!(c.cx == d.cx && c.cy == d.cy && c.half == d.half);
+                checked += 1;
+            }
+            let acts: Vec<f32> = (0..env.n * 4)
+                .map(|k| {
+                    rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                    let r = (rng >> 40) as f32 / (1u64 << 24) as f32;
+                    if k % 4 < 2 { r * 256.0 } else { 0.0 }
+                })
+                .collect();
+            env.step(&acts);
+        }
+        assert_eq!(checked, 6000);
+        assert!(resets > 4, "expected some deaths ({resets} resets)");
     }
 
     #[test]
