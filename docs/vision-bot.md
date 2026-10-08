@@ -271,3 +271,35 @@ logs in `logs/vision/*.jsonl`. M3 export: `runs/vision/export/vision_bc3.{pt,onn
 inputs u8 view[B,2,256,256], wide[B,2,128,128]; outputs heat[B,64,64], split, eject, value; ONNX vs torch max
 abs diff 0.04 on random noise input, TorchScript exact). Decode as in `model.decode_target`; the planner-pixel frame is
 the view frame. Reproduce the export: `python rl/vision/export.py runs/vision/bc3/final.pt runs/vision/export/vision_bc3`.
+
+## M3 status (2026-10-08): the vision bot in the Rust server
+
+**Spec:** `bot/vision_bc3.json` = `{"kind":"vision","model":"runs/vision/export/vision_bc3.onnx","split":false}`.
+Optional keys: `split`, `split_thr`, `ep` (`cuda` = CUDA graphs, default; `cuda_plain`; `cpu`), `eject`, `threads`.
+It works wherever a genome file does: `ogar match`, `ogar serve --agents`, `arena.endless --agents`,
+`arena.verdict --engine ogar`.
+
+**Code and runtime**
+- `rust/ogar/src/visionbot.rs`, `nn.rs`. Frames come from `vision::FrameStack`; a test checks them as byte-identical to the VecEnv
+  over 6000 stacks, including deaths and respawns.
+- `AgentDriver::step_all` batches all vision agents of a world into one forward pass.
+- Runtime is onnxruntime-gpu 1.23.2 through `ort` (`load-dynamic`). The DLLs live in `runs/vision/ort/` (gitignored);
+  cuDNN and cuBLAS come from `.venv/Lib/site-packages/torch/lib` or `OGAR_DLL_DIRS`.
+
+**Parity with torch** (1000 frames, `ogar vdump` + `rl/vision/parity.py`): all headings within 1° (max 0.01° on
+CUDA), and no split-decision mismatches.
+
+**Cost:** about 0.9 ms per batched call alone and 4.9 ms with 8 processes sharing the GPU (CPU: about 37 ms). An endless run
+(8 worlds × 240 game-min) takes 1331 s, against about 320 s for the planner.
+
+**Leader share** (arena.endless, 8 worlds × 240 game-min, the usual field; splitting off)
+
+| spec | 3000 | 11000 | 21000 | 31000 | 41000 | mean |
+|---|---|---|---|---|---|---|
+| vision `vision_bc3` | **48** | **36** | **40** | **42** | 44 | **42.0** |
+| planner v1 `plan_c34` (its teacher) | 46 | 35 | 38 | 38 | 44 | 40.2 |
+| c3_4 | ~31 | 28 | 31 | | | ~30 |
+
+The M3 gate (≥ c3_4) is met. The vision bot beats its teacher on 4 of 5 seed sets and ties the fifth. The margin
+is small (+1.8), but it was consistent across all five sets. It still dies about 1.7× as often as the planner
+(M2 in-env), which is the first thing for M4 to fix.
