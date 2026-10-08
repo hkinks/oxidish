@@ -87,20 +87,32 @@ impl VisionBot {
     }
 }
 
-/// One batched forward pass for every prepared bot (all bots must share one net).
-pub fn infer_batch(bots: &mut [&mut VisionBot]) {
-    if bots.is_empty() {
-        return;
+/// One batched forward pass for every prepared bot, whatever world it lives in (`ogar endless` passes the bots of all
+/// worlds). Bots are grouped by net (one pass per model). Returns the number of frames answered.
+pub fn infer_batch(bots: &mut [&mut VisionBot]) -> usize {
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    for i in 0..bots.len() {
+        match groups.iter_mut().find(|g| Arc::ptr_eq(&bots[g[0]].net, &bots[i].net)) {
+            Some(g) => g.push(i),
+            None => groups.push(vec![i]),
+        }
     }
     let (vs, ws) = (2 * PX * PX, 2 * WPX * WPX);
-    let mut view = Vec::with_capacity(bots.len() * vs);
-    let mut wide = Vec::with_capacity(bots.len() * ws);
-    for b in bots.iter() {
-        view.extend_from_slice(&b.frames.view);
-        wide.extend_from_slice(&b.frames.wide);
+    for g in &groups {
+        let net = bots[g[0]].net.clone();
+        let pb = net.padded_batch(g.len()); // graph backends run power-of-two sizes: pad here, once
+        let mut view = Vec::with_capacity(pb * vs);
+        let mut wide = Vec::with_capacity(pb * ws);
+        for &i in g {
+            view.extend_from_slice(&bots[i].frames.view);
+            wide.extend_from_slice(&bots[i].frames.wide);
+        }
+        view.resize(pb * vs, 0);
+        wide.resize(pb * ws, 0);
+        let outs = net.infer(pb, &view, &wide).expect("vision inference failed");
+        for (&i, o) in g.iter().zip(outs) {
+            bots[i].set_output(o);
+        }
     }
-    let outs = bots[0].net.infer(bots.len(), &view, &wide).expect("vision inference failed");
-    for (b, o) in bots.iter_mut().zip(outs) {
-        b.set_output(o);
-    }
+    bots.len()
 }

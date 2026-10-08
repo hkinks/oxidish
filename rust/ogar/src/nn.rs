@@ -290,6 +290,14 @@ impl Net {
         Ok(n)
     }
 
+    /// The batch size this net actually runs for `b` frames (CUDA graphs: the next power of two).
+    pub fn padded_batch(&self, b: usize) -> usize {
+        match self.backend {
+            Backend::Graph(_) => b.next_power_of_two(),
+            Backend::Plain(_) => b,
+        }
+    }
+
     /// Raw forward pass for `b` frame stacks: view [b,2,PX,PX], wide [b,2,WPX,WPX] -> heat [b,HEAT*HEAT], split, eject.
     pub fn forward(&self, b: usize, view: &[u8], wide: &[u8]) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>), String> {
         assert_eq!(view.len(), b * 2 * PX * PX);

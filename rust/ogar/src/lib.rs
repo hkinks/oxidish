@@ -4,6 +4,7 @@
 pub mod agent;
 pub mod bots;
 pub mod config;
+pub mod endless;
 pub mod matches;
 #[cfg(feature = "vision-net")]
 pub mod nn;
