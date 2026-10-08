@@ -52,10 +52,10 @@ class PosStore:
 
     def add(self, view, wide, teacher):
         """view [k,2,px,px] etc. (GPU)."""
-        for i in range(view.shape[0]):
-            j = self.t % self.cap
-            self.view[j], self.wide[j], self.teacher[j] = view[i], wide[i], teacher[i]
-            self.t += 1
+        k = view.shape[0]
+        j = (self.t + torch.arange(k, device=self.dev)) % self.cap
+        self.view[j], self.wide[j], self.teacher[j] = view, wide, teacher
+        self.t += k
         self.filled = min(self.t, self.cap)
 
     def sample(self, k):
