@@ -136,7 +136,27 @@ proportionally more.
 safe, ramp_r2, ramp300) and 8 server bots; leader share = share of 5 s samples (after a 2 game-minute warm-up) where the heaviest
 player of the whole world is the candidate; mean mass counts death as 0.
 
-RESULTS_PLACEHOLDER
+Heuristic backend, 20 game-min per world, server at speed 4 (the heuristic has no latency; LLM backends must use
+`--speed 1`), same seeds on and off, `plan` = `bot/plan_c34.json`, `vis` = `bot/vision_bc3.json`
+(`runs/cmd_{plan,plan12,vis}_{off,heuristic}.json`):
+
+| base bot | worlds (seeds) | commander | leader share % | mean mass | orders |
+|---|---|---|---|---|---|
+| planner | 4 (51000+) | off | 13.0 | 1966 | 0 |
+| planner | 4 (51000+) | heuristic | 34.1 | 3006 | 2637 |
+| planner | 12 (61000+) | off | 33.3 | 3202 | 0 |
+| planner | 12 (61000+) | heuristic | 22.3 | 2247 | 7880 |
+| vision | 4 (51000+) | off | 22.4 | 2219 | 0 |
+| vision | 4 (51000+) | heuristic | 2.5 | 973 | 2714 |
+
+Reading: **the heuristic commander does not help.** The two planner sets disagree in sign (+21 and -11 points): per-world
+leader share swings from 0 to 90 %, so 4 worlds say nothing; pooled over the 16 worlds it is 28.2 -> 25.2 %, within noise but
+not positive. For the vision bot it clearly hurts (22.4 -> 2.5 %, every world worse): there only `hunt`/`harvest`/`goto`
+change anything (the net keeps `flee`/`farm`/`hide`), and pointing the net straight at prey drops what the net knew about
+the rest of the frame. The likely cause is unverified (no ablation was run). The loop, orders and logging work as designed;
+the heuristic decision rules are a stand-in, and a stronger judge (Jev or an LLM) was not measured because no credentials
+were available (0 LLM calls). Interpretation: as the training plan predicted, once the policy handles reflexes a strategy
+layer adds little unless it knows something the bot does not.
 
 ## Tests
 

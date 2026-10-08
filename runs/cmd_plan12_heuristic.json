@@ -1,0 +1,76 @@
+{
+ "cand": "plan=bot/plan_c34.json",
+ "backend": "heuristic",
+ "worlds": 12,
+ "game_min": 20.0,
+ "speed": 4.0,
+ "wall_s": 307,
+ "leader_share": 22.3,
+ "mean_mass": 2247,
+ "samples": 2604,
+ "per_world": [
+  {
+   "seed": 61000,
+   "leader_share": 3.2,
+   "mean_mass": 1501
+  },
+  {
+   "seed": 61001,
+   "leader_share": 65.0,
+   "mean_mass": 5605
+  },
+  {
+   "seed": 61002,
+   "leader_share": 0.0,
+   "mean_mass": 886
+  },
+  {
+   "seed": 61003,
+   "leader_share": 0.0,
+   "mean_mass": 582
+  },
+  {
+   "seed": 61004,
+   "leader_share": 0.0,
+   "mean_mass": 1204
+  },
+  {
+   "seed": 61005,
+   "leader_share": 2.3,
+   "mean_mass": 1728
+  },
+  {
+   "seed": 61006,
+   "leader_share": 69.1,
+   "mean_mass": 4134
+  },
+  {
+   "seed": 61007,
+   "leader_share": 26.3,
+   "mean_mass": 2467
+  },
+  {
+   "seed": 61008,
+   "leader_share": 3.2,
+   "mean_mass": 894
+  },
+  {
+   "seed": 61009,
+   "leader_share": 5.5,
+   "mean_mass": 653
+  },
+  {
+   "seed": 61010,
+   "leader_share": 4.6,
+   "mean_mass": 575
+  },
+  {
+   "seed": 61011,
+   "leader_share": 88.0,
+   "mean_mass": 6736
+  }
+ ],
+ "decisions": 7880,
+ "llm_calls": 7881,
+ "errors": 0
+}
