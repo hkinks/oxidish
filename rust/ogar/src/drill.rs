@@ -14,8 +14,8 @@
 //! that can eat one of ours is within HUNT_REACH of it the cursor goes to that cell of ours instead. `passive`: the
 //! cursor stays on the centroid. The walker never splits and never ejects.
 //!
-//! Agents: rule bots / planners / vision nets (`name=spec.json`, as everywhere) and two scripted harvesters,
-//! `oracle` (sees every piece on the map) and `oracle_view` (only what the agent's view box shows).
+//! Agents: rule bots / planners / vision nets (`name=spec.json`, as everywhere) and four scripted harvesters,
+//! `oracle` (sees every piece on the map, picks mass / distance like the rule bots), `oracle_near` (the nearest piece instead), `oracle_view` (only what its view box shows) and `oracle_brave` (oracle without any fear).
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
@@ -122,8 +122,8 @@ impl Cond {
 
 #[derive(Clone, Debug)]
 pub enum AgentKind {
-    /// scripted harvester; `full` = sees every piece on the map
-    Oracle { full: bool },
+    /// scripted harvester; `full` = sees every piece on the map; `brave` = ignores every danger (no fleeing, no safety test)
+    Oracle { full: bool, brave: bool, nearest: bool },
     /// any `Policy` / vision spec
     Policy(Value),
 }
@@ -139,8 +139,10 @@ impl AgentDef {
     pub fn parse(arg: &str) -> Result<AgentDef, String> {
         let (name, val) = arg.split_once('=').ok_or(format!("{arg}: want name=spec.json | name=oracle | name=oracle_view"))?;
         let kind = match val {
-            "oracle" => AgentKind::Oracle { full: true },
-            "oracle_view" => AgentKind::Oracle { full: false },
+            "oracle" => AgentKind::Oracle { full: true, brave: false, nearest: false },
+            "oracle_near" => AgentKind::Oracle { full: true, brave: false, nearest: true },
+            "oracle_view" => AgentKind::Oracle { full: false, brave: false, nearest: false },
+            "oracle_brave" => AgentKind::Oracle { full: true, brave: true, nearest: false },
             path => {
                 let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
                 AgentKind::Policy(serde_json::from_str(&text).map_err(|e| format!("{path}: {e}"))?)
@@ -263,6 +265,24 @@ fn giant_aim(w: &World, sc: &Scene, mode: GiantMode, popped: bool) -> (f64, f64)
     (cx, cy)
 }
 
+/// What a perfect eater could take of the giant in the shape the pop left it, if the pieces just sat there: eat the
+/// pieces smallest first while our mass is at least 1.15^2 times the next one. Returns (share of the giant's mass, whether
+/// that leaves us heavier than what remains of it). A bound on mass arithmetic alone: no chasing, no danger, no food.
+fn chain_bound(w: &World, us: usize, giant: usize) -> (f64, bool) {
+    let mut ps: Vec<f64> = w.players[giant].cells.iter().map(|&h| w.ents[h as usize].mass()).collect();
+    ps.sort_by(|a, b| a.total_cmp(b));
+    let total: f64 = ps.iter().sum();
+    let (mut m, mut got) = (total_mass(w, us), 0.0);
+    for p in ps {
+        if m < EAT * EAT * p {
+            break;
+        }
+        m += p;
+        got += p;
+    }
+    (got / total, m > total - got)
+}
+
 // ---------------------------------------------------------------------------------------------- oracle
 
 /// The oracle flees when the edge gap to a piece that can eat us is below this (+LUNGE if the piece's half could eat us
@@ -271,10 +291,12 @@ const ORACLE_FLEE_GAP: f64 = 200.0;
 const ORACLE_LUNGE: f64 = 300.0;
 const ORACLE_SAFE_MARGIN: f64 = 100.0;
 
-/// The scripted harvester: nearest safe edible piece first, split onto it when that is safe, keep away from pieces that
+/// The scripted harvester: the best safe edible piece first (mass / distance, or simply the nearest), split onto it when that is safe, keep away from pieces that
 /// can eat us, eat food otherwise.
 pub struct Oracle {
     full: bool,
+    brave: bool,
+    nearest: bool,
     split_cd: u32,
 }
 
@@ -293,8 +315,8 @@ fn seg_dist(p: (f64, f64), a: (f64, f64), b: (f64, f64)) -> f64 {
 }
 
 impl Oracle {
-    pub fn new(full: bool) -> Oracle {
-        Oracle { full, split_cd: 0 }
+    pub fn new(full: bool, brave: bool, nearest: bool) -> Oracle {
+        Oracle { full, brave, nearest, split_cd: 0 }
     }
 
     pub fn decide(&mut self, w: &World, pi: usize, s: &Snapshot) -> Out {
@@ -311,7 +333,7 @@ impl Oracle {
         };
         let edible = |c: &Piece| c.size * EAT * 1.03 <= me.size && c.size * c.size / 100.0 >= 15.0;
         let threat = |c: &Piece| c.size >= 1.1 * ref_size;
-        let threats: Vec<Piece> = rivals.iter().copied().filter(|c| threat(c)).collect();
+        let threats: Vec<Piece> = if self.brave { Vec::new() } else { rivals.iter().copied().filter(|c| threat(c)).collect() };
         let at = |x: f64, y: f64| Out { x, y, split: false, eject: false };
         let gap_to = |c: &Piece| s.mine.iter().map(|m| (m.x - c.x).hypot(m.y - c.y) - m.size - c.size).fold(f64::MAX, f64::min);
 
@@ -345,17 +367,19 @@ impl Oracle {
             return at(cx + fx / n * 500.0, cy + fy / n * 500.0);
         }
         // 2. the nearest edible piece that is safe to approach
-        let mut best: Option<(f64, Piece)> = None;
+        let mut best: Option<(f64, Piece, f64)> = None;
         for c in rivals.iter().filter(|c| edible(c)) {
             let safe = threats.iter().all(|t| {
                 (t.x - c.x).hypot(t.y - c.y) > t.size + ORACLE_SAFE_MARGIN && seg_dist((t.x, t.y), (me.x, me.y), (c.x, c.y)) > t.size + 60.0
             });
             let g = gap_to(c);
-            if safe && best.map_or(true, |b| g < b.0) {
-                best = Some((g, *c));
+            // the user's rule is the nearest piece; the default weighs a piece's mass against the way to it (as the rule bots do)
+            let score = if self.nearest { -g } else { c.size * c.size / 100.0 / (g.max(0.0) + 100.0) };
+            if safe && best.map_or(true, |b| score > b.2) {
+                best = Some((g, *c, score));
             }
         }
-        if let Some((g, c)) = best {
+        if let Some((g, c, _)) = best {
             let mut out = at(c.x, c.y);
             // split onto it: the half cell must still eat it, the lunge (~800) must reach it, no threat near a half cell
             let half_ok = s.mine.len() <= 4 && me.mass() / 2.0 > c.size * c.size / 100.0 * EAT * EAT * 1.05;
@@ -451,7 +475,7 @@ pub fn run_rep(agent: &AgentDef, cond: &Cond, seed: u64) -> Value {
         build_scene(cond, seed, &mut mk)
     };
     let mut us_ctl = match (&agent.kind, us_drv) {
-        (AgentKind::Oracle { full }, _) => Ctl::Orc(Oracle::new(*full)),
+        (AgentKind::Oracle { full, brave, nearest }, _) => Ctl::Orc(Oracle::new(*full, *brave, *nearest)),
         (_, Some(d)) => Ctl::Drv(d),
         _ => unreachable!(),
     };
@@ -475,6 +499,7 @@ pub fn run_rep(agent: &AgentDef, cond: &Cond, seed: u64) -> Value {
     let mut prev_c: Option<(f64, f64)> = None;
     let mut prev_n = 0usize;
     let mut dist_at_pop = f64::NAN;
+    let (mut chain_cap, mut chain_over) = (0.0f64, false);
     let mut alive = true;
     let start_tick = w.tick;
     let trace = std::env::var("OGAR_DRILL_TRACE").is_ok();
@@ -488,6 +513,7 @@ pub fn run_rep(agent: &AgentDef, cond: &Cond, seed: u64) -> Value {
         if popped_at.is_none() && w.players[giant].cells.len() > 1 {
             popped_at = Some(w.tick);
             g0 = total_mass(&w, giant);
+            (chain_cap, chain_over) = chain_bound(&w, us, giant);
             if alive {
                 let (a, b) = (centroid(&cells_of(&w, us)), centroid(&cells_of(&w, giant)));
                 dist_at_pop = (a.0 - b.0).hypot(a.1 - b.1);
@@ -637,7 +663,7 @@ pub fn run_rep(agent: &AgentDef, cond: &Cond, seed: u64) -> Value {
     let n = diag.samples.max(1) as f64;
     json!({
         "agent": agent.name, "cond": cond.key(), "seed": seed,
-        "popped": popped, "died_pre": died_pre, "g0": g0, "dist_at_pop": dist_at_pop,
+        "popped": popped, "died_pre": died_pre, "g0": g0, "dist_at_pop": dist_at_pop, "chain_cap": chain_cap, "chain_overtake": chain_over,
         "capture": if g0 > 0.0 { cap / g0 } else { 0.0 }, "captured_mass": cap, "pieces": pieces, "t_first": t_first, "t_overtake": t_over,
         "died": popped && !alive, "died_t": died_t, "died_by": if !alive && popped { died_by } else { "" },
         "lost_giant": lost_giant, "lost_third": lost_third, "stolen_by_comp": stolen, "ate_comp": ate_comp,
@@ -761,7 +787,7 @@ pub fn summarize(rows: &[&Value]) -> Value {
         "died": dp, "died_lo": dl, "died_hi": dh, "died_by_giant": by_giant as f64 / n.max(1) as f64, "died_by_third": by_third as f64 / n.max(1) as f64,
         "first_piece": fp, "first_piece_lo": fl, "first_piece_hi": fh, "t_first_mean": mean_ci(&tfirst).0,
         "pieces": m(&|r| jf(r, "pieces")), "lost_third": m(&|r| jf(r, "lost_third")), "stolen_by_comp": m(&|r| jf(r, "stolen_by_comp")), "ate_comp": m(&|r| jf(r, "ate_comp")),
-        "dist_at_pop": m(&|r| jf(r, "dist_at_pop")), "g0": m(&|r| jf(r, "g0")), "peak_ours": m(&|r| jf(r, "peak_ours")),
+        "dist_at_pop": m(&|r| jf(r, "dist_at_pop")), "chain_cap": m(&|r| jf(r, "chain_cap")), "chain_overtake": m(&|r| if r["chain_overtake"] == true { 1.0 } else { 0.0 }), "g0": m(&|r| jf(r, "g0")), "peak_ours": m(&|r| jf(r, "peak_ours")),
         "diag": {
             "edible_vis": m(&|r| r["diag"]["edible_vis"].as_f64().unwrap_or(0.0)),
             "closing_of_vis": m(&|r| r["diag"]["closing_of_vis"].as_f64().unwrap_or(0.0)),
@@ -803,7 +829,8 @@ pub fn print_table(sums: &[Value]) {
     for s in sums {
         let c = s["cond"].as_str().unwrap_or("");
         if c != last {
-            println!("\n== {c}  (g0 ~{:.0} mass, pop distance ~{:.0} centre)", s["g0"].as_f64().unwrap_or(0.0), s["dist_at_pop"].as_f64().unwrap_or(0.0));
+            println!("\n== {c}  (giant ~{:.0} mass, pop distance ~{:.0} centre, mass-chain bound: capture {:.0}%, overtake {:.0}%)", s["g0"].as_f64().unwrap_or(0.0),
+                     s["dist_at_pop"].as_f64().unwrap_or(0.0), 100.0 * s["chain_cap"].as_f64().unwrap_or(0.0), 100.0 * s["chain_overtake"].as_f64().unwrap_or(0.0));
             println!("{:<18}{:>5}  {:<17}{:<17}{:<17}{:<17}{:>7}{:>7}{:>13}{:>8}", "agent", "n", "capture@10/20/30", "ours/giant@30", "overtake (any)", "died (giant/3rd)", "t_first", "pieces", "t_overtake", "lost3");
             last = c.to_string();
         }
@@ -882,7 +909,7 @@ mod tests {
 
     #[test]
     fn oracle_rep_is_deterministic_and_pops() {
-        let agent = AgentDef { name: "oracle".into(), kind: AgentKind::Oracle { full: true } };
+        let agent = AgentDef { name: "oracle".into(), kind: AgentKind::Oracle { full: true, brave: false, nearest: false } };
         let mut c = cond(Scenario::GiantPop);
         c.horizon_s = 10.0;
         let (r1, r2) = (run_rep(&agent, &c, 11), run_rep(&agent, &c, 11));
