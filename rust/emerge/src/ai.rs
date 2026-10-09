@@ -18,7 +18,6 @@ struct Snap {
 
 struct Ctx {
     stage: usize,
-    t: f32,
     avg_mass: f32,
     food_frac: f32,
     nerf: bool,
@@ -55,7 +54,6 @@ pub fn think(w: &mut World, dt: f32) {
     let n_st = live.len();
     let ctx = Ctx {
         stage: w.stage,
-        t: w.t,
         avg_mass: {
             let v: Vec<f32> = snaps.iter().filter(|s| s.kind != Kind::Drifter).map(|s| s.mass).collect();
             (v.iter().sum::<f32>() / v.len().max(1) as f32).max(1.0)

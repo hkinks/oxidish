@@ -2,7 +2,6 @@
 //! Money is tracked with explicit faucets (bounties, grants) and sinks (fees, destroyed loot).
 
 use crate::sim::*;
-use macroquad::prelude::Vec2;
 
 const BUILD_ORE: f32 = 80.0;
 const BUILD_MASS: f32 = 40.0;
@@ -136,7 +135,7 @@ pub fn build_station(w: &mut World, i: usize) {
     let a = &mut w.agents[i];
     a.ore -= BUILD_ORE;
     a.mass -= BUILD_MASS;
-    let st = Station { pos: p, clan: c, ore: BUILD_ORE, plates: 0.0, struct_mass: BUILD_MASS, ore_bid: 10.0, plate_ask: 45.0, trades: 0, alive: true, refine_acc: 0.0 };
+    let st = Station { pos: p, clan: c, ore: BUILD_ORE, plates: 0.0, struct_mass: BUILD_MASS, ore_bid: 10.0, plate_ask: 45.0, trades: 0, alive: true };
     w.stations.push(st);
     let k = w.stations.len() - 1;
     w.clans[c].station = Some(k);
@@ -345,17 +344,4 @@ fn absorb_smallest(w: &mut World) {
     w.stats.takeovers += 1;
     let (b, s) = (w.clans[big].name.clone(), w.clans[small].name.clone());
     w.say(format!("TAKEOVER: colony {} absorbed {} ({} members, its nest and {:.0} spores)", b, s, members.len(), tr));
-}
-
-pub fn clan_members_alive(w: &World, c: usize) -> Vec<usize> {
-    w.clans[c].members.iter().cloned().filter(|m| w.agents[*m].alive).collect()
-}
-
-pub fn nearest_station(w: &World, p: Vec2) -> Option<usize> {
-    w.stations
-        .iter()
-        .enumerate()
-        .filter(|(_, s)| s.alive)
-        .min_by(|a, b| a.1.pos.distance(p).partial_cmp(&b.1.pos.distance(p)).unwrap())
-        .map(|(i, _)| i)
 }

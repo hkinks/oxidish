@@ -69,7 +69,7 @@ pub struct Ui {
     pub show_econ: bool,
 }
 
-pub fn draw_world(w: &World, v: &View, player: usize) {
+pub fn draw_world(w: &World, v: &View) {
     clear_background(Color::new(0.04, 0.07, 0.06, 1.0));
     let sw = screen_width();
     let sh = screen_height();

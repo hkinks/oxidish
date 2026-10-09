@@ -250,7 +250,7 @@ async fn game(args: Args) {
         }
         // ---- draw
         let view = render::make_view(&w, zoom, 0);
-        render::draw_world(&w, &view, 0);
+        render::draw_world(&w, &view);
         render::draw_hud(&w, &ui, 0, &view, get_fps(), speed, w.autoplay);
         if let Some(path) = &args.screenshot {
             if w.t >= start_t + args.shot_at || help_t > 60.0 {

@@ -153,7 +153,6 @@ pub struct Station {
     pub plate_ask: f32,
     pub trades: u32,
     pub alive: bool,
-    pub refine_acc: f32,
 }
 
 pub struct Rules {
@@ -221,7 +220,6 @@ pub struct World {
     pub stats: Stats,
     pub ledger_base: f32,
     pub sun_budget: f32,
-    pub vein_budget: f32,
     pub scarce_t: f32,
     pub first_station_t: Option<f32>,
     pub nerf_until: f32,
@@ -284,7 +282,6 @@ impl World {
             stats: Stats::default(),
             ledger_base: 0.0,
             sun_budget: 0.0,
-            vein_budget: 0.0,
             scarce_t: 0.0,
             first_station_t: None,
             nerf_until: 0.0,
