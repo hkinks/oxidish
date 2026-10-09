@@ -13,7 +13,7 @@
 //! radius.
 //!
 //! Genes: `evade` (1 = on in Flee mode), `evade_trigger` (> 0: also flee when a chaser is within its lethal reach plus this),
-//! `evade_buffer` (added to the lethal reach), `evade_cap` (margins above this count the same, default 800), `evade_wall` (weight of how central the path ends: 1 = on), `evade_food` (0.3 = a first move towards a lot of pellets is worth up to 300 margin units when we are safe enough), `evade_virus` (1 = chasers
+//! `evade_buffer` (added to the lethal reach), `evade_min_mass` (the search only runs at or above this total mass), `evade_cap` (margins above this count the same, default 800), `evade_wall` (weight of how central the path ends: 1 = on), `evade_food` (0.3 = a first move towards a lot of pellets is worth up to 300 margin units when we are safe enough), `evade_virus` (1 = chasers
 //! that could pop on a virus steer round it, so a virus on the line between us works as a shield; our own cells never aim at a
 //! virus they would pop), `evade_pieces` (0 = in several pieces the old flee runs; 1 = search with every big piece guarded; 2 = also aim so that the pieces close up).
 
@@ -186,6 +186,9 @@ impl Ctx {
 /// The aim point of a flee step, or None when there is nothing to flee from. `pref` breaks ties (the potential field's heading).
 pub fn evade_aim(s: &Snapshot, p: &Params, pref: (f64, f64)) -> Option<(f64, f64)> {
     let me = *s.main()?;
+    if s.total_mass() < p.evade_min_mass {
+        return None; // small bots keep the old flee (the search made them die more in endless, docs/escape-drill.md)
+    }
     if s.mine.len() > 1 && p.evade_pieces < 0.5 {
         return None; // in pieces the rule bots' own flee runs (the search measured worse there, docs/escape-drill.md)
     }
