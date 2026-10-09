@@ -418,7 +418,7 @@ impl HeuristicPolicy {
                     // feed the virus into the giant: the shoot tactic, on the giant only
                     if let Some(g) = self.hunter.lurk_target {
                         let forced = Params { shoot_enable: 1.0, shoot_target_mult: 1.0, shoot_min_mass: 40.0, shoot_max_cells: 16.0,
-                                              shoot_stage: 0.0, shoot_range: p.shoot_range.max(900.0), shoot_reach: p.shoot_reach.max(1300.0), ..p.clone() };
+                                              shoot_stage: 0.0, shoot_threats: 1.0, shoot_range: p.shoot_range.max(900.0), shoot_reach: p.shoot_reach.max(1300.0), ..p.clone() };
                         if let Some(sh) = self.tactics.act(s, &Plan::new(Mode::Hunt), &forced, &mut self.counters, Some(&[g])) {
                             if sh.eject {
                                 o = sh;
@@ -629,5 +629,43 @@ mod scavenge_tests {
         let scavenge = Params { harvest: 1.0, harvest_range: 2.5, ..Params::default() };
         assert_eq!(heuristic_plan(&s, &harvest).mode, Mode::Farm, "pieces beyond hunt_range should be ignored without it");
         assert_eq!(heuristic_plan(&s, &scavenge).mode, Mode::Hunt, "no rush onto the broken giant's pieces");
+    }
+}
+
+#[cfg(test)]
+mod hunter_policy_tests {
+    use super::*;
+    use crate::game::{Border, Cell, Kind, Snapshot};
+
+    fn snap(giant_x: f64) -> Snapshot {
+        let me = Cell::new(1, 0.0, 0.0, (500.0f64 * 100.0).sqrt(), Kind::Mine);
+        let virus = Cell::new(2, 700.0, 0.0, (120.0f64 * 100.0).sqrt(), Kind::Virus);
+        let mut giant = Cell::new(3, giant_x, 0.0, (5000.0f64 * 100.0).sqrt(), Kind::Player);
+        giant.color = 0x00ff00;
+        Snapshot { mine: vec![me], others: vec![virus, giant], border: Border { left: -4000.0, right: 4000.0, top: -4000.0, bottom: 4000.0 }, dead: false }
+    }
+
+    fn policy(genes: serde_json::Value) -> HeuristicPolicy {
+        HeuristicPolicy::from_spec(&serde_json::json!({"farm": "field", "params": genes}))
+    }
+
+    #[test]
+    fn lurk_shoots_the_virus_into_the_giant_only_with_lurk_shoot() {
+        // we stand in line: us - virus - giant, giant outside its split reach
+        let mut on = policy(serde_json::json!({"lurk": 1.0, "lurk_shoot": 1.0}));
+        let mut s = snap(1700.0);
+        let out = on.act(&mut s);
+        assert_eq!(on.hunter.phase, Phase::Lurk);
+        assert!(out.eject, "no shot at the virus: {out:?}");
+        let mut off = policy(serde_json::json!({"lurk": 1.0}));
+        let mut s = snap(1700.0);
+        let out = off.act(&mut s);
+        assert_eq!(off.hunter.phase, Phase::Lurk);
+        assert!(!out.eject && !out.split);
+        // genes off: the ordinary bot, no hunter
+        let mut base = policy(serde_json::json!({}));
+        let mut s = snap(1700.0);
+        base.act(&mut s);
+        assert_eq!(base.hunter.phase, Phase::Idle);
     }
 }
