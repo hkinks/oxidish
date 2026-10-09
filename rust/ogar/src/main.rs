@@ -4,6 +4,8 @@
 //!              --food-mult 2 --seed 1 --matches 8 --threads 2 --out rows.json
 //!   ogar endless --agents c3_4=bot/c3_4.json:2 ... --worlds 8 --game-min 240 --seed-base 700 [--threads T] --out samples.json
 //!                (the fast endless evaluator: all worlds in one process, vision agents batched across worlds; endless.rs)
+//!   ogar drill --agents c3_4=bot/c3_4.json oracle=oracle --scenario giant_pop,giant_popped --our-mass 500 --giant-mass 5000 --dist 600 //!              --reps 50 --seed 1 [--giant-mode hunt|passive] [--competitor bot/c3_4.json --comp-mass 800] [--horizon 30] --out drill.json
+//!                (the giant-pop harvest drill: how well does an agent eat a giant that just burst on a virus; drill.rs)
 //!   ogar vdump --agents vis=bot/vision_bc3.json:2 ... --count 1000 --out DIR   (vision parity frames, rl/vision/parity.py)
 //!   ogar serve --port 9600 --bots 8 --food-mult 2 --map 7000 [--agents name=genome.json:N] [--full-view]
 //!                [--record DIR [--record-all]]   (eat events, agent loss scenes, human frames: see record.rs)
@@ -264,16 +266,71 @@ fn run_vdump_cmd(a: &Args) -> Result<(), String> {
     Ok(())
 }
 
+/// "500,1000" -> [500.0, 1000.0]
+fn num_list(a: &Args, k: &str, default: &str) -> Result<Vec<f64>, String> {
+    a.kv.get(k).map(String::as_str).unwrap_or(default).split(',').map(|v| v.trim().parse::<f64>().map_err(|_| format!("bad --{k}"))).collect()
+}
+
+fn run_drill_cmd(a: &Args) -> Result<(), String> {
+    use ogar::drill::{print_table, run_all, summarize_all, AgentDef, Cond, DrillOpts, GiantMode, Scenario};
+    let agents: Vec<AgentDef> = a.agents.iter().map(|s| AgentDef::parse(s)).collect::<Result<_, _>>()?;
+    if agents.is_empty() {
+        return Err("need --agents name=spec.json|oracle|oracle_view ...".into());
+    }
+    let scenarios: Vec<Scenario> = a.kv.get("scenario").map(String::as_str).unwrap_or("giant_pop").split(',').map(Scenario::parse).collect::<Result<_, _>>()?;
+    let competitor = match a.kv.get("competitor") {
+        Some(p) => Some(serde_json::from_str::<Value>(&std::fs::read_to_string(p).map_err(|e| format!("{p}: {e}"))?).map_err(|e| format!("{p}: {e}"))?),
+        None => None,
+    };
+    let modes: Vec<GiantMode> = a.kv.get("giant-mode").map(String::as_str).unwrap_or("hunt").split(',').map(GiantMode::parse).collect::<Result<_, _>>()?;
+    let giant_bot = match a.kv.get("giant-bot") {
+        Some(p) => Some(serde_json::from_str::<Value>(&std::fs::read_to_string(p).map_err(|e| format!("{p}: {e}"))?).map_err(|e| format!("{p}: {e}"))?),
+        None if !modes.contains(&GiantMode::Bot) => None,
+        None => Some(serde_json::from_str::<Value>(&std::fs::read_to_string("bot/c3_4.json").map_err(|e| format!("bot/c3_4.json: {e} (run from the repo root or pass --giant-bot)"))?).map_err(|e| e.to_string())?),
+    };
+    let mut conds = Vec::new();
+    for (sc, mode) in scenarios.iter().flat_map(|s| modes.iter().map(move |m| (s, m))) {
+        for om in num_list(a, "our-mass", "500")? {
+            for gm in num_list(a, "giant-mass", "5000")? {
+                for dist in num_list(a, "dist", "600")? {
+                    let mut c = Cond::new(*sc, om, gm, dist);
+                    c.giant_mode = *mode;
+                    c.competitor = competitor.clone();
+                    c.giant_bot = giant_bot.clone();
+                    c.comp_mass = a.num("comp-mass", 800.0f64)?;
+                    c.horizon_s = a.num("horizon", 30.0f64)?;
+                    c.map = a.num("map", 7000.0f64)?;
+                    c.food_mult = a.num("food-mult", 2.0f64)?;
+                    conds.push(c);
+                }
+            }
+        }
+    }
+    let o = DrillOpts { agents, conds, reps: a.num("reps", 50usize)?, seed: a.num("seed", 1u64)?, threads: a.num("threads", 4usize)? };
+    let t0 = std::time::Instant::now();
+    let rows = run_all(&o);
+    let sums = summarize_all(&rows);
+    print_table(&sums);
+    println!("
+{} reps in {:.0}s wall on {} thread(s)", rows.len(), t0.elapsed().as_secs_f64(), o.threads);
+    if let Some(path) = a.kv.get("out") {
+        let doc = serde_json::json!({"summary": sums, "reps": rows});
+        std::fs::write(path, ascii_json(&serde_json::to_string(&doc).unwrap())).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
         Some("match") => parse_args(&args[1..]).and_then(|a| run_match_cmd(&a)),
         Some("endless") => parse_args(&args[1..]).and_then(|a| run_endless_cmd(&a)),
+        Some("drill") => parse_args(&args[1..]).and_then(|a| run_drill_cmd(&a)),
         Some("serve") => parse_args(&args[1..]).and_then(|a| run_serve_cmd(&a)),
         Some("render") => parse_args(&args[1..]).and_then(|a| run_render_cmd(&a)),
         #[cfg(feature = "vision-net")]
         Some("vdump") => parse_args(&args[1..]).and_then(|a| run_vdump_cmd(&a)),
-        _ => Err("usage: ogar match|serve|render ...".into()),
+        _ => Err("usage: ogar match|endless|drill|serve|render ...".into()),
     };
     if let Err(e) = result {
         eprintln!("error: {e}");

@@ -1445,4 +1445,19 @@ impl World {
     pub fn refresh_view(&mut self, pi: usize) {
         self.update_tick(pi);
     }
+
+    /// Move a cell to (x, y) now, keeping the spatial grid in step (drill scene setup, drill.rs).
+    pub fn place_cell(&mut self, h: u32, x: f64, y: f64) {
+        let e = &mut self.ents[h as usize];
+        e.x = x;
+        e.y = y;
+        self.update_node_quad(h);
+    }
+
+    /// Put a standing virus of the default size at (x, y) (drill scene setup, drill.rs).
+    pub fn add_virus_at(&mut self, x: f64, y: f64) -> u32 {
+        let mut v = self.new_entity(T_VIRUS, -1, x, y, self.cfg.virus_min_size);
+        v.color = [51, 255, 51];
+        self.add_node(v)
+    }
 }
