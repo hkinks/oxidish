@@ -39,6 +39,22 @@ pub struct VisionOpts {
     pub warmup: u32,
     /// run the teacher on every decision (labels); false = skip it (pure evaluation, faster)
     pub label: bool,
+    /// league pool: every world draws `pool_pick` distinct entries of it (on top of `opponents`)
+    pub pool: Vec<(String, Value, usize)>,
+    pub pool_pick: usize,
+    /// probability that a world has a "giant": one opponent is fed up to a mass in [giant_min, giant_max]
+    pub giant_p: f64,
+    pub giant_min: f64,
+    pub giant_max: f64,
+}
+
+/// splitmix64 step, for per-world league draws (deterministic in the world seed)
+fn mix(x: &mut u64) -> u64 {
+    *x = x.wrapping_add(0x9E3779B97F4A7C15);
+    let mut z = *x;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
+    z ^ (z >> 31)
 }
 
 impl VisionOpts {
@@ -57,6 +73,11 @@ impl VisionOpts {
             threads: 1,
             warmup: 0,
             label: true,
+            pool: vec![],
+            pool_pick: 0,
+            giant_p: 0.0,
+            giant_min: 3000.0,
+            giant_max: 10000.0,
         }
     }
 }
@@ -183,6 +204,8 @@ struct WorldEnv {
     learners: Vec<Learner>,
     scratch: Scratch,
     timing: Timing,
+    /// (opponent index, target mass): the giant is fed back up to the target when it is eaten down
+    giant: Option<(usize, f64)>,
 }
 
 /// Output buffers of one world (slices into the env's arrays).
@@ -256,11 +279,25 @@ impl WorldEnv {
         let cfg = Config::new(o.map, o.bots, o.food_mult);
         let mut w = World::new(cfg, seed);
         let mut opps = Vec::new();
-        for (name, spec, count) in &o.opponents {
+        let mut rs = seed ^ 0xA5A5_1234_5678_9ABC;
+        let mut picked: Vec<&(String, Value, usize)> = o.opponents.iter().collect();
+        let mut pool: Vec<&(String, Value, usize)> = o.pool.iter().collect();
+        for _ in 0..o.pool_pick.min(pool.len()) {
+            let k = (mix(&mut rs) % pool.len() as u64) as usize;
+            picked.push(pool.swap_remove(k));
+        }
+        for (name, spec, count) in picked {
             for i in 0..*count {
                 opps.push(AgentDriver::new(&mut w, &format!("{name}-{i}"), spec, o.sync as u64));
             }
         }
+        let u = |r: u64| (r >> 11) as f64 / (1u64 << 53) as f64;
+        let giant = if !opps.is_empty() && u(mix(&mut rs)) < o.giant_p {
+            let k = (mix(&mut rs) % opps.len() as u64) as usize;
+            Some((k, o.giant_min + (o.giant_max - o.giant_min) * u(mix(&mut rs))))
+        } else {
+            None
+        };
         let mut learners = Vec::new();
         for k in 0..o.learners_per_world {
             let pi = w.add_player(PKind::Agent);
@@ -275,7 +312,7 @@ impl WorldEnv {
                 prev_mass: 0.0,
             });
         }
-        let mut we = WorldEnv { w, opps, learners, scratch: Scratch::default(), timing: Timing::default() };
+        let mut we = WorldEnv { w, opps, learners, scratch: Scratch::default(), timing: Timing::default(), giant };
         for o2 in we.opps.iter_mut() {
             o2.step(&mut we.w); // spawn
         }
@@ -286,12 +323,31 @@ impl WorldEnv {
         we
     }
 
+    /// Keep the giant opponent at its target mass (the live server's +500 mass feed, applied to the largest cell).
+    fn feed_giant(&mut self, sync: u32) {
+        let Some((k, target)) = self.giant else { return };
+        if self.w.tick % 125 >= sync {
+            return;
+        }
+        let pi = self.opps[k].pi;
+        let w = &mut self.w;
+        let mass = w.players[pi].total_mass(w);
+        if mass <= 0.0 || mass >= 0.7 * target {
+            return;
+        }
+        let Some(&big) = w.players[pi].cells.iter().max_by(|&&a, &&b| w.ents[a as usize].size.partial_cmp(&w.ents[b as usize].size).unwrap()) else { return };
+        let s = w.ents[big as usize].size;
+        let add = (target - mass).min(500.0);
+        w.set_size(big, (s * s + add * 100.0).sqrt());
+    }
+
     /// `sync` ticks, then the opponents decide.
     fn advance(&mut self, sync: u32) {
         let t = Instant::now();
         for _ in 0..sync {
             self.w.tick();
         }
+        self.feed_giant(sync);
         self.timing.tick += t.elapsed().as_nanos() as u64;
         let t = Instant::now();
         step_all(&mut self.opps, &mut self.w);

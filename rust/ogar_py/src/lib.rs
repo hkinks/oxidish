@@ -30,7 +30,8 @@ struct VecEnv {
 impl VecEnv {
     #[new]
     #[pyo3(signature = (n_worlds, learners_per_world, opponents=None, teacher="bot/plan_c34.json".to_string(), px=256, sync=2,
-                        bots=8, food_mult=2.0, map=7000.0, seed=1, threads=1, warmup=0, label=true))]
+                        bots=8, food_mult=2.0, map=7000.0, seed=1, threads=1, warmup=0, label=true, pool=None, pool_pick=0,
+                        giant_p=0.0, giant_min=3000.0, giant_max=10000.0))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         n_worlds: usize,
@@ -46,6 +47,11 @@ impl VecEnv {
         threads: usize,
         warmup: u32,
         label: bool,
+        pool: Option<Vec<(String, String, usize)>>,
+        pool_pick: usize,
+        giant_p: f64,
+        giant_min: f64,
+        giant_max: f64,
     ) -> PyResult<Self> {
         if n_worlds == 0 || learners_per_world == 0 || px < 8 || px % 2 != 0 || sync == 0 {
             return Err(PyValueError::new_err("need n_worlds, learners_per_world >= 1, even px >= 8, sync >= 1"));
@@ -65,6 +71,13 @@ impl VecEnv {
         o.threads = threads.max(1);
         o.warmup = warmup;
         o.label = label;
+        for (name, path, count) in pool.unwrap_or_default() {
+            o.pool.push((name, load_spec(&path)?, count));
+        }
+        o.pool_pick = pool_pick;
+        o.giant_p = giant_p;
+        o.giant_min = giant_min;
+        o.giant_max = giant_max;
         Ok(VecEnv { core: std::sync::Mutex::new(Core::new(o)) })
     }
 

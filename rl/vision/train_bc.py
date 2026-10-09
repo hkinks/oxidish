@@ -57,10 +57,11 @@ class Shared:
         self.infer_ver = 0
         self.env_rate = 0.0
         self.deaths = 0
+        self.danger_flagged = 0
         self.error = None
 
 
-def collector(a, sh, store, pos, infer):
+def collector(a, sh, store, pos, infer, danger=None):
     try:
         env = ogar_py.VecEnv(a.worlds, a.learners, opponents=FIELD, teacher=TEACHER, px=256, threads=a.threads,
                              seed=a.seed, warmup=0)
@@ -76,6 +77,9 @@ def collector(a, sh, store, pos, infer):
         ver = -1
         t0, steps = time.time(), 0
         ring_samples = store.T * store.N
+        H = a.danger_h
+        mass_hist = np.zeros((H + 1, n), np.float32)
+        t_push = 0
         while not sh.stop:
             while not sh.stop and sh.collected > sh.trained * a.ratio + 0.3 * ring_samples:
                 time.sleep(0.002)
@@ -90,6 +94,20 @@ def collector(a, sh, store, pos, infer):
             if len(hit):
                 pos.add(view[hit], wide[hit], teacher[hit])
             sh.collected += n
+            if danger is not None:
+                mass_hist[t_push % (H + 1)] = info["mass"]
+                t_push += 1
+                if t_push > H:
+                    s0 = mass_hist[(t_push - 1 - H) % (H + 1)]
+                    later = np.stack([mass_hist[(t_push - 1 - H + k) % (H + 1)] for k in range(1, H + 1)])
+                    flag = (later.min(0) < a.danger_loss * s0) & (s0 >= a.danger_min_mass)
+                    idx = torch.from_numpy(np.nonzero(flag)[0]).cuda()
+                    if len(idx):
+                        row = (store.t - 1 - H) % store.T
+                        rows = torch.full_like(idx, row)
+                        v, w, tch, _ = store.gather(rows, idx)
+                        danger.add(v, w, tch)
+                        sh.danger_flagged += len(idx)
             # per-learner driver switching (segments of ~150 decisions)
             flip = rng.random(n) < 1 / 150
             want_student = rng.random(n) < sh.p_student
@@ -146,6 +164,11 @@ def main():
     p.add_argument("--d1", type=float, default=0.5, help="DAgger ramp end")
     p.add_argument("--pos-frac", type=float, default=0.03, help="fraction of each batch drawn from the split-event store")
     p.add_argument("--pos-cap", type=int, default=16000)
+    p.add_argument("--danger-cap", type=int, default=0, help="size of the danger / death-precursor store (0 = off)")
+    p.add_argument("--danger-frac", type=float, default=0.15, help="fraction of each batch drawn from it")
+    p.add_argument("--danger-h", type=int, default=30, help="decisions before a loss that count as precursors")
+    p.add_argument("--danger-loss", type=float, default=0.7, help="mass falls below this fraction within danger-h")
+    p.add_argument("--danger-min-mass", type=float, default=40.0)
     p.add_argument("--no-aug", action="store_true")
     p.add_argument("--eval-min", type=float, default=10.0)
     p.add_argument("--seed", type=int, default=1000)
@@ -185,8 +208,9 @@ def main():
     N = a.worlds * a.learners
     store = FrameStore(a.ring, N)
     pos = PosStore(a.pos_cap)
+    danger = PosStore(a.danger_cap) if a.danger_cap else None
     sh = Shared()
-    th = threading.Thread(target=collector, args=(a, sh, store, pos, infer), daemon=True)
+    th = threading.Thread(target=collector, args=(a, sh, store, pos, infer, danger), daemon=True)
     th.start()
     budget = a.hours * 3600
     t_start = time.time()
@@ -217,10 +241,14 @@ def main():
         sh.p_student = a.pmax * min(1.0, max(0.0, (frac - a.d0) / max(a.d1 - a.d0, 1e-6)))
 
         k_pos = int(round(a.pos_frac * a.batch)) if pos.filled >= 64 else 0
-        rows, cols = store.sample_index(a.batch - k_pos)
+        k_dan = int(round(a.danger_frac * a.batch)) if danger is not None and danger.filled >= 1000 else 0
+        rows, cols = store.sample_index(a.batch - k_pos - k_dan)
         view, wide, teacher, stud = store.gather(rows, cols)
         if k_pos:
             pv, pw, pt = pos.sample(k_pos)
+            view, wide, teacher = torch.cat([view, pv]), torch.cat([wide, pw]), torch.cat([teacher, pt])
+        if k_dan:
+            pv, pw, pt = danger.sample(k_dan)
             view, wide, teacher = torch.cat([view, pv]), torch.cat([wide, pw]), torch.cat([teacher, pt])
         if not a.no_aug:   # chunks keep the sample order, so teacher[:, 2:] still lines up
             view, wide, tgt = augment(view, wide, teacher[:, :2])
@@ -259,7 +287,7 @@ def main():
             rec = dict(t=round(el), step=step, samples=sh.trained, lr=lr, p_student=sh.p_student,
                        heat=np.mean(acc["heat"]), split=np.mean(acc["split"]), train_agree=np.mean(acc["ok"]),
                        gnorm=gn.item(), train_rate=500 * a.batch / (now - t_log), env_rate=sh.env_rate,
-                       deaths=sh.deaths, pos_events=pos.t)
+                       deaths=sh.deaths, pos_events=pos.t, danger=sh.danger_flagged)
             acc.clear()
             t_log = now
             print(json.dumps({k: (round(v, 4) if isinstance(v, float) else v) for k, v in rec.items()}), flush=True)
