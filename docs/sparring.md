@@ -17,7 +17,7 @@ Use them like any genome: `arena.tournament --engine ogar --agents apos=bot/spar
 hhunt=bot/sparring/hunter_hunt.json:1 ...`, `arena.endless --agents ...`, `ogar match|serve --agents ...`.
 `arena.make_sparring` regenerates the hunter files.
 
-## AposBot port (`bot/apos.py`, `rust/arena_client/src/apos.rs`)
+## AposBot port (`bot/apos.py`, `rust/arena_client/src/apos/`)
 
 Port of module 9 of `vendor/apos/aposbot.user.js` (`createAposBot(api)`): the 64-heading scoring (threats with
 split reach, cover, flight lines, walls, food kernel, prey with catchability / traps, viruses, escape room),
