@@ -9,6 +9,7 @@
 | [code-map.md](code-map.md) | module roles and how the pieces fit |
 | [showcase.md](showcase.md) | the real-server showcase for playing against the bots |
 | [sparring.md](sparring.md) | sparring opponents: AposBot port, hunters (virus play), strength and endless results |
+| [learnings.md](learnings.md) | **what we learned**: metrics, genes, vision bot, RL pitfalls, commander |
 
 Layout:
 
