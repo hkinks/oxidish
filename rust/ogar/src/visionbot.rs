@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use arena_client::game::Snapshot;
 use arena_client::policy::Out;
+use arena_client::reflex::Reflex;
 use serde_json::Value;
 
 use crate::nn::{Net, NetOut, PX, WPX};
@@ -29,6 +30,8 @@ pub struct VisionBot {
     pub decisions: u64,
     /// the net output of the latest decision (frames of that decision are still in `frames`)
     pub last: Option<NetOut>,
+    /// the hybrid reflex layer (split-kill / harvest / virus-split; spec keys `reflex_*`), off by default
+    pub reflex: Option<Reflex>,
 }
 
 impl VisionBot {
@@ -42,16 +45,21 @@ impl VisionBot {
             .unwrap_or(1);
         let net = Net::load(model, &ep, threads)?;
         let split_thr = spec["split_thr"].as_f64().map(|v| v as f32).or(net.split_thr).unwrap_or(0.9);
-        Ok(VisionBot::new(net, spec["split"].as_bool().unwrap_or(false), split_thr, spec["eject"].as_bool().unwrap_or(false)))
+        let mut vb = VisionBot::new(net, spec["split"].as_bool().unwrap_or(false), split_thr, spec["eject"].as_bool().unwrap_or(false));
+        vb.reflex = Reflex::from_spec(spec);
+        Ok(vb)
     }
 
     pub fn new(net: Arc<Net>, split: bool, split_thr: f32, eject: bool) -> VisionBot {
-        VisionBot { net, split, split_thr, eject, frames: FrameStack::new(PX), prepared: false, pending: None, split_override: None, decisions: 0, last: None }
+        VisionBot { net, split, split_thr, eject, frames: FrameStack::new(PX), prepared: false, pending: None, split_override: None, decisions: 0, last: None, reflex: None }
     }
 
     /// New life: the next frame stack starts with both channels equal.
     pub fn reset(&mut self) {
         self.frames.reset();
+        if let Some(r) = self.reflex.as_mut() {
+            r.reset();
+        }
         self.prepared = false;
         self.pending = None;
     }
@@ -85,7 +93,11 @@ impl VisionBot {
         self.last = Some(o);
         let sig = |l: f32| 1.0 / (1.0 + (-l).exp());
         let (x, y) = self.frames.cam.pixel_to_world(o.target.0 as f64, o.target.1 as f64);
-        Out { x, y, split: self.split_override.unwrap_or(self.split) && sig(o.split_logit) > self.split_thr, eject: self.eject && sig(o.eject_logit) > 0.5 }
+        let out = Out { x, y, split: self.split_override.unwrap_or(self.split) && sig(o.split_logit) > self.split_thr, eject: self.eject && sig(o.eject_logit) > 0.5 };
+        match self.reflex.as_mut() {
+            Some(r) => r.apply(s, out),
+            None => out,
+        }
     }
 }
 

@@ -253,6 +253,23 @@ pub fn flee_heading_scored(s: &Snapshot, me: &Cell, threats: &[Cell], poppers: &
     (best, best_score)
 }
 
+/// The rule bots' split-kill check for one Hunt target `t` (already advanced by `lead`): the half is big enough to
+/// eat it, it is within the split distance, and no threat would eat the halves (or, with `split_ev`, the expected
+/// gain beats the risk). Shared by `steer_to` and the vision agents' reflex layer (reflex.rs).
+pub fn split_kill_ok(s: &Snapshot, me: &Cell, t: &Cell, p: &Params) -> bool {
+    let side = if p.half_split_safety > 0.5 { half_of(me) } else { *me };
+    if p.split_ev > 0.0 {
+        if me.mass() / 2.0 > t.mass() * EAT_RATIO && me.dist(t) - me.size < p.split_range {
+            let (gain, risk) = split_value(s, me, t, p);
+            return gain >= 0.05 * me.mass() && gain > p.split_ev * risk;
+        }
+        return false;
+    }
+    me.mass() / 2.0 > t.mass() * EAT_RATIO
+        && me.dist(t) - me.size < p.split_range * p.split_reach
+        && !split_threats(s, me, p).iter().any(|th| me.dist(th) < danger_radius(th, &side, p) + p.split_range)
+}
+
 /// World aim point and whether to split this tick.
 pub fn steer(s: &Snapshot, plan: &Plan, router: Option<&mut FoodRouter>, p: &Params) -> (f64, f64, bool) {
     steer_to(s, plan, router, p, None)
@@ -480,22 +497,8 @@ pub fn steer_to(s: &Snapshot, plan: &Plan, mut router: Option<&mut FoodRouter>, 
     let mut split = false;
     if plan.split_ok && plan.mode == Mode::Hunt && (s.mine.len() as f64) <= p.split_max_cells.round_ties_even() {
         let target = prey.iter().find(|c| Some(c.id) == plan.target_id).map(|c| ahead(c));
-        let side = if p.half_split_safety > 0.5 { half_of(&me) } else { me };
-        if p.split_ev > 0.0 {
-            if let Some(t) = target {
-                if me.mass() / 2.0 > t.mass() * EAT_RATIO && me.dist(&t) - me.size < p.split_range {
-                    let (gain, risk) = split_value(s, &me, &t, p);
-                    if gain >= 0.05 * me.mass() && gain > p.split_ev * risk {
-                        aim = (t.x, t.y);
-                        split = true;
-                    }
-                }
-            }
-        } else if let Some(t) = target {
-            if me.mass() / 2.0 > t.mass() * EAT_RATIO
-                && me.dist(&t) - me.size < p.split_range * p.split_reach
-                && !split_threats(s, &me, p).iter().any(|th| me.dist(th) < danger_radius(th, &side, p) + p.split_range)
-            {
+        if let Some(t) = target {
+            if split_kill_ok(s, &me, &t, p) {
                 aim = (t.x, t.y);
                 split = true;
             }
