@@ -13,7 +13,7 @@
 //! radius.
 //!
 //! Genes: `evade` (1 = on in Flee mode), `evade_trigger` (> 0: also flee when a chaser is within its lethal reach plus this),
-//! `evade_buffer` (added to the lethal reach), `evade_cap` (margins above this count the same, default 800), `evade_wall` (weight of how central the path ends: 1 = on), `evade_virus` (1 = chasers
+//! `evade_buffer` (added to the lethal reach), `evade_cap` (margins above this count the same, default 800), `evade_wall` (weight of how central the path ends: 1 = on), `evade_food` (0.3 = a first move towards a lot of pellets is worth up to 300 margin units when we are safe enough), `evade_virus` (1 = chasers
 //! that could pop on a virus steer round it, so a virus on the line between us works as a shield; our own cells never aim at a
 //! virus they would pop), `evade_pieces` (0 = in several pieces the old flee runs; 1 = search with every big piece guarded; 2 = also aim so that the pieces close up).
 
@@ -34,6 +34,8 @@ const POP_RATIO: f64 = 1.33;
 const MARGIN_CAP: f64 = 800.0;
 /// score per unit of centrality (see `room`)
 const ROOM_W: f64 = 0.5;
+/// evade_food: pellets within this of us count for the first move
+const FOOD_RANGE: f64 = 900.0;
 
 /// Distance a split child is thrown (the server's boost, travelled in full).
 pub fn split_throw(child_size: f64) -> f64 {
@@ -254,7 +256,20 @@ pub fn evade_aim(s: &Snapshot, p: &Params, pref: (f64, f64)) -> Option<(f64, f64
         }
         ctx.best = (f64::NEG_INFINITY, k);
         if m != f64::NEG_INFINITY {
-            ctx.search(&s2, 1, k, m, h.0 * pref.0 + h.1 * pref.1);
+            // tie-break: the potential field's heading, plus (evade_food) the pellets lying along this first move
+            let mut fb = 0.0;
+            if p.evade_food > 0.0 {
+                for f in cl.food.iter().filter(|f| f.kind == Kind::Food) {
+                    let (dx, dy) = (f.x - me.x, f.y - me.y);
+                    let d = dx.hypot(dy).max(1.0);
+                    if d < FOOD_RANGE {
+                        let cos = (dx * h.0 + dy * h.1) / d;
+                        fb += (cos - 0.8).max(0.0) / 0.2 * (1.0 - d / FOOD_RANGE);
+                    }
+                }
+            }
+            let bonus = h.0 * pref.0 + h.1 * pref.1 + p.evade_food * 1000.0 * (fb / 10.0).min(1.0);
+            ctx.search(&s2, 1, k, m, bonus);
         }
         if ctx.best.0 > best.0 {
             best = (ctx.best.0, k);

@@ -99,6 +99,7 @@ params! {
     evade_buffer = 0.0,
     evade_wall = 0.0,
     evade_cap = 0.0,
+    evade_food = 0.0,
     evade_virus = 0.0,
     evade_pieces = 0.0,
 }

@@ -550,8 +550,11 @@ pub fn run_escape_rep(agent: &AgentDef, cond: &EscCond, seed: u64) -> Value {
     let end_alive = alive;
     let mass_end = if alive { w.players[us].total_mass(&w) } else { 0.0 };
     // the escape method of a survivor (first that applies)
+    let ch_mass_end = w.players[sc.chaser].total_mass(&w);
     let method = if !alive {
         "dead"
+    } else if ch_mass_end <= 1.3 * mass_end {
+        "outgrew" // the chaser can no longer eat us: food made up the ratio
     } else if virus_popped {
         "virus"
     } else if ever_split {
