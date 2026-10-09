@@ -1,0 +1,5 @@
+{
+ "kind": "plan",
+ "base": "bot/drill/hv_full.json",
+ "need_loss": 0.1
+}

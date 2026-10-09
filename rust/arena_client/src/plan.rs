@@ -933,6 +933,9 @@ impl PlanPolicy {
 
     pub fn act(&mut self, s: &mut Snapshot) -> Out {
         let out = self.base.act(s);
+        if self.base.hunter.phase != crate::hunter::Phase::Idle {
+            return out; // the lurk-and-harvest hunter decided: the lookahead does not second-guess it
+        }
         self.base.counters.bump("plan_steps", 1);
         self.step += 1;
         self.track_headings(s);
