@@ -339,7 +339,6 @@ struct View {
     centre: (f64, f64),
     spread: f64,
     big: C,
-    small: C,
     big_mass: f64,
     small_mass: f64,
     total: f64,
@@ -664,7 +663,7 @@ impl AposPolicy {
                 if splits { split_appetite(f64::max(small_mass, threat.eats), threat.mass) } else { 0.0 },
             ));
         }
-        View { mine, centre: (cx, cy), spread, big, small, big_mass, small_mass, total, food, viruses, ents, n_enemies, prey,
+        View { mine, centre: (cx, cy), spread, big, big_mass, small_mass, total, food, viruses, ents, n_enemies, prey,
                threats, zones }
     }
 

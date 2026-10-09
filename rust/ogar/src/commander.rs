@@ -251,10 +251,6 @@ fn r0(v: f64) -> i64 {
     v.round() as i64
 }
 
-fn mass_of(w: &World, h: u32) -> f64 {
-    w.ents[h as usize].mass()
-}
-
 /// Leaderboard by mass: (player index, total mass), top `n`.
 pub fn top_players(w: &World, n: usize) -> Vec<(usize, f64)> {
     let mut v: Vec<(usize, f64)> = (0..w.players.len())
