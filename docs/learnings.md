@@ -51,6 +51,7 @@ be #1 on the leaderboard ~80% of the time in endless worlds on the Rust server (
 
 ## Drills (harvest, escape)
 
+- The hunter module (commit to popped giants with a kiting lookahead, safe split-harvest) is the first skill that raised leader share on every seed set: c3_4 31.6 -> 39.8%, planner 40.2 -> 49.6%. Safety lookahead before committing is what made it work where reflexes failed.
 - A 500-mass hunter vs a popped 5k giant captures only 11-17% (bound 51%) and rarely overtakes: bots back away from
   giants instead of lurking, and competitors take the pieces ([harvest-drill.md](harvest-drill.md)).
 - The human beats the bots mostly by herding fleeing bots into walls and split-killing them (48% of mass lost; 29% lost
