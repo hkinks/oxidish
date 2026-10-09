@@ -230,6 +230,8 @@ pub struct KillEvent {
     pub killer_total: f64,
     /// cells the victim's owner had when this one was eaten (this one included)
     pub victim_cells: usize,
+    /// the victim owner's total mass when this cell was eaten (this one included)
+    pub victim_total: f64,
 }
 
 /// One player cell eaten by another player's cell, with the context a recording needs (`record_eats`).
@@ -982,7 +984,7 @@ impl World {
                 n += 1;
                 tot += self.ents[h as usize].mass();
             }
-            self.kill_log.push(KillEvent { victim_owner: vo, killer_owner: eo, victim_mass: vm, killer_mass: em, killer_cells: n, killer_total: tot, victim_cells: self.players[vo as usize].cells.len() });
+            self.kill_log.push(KillEvent { victim_owner: vo, killer_owner: eo, victim_mass: vm, killer_mass: em, killer_cells: n, killer_total: tot, victim_cells: self.players[vo as usize].cells.len(), victim_total: self.players[vo as usize].cells.iter().map(|&h| self.ents[h as usize].mass()).sum() });
             if self.record_eats {
                 let vp = &self.players[vo as usize];
                 let vtot: f64 = vp.cells.iter().map(|&h| self.ents[h as usize].mass()).sum();

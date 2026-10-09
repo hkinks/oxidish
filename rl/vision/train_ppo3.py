@@ -12,6 +12,16 @@ What is new against train_ppo2.py:
   * for the first --split-warm iterations the executed split IS the flag (the reflex acts, the heat policy learns around it)
     and the split logit gets no PPO gradient yet.
 
+Coordinator's diagnosis changes (M5):
+  * real self-play: --frozen of the 5 learner slots per world play FROZEN COPIES of the current policy (a new snapshot
+    every --snap-every iterations, --snap-keep kept), chosen with weights that favour the snapshots that are strongest
+    (EMA of their slots' leader share: "the ones we lose to"); bc3 / the anchor stay as permanent members; the env's league pool
+    fills the remaining opponent slots (--pick of them per world);
+  * reward: d log mass + --leader (default 0.05) while #1 + --bigkill * (mass eaten from players at least as big as us / our mass)
+    - --lostpen * (our cell mass eaten by other players / our mass) - death penalty;
+  * the KL anchor decays to ~0 (--beta1 0.003) and lr is a bit higher (--lr 6e-5);
+  * memory (stacked frames / GRU) was NOT done.
+
 Everything below is train_ppo2.py's text. Differences to train_ppo.py:
   * the env runs with label=False (no planner teacher, ~3x faster env);
   * anchor = KL(ref || pi) to a frozen BC net evaluated in the same minibatch (no teacher labels);
@@ -80,29 +90,29 @@ def main():
     p.add_argument("--hours", type=float, default=1.0)
     p.add_argument("--worlds", type=int, default=64)
     p.add_argument("--learners", type=int, default=5)
-    p.add_argument("--frozen", type=int, default=2, help="learner slots per world driven by frozen nets")
-    p.add_argument("--snap-every", type=int, default=60)
-    p.add_argument("--snap-keep", type=int, default=3)
+    p.add_argument("--frozen", type=int, default=3, help="learner slots per world driven by frozen nets")
+    p.add_argument("--snap-every", type=int, default=12)
+    p.add_argument("--snap-keep", type=int, default=8)
     p.add_argument("--threads", type=int, default=10)
     p.add_argument("--T", type=int, default=48)
     p.add_argument("--tau", type=float, default=0.5)
     p.add_argument("--gamma", type=float, default=0.997)
     p.add_argument("--lam", type=float, default=0.95)
-    p.add_argument("--lr", type=float, default=4e-5)
+    p.add_argument("--lr", type=float, default=6e-5)
     p.add_argument("--vlr", type=float, default=3e-4)
     p.add_argument("--clip", type=float, default=0.1)
     p.add_argument("--epochs", type=int, default=2)
     p.add_argument("--mb", type=int, default=512)
     p.add_argument("--ent", type=float, default=0.0005)
     p.add_argument("--vcoef", type=float, default=0.5)
-    p.add_argument("--beta0", type=float, default=0.2, help="KL anchor coefficient at the start")
-    p.add_argument("--beta1", type=float, default=0.05, help="... at the end")
+    p.add_argument("--beta0", type=float, default=0.1, help="KL anchor coefficient at the start")
+    p.add_argument("--beta1", type=float, default=0.003, help="... at the end")
     p.add_argument("--death", type=float, default=3.0)
-    p.add_argument("--leader", type=float, default=0.01)
+    p.add_argument("--leader", type=float, default=0.05)
     p.add_argument("--vpre", type=int, default=0, help="value-pretrain iterations (policy fixed)")
     p.add_argument("--save-every", type=int, default=20)
     p.add_argument("--seed", type=int, default=7000)
-    p.add_argument("--pick", type=int, default=6, help="league entries drawn per world")
+    p.add_argument("--pick", type=int, default=3, help="league entries drawn per world")
     p.add_argument("--giant-p", type=float, default=0.25)
     p.add_argument("--kill-bonus", type=float, default=0.02, help="reward per player cell eaten (max 3 per decision)")
     p.add_argument("--pop-bonus", type=float, default=0.05, help="reward per virus pop caused on another player")
@@ -110,6 +120,8 @@ def main():
     p.add_argument("--split-pos-w", type=float, default=8.0, help="positive weight of that BCE (flag is rare)")
     p.add_argument("--split-warm", type=int, default=30, help="iterations in which the executed split is the flag")
     p.add_argument("--split-ent", type=float, default=0.002)
+    p.add_argument("--bigkill", type=float, default=0.5, help="reward x (mass eaten from players >= us / our mass)")
+    p.add_argument("--lostpen", type=float, default=1.0, help="penalty x (our mass eaten by other players / our mass)")
     p.add_argument("--no-split", action="store_true", help="control: never split (plain PPO continuation of the init net)")
     p.add_argument("--extra-frozen", nargs="*", default=["runs/vision/bc3/final.pt"],
                    help="more permanent frozen opponents (checkpoints)")
@@ -179,8 +191,12 @@ def main():
     def pool():
         return perm_frozen + snaps
 
+    strength = {}   # id(net) -> EMA of the leader share of the slots that played it
+
     def redraw():
-        assign[:] = rng.integers(0, len(pool()), len(frozen_idx))
+        pl = pool()
+        w = np.array([0.4 if i < len(perm_frozen) else 1.0 + 8.0 * strength.get(id(m), 0.1) for i, m in enumerate(pl)])
+        assign[:] = rng.choice(len(pl), len(frozen_idx), p=w / w.sum())
 
     redraw()
 
@@ -212,6 +228,8 @@ def main():
                 heat, sl, _, v = model(vt, wt)
             sdist = torch.distributions.Bernoulli(logits=sl.float())
             flag_np = info["events"][train_idx, 3]
+            if not torch.isfinite(sl).all():
+                raise SystemExit("non-finite split logits: model diverged")
             flag = torch.from_numpy(flag_np.astype(np.float32)).cuda()
             spl = torch.zeros_like(flag) if a.no_split else (flag.clone() if warm else sdist.sample())
             logits = heat.float().flatten(1) / a.tau
@@ -227,7 +245,15 @@ def main():
             mass = info["mass"].astype(np.float64)
             r = np.clip(np.log(np.maximum(mass, 1.0)) - np.log(np.maximum(mass_prev, 1.0)), -1.0, 1.0)
             ev = info["events"]
+            mp = np.maximum(mass_prev, 1.0)
             r = r + a.kill_bonus * np.minimum(ev[:, 0], 3.0) + a.pop_bonus * ev[:, 2]
+            r = r + a.bigkill * np.minimum(ev[:, 4] / mp, 1.0) - a.lostpen * np.minimum(ev[:, 5] / mp, 1.0)
+            pl_ = pool()
+            for k_, net_ in enumerate(pl_):
+                sel = assign == k_
+                if sel.any():
+                    lead_k = float(info["leader"][frozen_idx[sel]].mean())
+                    strength[id(net_)] = 0.98 * strength.get(id(net_), lead_k) + 0.02 * lead_k
             r = np.where(done > 0.5, -a.death, r + a.leader * info["leader"])
             rrew[t] = torch.from_numpy(r[train_idx].astype(np.float32)).cuda()
             rdone[t] = torch.from_numpy(done[train_idx].astype(np.float32)).cuda()
@@ -299,8 +325,13 @@ def main():
                 vl = F.smooth_l1_loss(v.float(), fret[j])
                 loss = pl - a.ent * ent - a.split_ent * sent + beta * akl + a.vcoef * vl + a.split_bc * sbc
                 opt.zero_grad(set_to_none=True)
+                if not torch.isfinite(loss):
+                    continue
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                gn = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                if not torch.isfinite(gn):
+                    opt.zero_grad(set_to_none=True)
+                    continue
                 if pre:
                     for q in rest:
                         q.grad = None

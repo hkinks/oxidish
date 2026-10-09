@@ -24,7 +24,9 @@ pub struct VisionBot {
     pub frames: FrameStack,
     prepared: bool,
     /// the net's answer for the prepared frames (set by the batch pass)
-    pending: Option<NetOut>,
+    pending: Option<(NetOut, Vec<f32>)>,
+    /// the GRU hidden state of this agent (empty = not recurrent); zeros at the start of a life
+    pub hidden: Vec<f32>,
     /// a commander's `split on`: allow the net's split decisions although the spec has `split: false`
     pub split_override: Option<bool>,
     pub decisions: u64,
@@ -51,12 +53,14 @@ impl VisionBot {
     }
 
     pub fn new(net: Arc<Net>, split: bool, split_thr: f32, eject: bool) -> VisionBot {
-        VisionBot { net, split, split_thr, eject, frames: FrameStack::new(PX), prepared: false, pending: None, split_override: None, decisions: 0, last: None, reflex: None }
+        let rec = net.rec;
+        VisionBot { net, split, split_thr, eject, frames: FrameStack::new(PX), prepared: false, pending: None, hidden: vec![0.0; rec], split_override: None, decisions: 0, last: None, reflex: None }
     }
 
     /// New life: the next frame stack starts with both channels equal.
     pub fn reset(&mut self) {
         self.frames.reset();
+        self.hidden.iter_mut().for_each(|x| *x = 0.0);
         if let Some(r) = self.reflex.as_mut() {
             r.reset();
         }
@@ -75,8 +79,8 @@ impl VisionBot {
         self.prepared && self.pending.is_none()
     }
 
-    pub fn set_output(&mut self, o: NetOut) {
-        self.pending = Some(o);
+    pub fn set_output(&mut self, o: NetOut, h: Vec<f32>) {
+        self.pending = Some((o, h));
     }
 
     /// The action for the prepared frames (runs the net itself when no batch pass has answered).
@@ -84,10 +88,16 @@ impl VisionBot {
         if !self.prepared {
             self.prepare(w, pi, s);
         }
-        let o = match self.pending.take() {
-            Some(o) => o,
-            None => self.net.infer(1, &self.frames.view, &self.frames.wide).expect("vision inference failed")[0],
+        let (o, h) = match self.pending.take() {
+            Some(x) => x,
+            None => {
+                let (mut outs, h) = self.net.infer(1, &self.frames.view, &self.frames.wide, &self.hidden).expect("vision inference failed");
+                (outs.remove(0), h)
+            }
         };
+        if !h.is_empty() {
+            self.hidden = h;
+        }
         self.prepared = false;
         self.decisions += 1;
         self.last = Some(o);
@@ -123,9 +133,15 @@ pub fn infer_batch(bots: &mut [&mut VisionBot]) -> usize {
         }
         view.resize(pb * vs, 0);
         wide.resize(pb * ws, 0);
-        let outs = net.infer(pb, &view, &wide).expect("vision inference failed");
-        for (&i, o) in g.iter().zip(outs) {
-            bots[i].set_output(o);
+        let rec = net.rec;
+        let mut hs = Vec::with_capacity(pb * rec);
+        for &i in g {
+            hs.extend_from_slice(&bots[i].hidden);
+        }
+        hs.resize(pb * rec, 0.0);
+        let (outs, hout) = net.infer(pb, &view, &wide, &hs).expect("vision inference failed");
+        for (k, (&i, o)) in g.iter().zip(outs).enumerate() {
+            bots[i].set_output(o, if rec > 0 { hout[k * rec..(k + 1) * rec].to_vec() } else { Vec::new() });
         }
     }
     bots.len()

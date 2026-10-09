@@ -37,8 +37,9 @@ class Stage(nn.Module):
 
 
 class VisionNet(nn.Module):
-    def __init__(self, width=1.0, heat=64, px=256):
+    def __init__(self, width=1.0, heat=64, px=256, gru=0):
         super().__init__()
+        self.gru = gru
         w = [max(8, int(round(c * width / 8)) * 8) for c in (16, 32, 64, 128)]
         self.px, self.heat = px, heat
         self.s1 = Stage(2, w[0], 1)            # 256 -> 128
@@ -61,8 +62,61 @@ class VisionNet(nn.Module):
         self.mlp = nn.Sequential(nn.Linear(fdim, 256), nn.ReLU(), nn.Linear(256, 256), nn.ReLU())
         self.head = nn.Linear(256, 3)         # split, eject, value
         self.register_buffer("scale", torch.tensor(1 / 255.0))
+        if gru:
+            # M5 memory: a GRU cell on the 256-d feature. Its output enters the split/eject/value head and (as a channel bias at the
+            # 16x16 decoder input) the heat map, through zero-initialised projections: a fresh GRU model == the non-recurrent one.
+            self.cell = nn.GRUCell(256, gru)
+            self.g_head = nn.Linear(gru, 256)
+            self.g_dec = nn.Linear(gru, w[2])
+            for q in (self.g_head, self.g_dec):
+                nn.init.zeros_(q.weight)
+                nn.init.zeros_(q.bias)
+
+    def encode(self, view, wide):
+        x = (view.to(torch.float32) * self.scale).contiguous(memory_format=torch.channels_last)
+        y = (wide.to(torch.float32) * self.scale).contiguous(memory_format=torch.channels_last)
+        f2 = self.s2(self.s1(x))
+        f3 = self.s3(f2)
+        f4 = self.s4(f3)
+        g = self.w3(self.w2(self.w1(y)))
+        z = F.relu(torch.cat([f4, g], 1))
+        h0 = F.relu(self.fuse(z))
+        s = F.relu(self.spatial(z)).flatten(1)
+        pooled = torch.cat([z.mean((2, 3)), z.amax((2, 3))], 1)
+        feat = self.mlp(torch.cat([s, pooled], 1))
+        return dict(f2=f2, f3=f3, h0=h0, feat=feat)
+
+    def decode(self, e, g=None):
+        h = e["h0"]
+        if g is not None:
+            h = h + self.g_dec(g)[:, :, None, None]
+        h = F.interpolate(h, scale_factor=2, mode="nearest") + self.l3(F.relu(e["f3"]))
+        h = F.relu(self.dec3(F.relu(h)))
+        h = F.interpolate(h, scale_factor=2, mode="nearest") + self.l2(F.relu(e["f2"]))
+        h = F.relu(self.dec2(F.relu(h)))
+        return self.out(h).squeeze(1)
+
+    def heads(self, feat, g=None):
+        o = self.head(feat + self.g_head(g)) if g is not None else self.head(feat)
+        return o[:, 0], o[:, 1], o[:, 2]
+
+    def forward_rec(self, view, wide, h):
+        """One decision with hidden state h [B, gru] (zeros = new life) -> heat, split, eject, value, h_new."""
+        e = self.encode(view, wide)
+        hn = self.cell(e["feat"], h)
+        heat = self.decode(e, hn)
+        sp, ej, v = self.heads(e["feat"], hn)
+        return heat, sp, ej, v, hn
 
     def forward(self, view, wide):
+        if self.gru:   # stateless use (hidden state = zeros): heat, split, eject, value
+            B = view.shape[0]
+            return self.forward_rec(view, wide, torch.zeros(B, self.gru, device=view.device, dtype=torch.float32))[:4]
+        e = self.encode(view, wide)
+        sp, ej, v = self.heads(e["feat"])
+        return self.decode(e), sp, ej, v
+
+    def _old_forward(self, view, wide):
         x = (view.to(torch.float32) * self.scale).contiguous(memory_format=torch.channels_last)
         y = (wide.to(torch.float32) * self.scale).contiguous(memory_format=torch.channels_last)
         f2 = self.s2(self.s1(x))

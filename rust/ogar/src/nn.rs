@@ -2,7 +2,8 @@
 //! all agents; callers batch the frames of every vision agent of a world into one `run`.
 //!
 //! Model I/O (rl/vision/export.py): inputs `view` u8[B,2,256,256], `wide` u8[B,2,128,128]; outputs `heat`
-//! f32[B,64,64] logits, `split`, `eject`, `value` f32[B].
+//! f32[B,64,64] logits, `split`, `eject`, `value` f32[B]. A recurrent model (M5, `"gru": N` in its json) has one more input
+//! `h` f32[B,N] (zeros for a new life) and one more output `h_out` f32[B,N]; the caller keeps the state per agent.
 //!
 //! Execution provider: spec `"ep"` or env `OGAR_VISION_EP`:
 //!   `cuda` (default)  CUDA EP with CUDA graphs; the batch is padded to a power of two, one captured graph per size
@@ -59,6 +60,8 @@ pub struct Net {
     pub ep: String,
     /// split threshold stored next to the model by export.py (`<model>.json`), if any
     pub split_thr: Option<f32>,
+    /// hidden size of the GRU (0 = not recurrent)
+    pub rec: usize,
 }
 
 /// rl/vision/model.py `decode_target` for one heat map [HEAT*HEAT]: argmax cell refined by a 3x3 soft-argmax.
@@ -188,6 +191,8 @@ struct GraphRun {
     p_heat: *mut CVoid,
     p_split: *mut CVoid,
     p_eject: *mut CVoid,
+    p_h: *mut CVoid,
+    p_hout: *mut CVoid,
     // the tensors behind the raw pointers are owned by `binding`; the allocator must outlive them
     _alloc: Allocator,
 }
@@ -195,6 +200,7 @@ struct GraphRun {
 struct Graphs {
     path: String,
     threads: usize,
+    rec: usize,
     runs: HashMap<usize, GraphRun>,
     cudart: Cudart,
 }
@@ -219,7 +225,7 @@ fn cuda_session(path: &str, threads: usize, graph: bool) -> Result<Session, Stri
 }
 
 impl GraphRun {
-    fn new(path: &str, threads: usize, b: usize, cudart: &Cudart) -> Result<GraphRun, String> {
+    fn new(path: &str, threads: usize, b: usize, rec: usize, cudart: &Cudart) -> Result<GraphRun, String> {
         let e = |e: &dyn std::fmt::Display| format!("{path}: {e}");
         let session = cuda_session(path, threads, true)?;
         let alloc = Allocator::new(
@@ -234,11 +240,17 @@ impl GraphRun {
         let mut d_split = Tensor::<f32>::new(&alloc, [b]).map_err(|x| e(&x))?;
         let mut d_eject = Tensor::<f32>::new(&alloc, [b]).map_err(|x| e(&x))?;
         let d_value = Tensor::<f32>::new(&alloc, [b]).map_err(|x| e(&x))?;
+        let mut d_h = Tensor::<f32>::new(&alloc, [b, rec.max(1)]).map_err(|x| e(&x))?;
+        let mut d_hout = Tensor::<f32>::new(&alloc, [b, rec.max(1)]).map_err(|x| e(&x))?;
+        let (p_h, p_hout) = (d_h.data_ptr_mut(), d_hout.data_ptr_mut());
         let (p_view, p_wide) = (d_view.data_ptr_mut(), d_wide.data_ptr_mut());
         let (p_heat, p_split, p_eject) = (d_heat.data_ptr_mut(), d_split.data_ptr_mut(), d_eject.data_ptr_mut());
         // zero inputs for the capture runs
         cudart.h2d(p_view, &vec![0u8; b * 2 * PX * PX])?;
         cudart.h2d(p_wide, &vec![0u8; b * 2 * WPX * WPX])?;
+        if rec > 0 {
+            cudart.h2d(p_h, &vec![0u8; b * rec * 4])?;
+        }
         cudart.sync()?;
         binding.bind_input("view", &d_view).map_err(|x| e(&x))?;
         binding.bind_input("wide", &d_wide).map_err(|x| e(&x))?;
@@ -246,23 +258,31 @@ impl GraphRun {
         binding.bind_output("split", d_split).map_err(|x| e(&x))?;
         binding.bind_output("eject", d_eject).map_err(|x| e(&x))?;
         binding.bind_output("value", d_value).map_err(|x| e(&x))?;
-        let mut g = GraphRun { session, binding, p_view, p_wide, p_heat, p_split, p_eject, _alloc: alloc };
+        if rec > 0 {
+            binding.bind_input("h", &d_h).map_err(|x| e(&x))?;
+            binding.bind_output("h_out", d_hout).map_err(|x| e(&x))?;
+        }
+        let mut g = GraphRun { session, binding, p_view, p_wide, p_heat, p_split, p_eject, p_h, p_hout, _alloc: alloc };
         for _ in 0..3 {
             g.session.run_binding(&g.binding).map_err(|x| e(&x))?; // warm-up, capture, first replay
         }
         Ok(g)
     }
 
-    fn run(&mut self, n: usize, view: &[u8], wide: &[u8], c: &Cudart) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>), String> {
+    fn run(&mut self, n: usize, view: &[u8], wide: &[u8], h: &[f32], rec: usize, c: &Cudart) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>), String> {
         let t0 = Instant::now();
         c.h2d(self.p_view, view)?;
         c.h2d(self.p_wide, wide)?;
+        if rec > 0 {
+            let bytes = unsafe { std::slice::from_raw_parts(h.as_ptr().cast::<u8>(), h.len() * 4) };
+            c.h2d(self.p_h, bytes)?;
+        }
         c.sync()?;
         let t1 = Instant::now();
         self.session.run_binding(&self.binding).map_err(|x| x.to_string())?;
         c.sync()?;
         let t2 = Instant::now();
-        let r = (c.d2h(self.p_heat, n * HEAT * HEAT)?, c.d2h(self.p_split, n)?, c.d2h(self.p_eject, n)?);
+        let r = (c.d2h(self.p_heat, n * HEAT * HEAT)?, c.d2h(self.p_split, n)?, c.d2h(self.p_eject, n)?, if rec > 0 { c.d2h(self.p_hout, n * rec)? } else { Vec::new() });
         let t3 = Instant::now();
         PHASES[0].fetch_add((t1 - t0).as_nanos() as u64, Ordering::Relaxed);
         PHASES[1].fetch_add((t2 - t1).as_nanos() as u64, Ordering::Relaxed);
@@ -280,6 +300,8 @@ impl Net {
             return Ok(n.clone());
         }
         init_runtime()?;
+        let meta = std::fs::read_to_string(std::path::Path::new(path).with_extension("json")).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
+        let rec = meta.as_ref().and_then(|v| v["cfg"]["gru"].as_u64()).unwrap_or(0) as usize;
         let e = |e: &dyn std::fmt::Display| format!("{path}: {e}");
         let backend = match ep {
             "cpu" => Backend::Plain(Mutex::new(
@@ -289,8 +311,8 @@ impl Net {
             "cuda" => {
                 let cudart = Cudart::load()?;
                 let mut runs = HashMap::new();
-                runs.insert(2, GraphRun::new(path, threads, 2, &cudart)?); // fail early if CUDA does not work
-                Backend::Graph(Mutex::new(Graphs { path: path.to_string(), threads, runs, cudart }))
+                runs.insert(2, GraphRun::new(path, threads, 2, rec, &cudart)?); // fail early if CUDA does not work
+                Backend::Graph(Mutex::new(Graphs { path: path.to_string(), threads, rec, runs, cudart }))
             }
             _ => return Err(format!("unknown execution provider {ep:?} (cpu | cuda | cuda_plain)")),
         };
@@ -299,7 +321,7 @@ impl Net {
             .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
             .and_then(|v| v["split_thr"].as_f64())
             .map(|v| v as f32);
-        let n = Arc::new(Net { backend, path: path.to_string(), ep: ep.to_string(), split_thr });
+        let n = Arc::new(Net { backend, path: path.to_string(), ep: ep.to_string(), split_thr, rec });
         c.insert(key, n.clone());
         Ok(n)
     }
@@ -313,7 +335,9 @@ impl Net {
     }
 
     /// Raw forward pass for `b` frame stacks: view [b,2,PX,PX], wide [b,2,WPX,WPX] -> heat [b,HEAT*HEAT], split, eject.
-    pub fn forward(&self, b: usize, view: &[u8], wide: &[u8]) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>), String> {
+    /// `h`: hidden states [b, rec] (ignored when `rec` = 0); returns heat, split, eject and the new hidden states.
+    pub fn forward(&self, b: usize, view: &[u8], wide: &[u8], h: &[f32]) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>), String> {
+        assert_eq!(h.len(), b * self.rec);
         assert_eq!(view.len(), b * 2 * PX * PX);
         assert_eq!(wide.len(), b * 2 * WPX * WPX);
         let e = |e: &dyn std::fmt::Display| format!("{}: {e}", self.path);
@@ -323,19 +347,24 @@ impl Net {
                 let tv = Tensor::from_array(([b, 2, PX, PX], view.to_vec())).map_err(|x| e(&x))?;
                 let tw = Tensor::from_array(([b, 2, WPX, WPX], wide.to_vec())).map_err(|x| e(&x))?;
                 let mut s = session.lock().unwrap();
-                let out = s.run(ort::inputs!["view" => tv, "wide" => tw]).map_err(|x| e(&x))?;
+                let out = if self.rec > 0 {
+                    let th = Tensor::from_array(([b, self.rec], h.to_vec())).map_err(|x| e(&x))?;
+                    s.run(ort::inputs!["view" => tv, "wide" => tw, "h" => th]).map_err(|x| e(&x))?
+                } else {
+                    s.run(ort::inputs!["view" => tv, "wide" => tw]).map_err(|x| e(&x))?
+                };
                 let get = |name: &str| -> Result<Vec<f32>, String> {
                     let (_, d) = out[name].try_extract_tensor::<f32>().map_err(|x| e(&x))?;
                     Ok(d.to_vec())
                 };
-                (get("heat")?, get("split")?, get("eject")?)
+                (get("heat")?, get("split")?, get("eject")?, if self.rec > 0 { get("h_out")? } else { Vec::new() })
             }
             Backend::Graph(g) => {
                 let mut g = g.lock().unwrap();
                 let g = &mut *g;
                 let pb = b.next_power_of_two();
                 if !g.runs.contains_key(&pb) {
-                    let run = GraphRun::new(&g.path, g.threads, pb, &g.cudart)?;
+                    let run = GraphRun::new(&g.path, g.threads, pb, g.rec, &g.cudart)?;
                     g.runs.insert(pb, run);
                 }
                 let (mut vp, mut wp);
@@ -349,8 +378,10 @@ impl Net {
                     (&vp[..], &wp[..])
                 };
                 let run = g.runs.get_mut(&pb).unwrap();
-                let (heat, split, eject) = run.run(pb, view, wide, &g.cudart)?;
-                (heat[..b * HEAT * HEAT].to_vec(), split[..b].to_vec(), eject[..b].to_vec())
+                let mut hp = h.to_vec();
+                hp.resize(pb * g.rec, 0.0);
+                let (heat, split, eject, hout) = run.run(pb, view, wide, &hp, g.rec, &g.cudart)?;
+                (heat[..b * HEAT * HEAT].to_vec(), split[..b].to_vec(), eject[..b].to_vec(), if g.rec > 0 { hout[..b * g.rec].to_vec() } else { Vec::new() })
             }
         };
         STATS[0].fetch_add(1, Ordering::Relaxed);
@@ -359,15 +390,17 @@ impl Net {
         Ok(r)
     }
 
-    pub fn infer(&self, b: usize, view: &[u8], wide: &[u8]) -> Result<Vec<NetOut>, String> {
-        let (heat, split, eject) = self.forward(b, view, wide)?;
-        Ok((0..b)
+    /// Decoded outputs and the new hidden states [b, rec] (empty when not recurrent).
+    pub fn infer(&self, b: usize, view: &[u8], wide: &[u8], h: &[f32]) -> Result<(Vec<NetOut>, Vec<f32>), String> {
+        let (heat, split, eject, hout) = self.forward(b, view, wide, h)?;
+        let outs = (0..b)
             .map(|i| NetOut {
                 target: decode_target(&heat[i * HEAT * HEAT..(i + 1) * HEAT * HEAT]),
                 split_logit: split[i],
                 eject_logit: eject[i],
             })
-            .collect())
+            .collect();
+        Ok((outs, hout))
     }
 }
 
