@@ -339,3 +339,72 @@ What would raise the numbers (not tried): approach pieces from the pop point as 
 * Sweeps use N = 50 and only the `giant_popped` scenario; one seed base (1). The oracle's constants (200/300/100) were tuned for a few minutes on the 500/5k cell, not searched.
 * The scene differs from `ogar endless`: no server bots, no stray viruses, a map of 7000. Mass eaten from the giant by pieces merging into other food is not counted, and decay (0.2%/s) hits everyone.
 * `capture` counts mass of eaten cells at the moment of eating; our cells' own mass loss to the giant is `lost_giant` in the JSON rows.
+
+## Lurk-and-harvest hunter (results, 2026-10-09)
+
+Code: `rust/arena_client/src/hunter.rs` (module + 21 unit tests on constructed snapshots), genes in `params.rs`, hooked into `HeuristicPolicy::act`
+(policy.rs; the planner defers to it while it acts), scripted drill agent `hunter[:gene=v,...]`. All genes default to 0 (off).
+Specs: `bot/drill/hv_commit_only.json` (the recommended set: c3_4 + `commit commit_kite split_harvest race hv_memory=3 hv_still=100`),
+`bot/drill/hv_full.json` (+ `lurk`), `plan_*` wrappers. `OGAR_HUNTER_TRACE=1` prints the decisions.
+
+Behaviours: **lurk** (giant >= `lurk_ratio` x our mass within `lurk_virus_range` of a virus: stand at lunge reach + `lurk_margin` from it, on the far side of the
+virus; abort to the normal bot when it closes on us or another threat appears; `lurk_shoot` feeds the virus into it via the existing shoot tactic with
+`shoot_threats`); **commit** (burst = a group of >= `hv_min_pieces` same-colour cells with `hv_group_ratio` x our mass and something edible; `commit_kite`: 32 headings
+played out for `hv_horizon` steps against pursuing eaters, thrown pieces on their boost path and lunge circles, take the safe one that eats most mass soonest;
+`commit_order` 1 = smallest first); **split-harvest** (split only if our half eats the piece, the throw lands it, and no cell that could eat either half
+reaches it or the walk; `hv_split_frac` min piece size; the merge timer is 30 s = longer than any drill, so it is judged safe for its whole life);
+**race** (pieces a rival that eats them reaches first are worth nothing); **memory** (burst pieces that left the view are kept `hv_memory` x 10 steps).
+Real split reach: `780 * (size/sqrt2)^0.0122` (thrown half) + the half's radius; a threat can lunge only if its half still eats the victim.
+
+### Drill (500 vs 5k, bot giant, seed base 5000, N = 100, 95% intervals; genes chosen on other seeds)
+
+30 s, capture at 30 s / overtake any time / died:
+
+| cell | c3_4 | plan | oracle | scripted hunter | hv_commit_only | hv_full (lurk) |
+|---|---|---|---|---|---|---|
+| giant_popped D600 | 12+-2 / 6% / 9% | 11+-2 / 6% / 9% | 17+-3 / 15% / 9% | 23+-3 / 23% / 9% | **24+-3 / 27% / 10%** | 24+-3 / 27% / 10% |
+| giant_popped D1000 | 5+-2 / 1% / 2% | 4+-2 / 1% / 0% | 13+-3 / 10% / 7% | 23+-3 / 23% / 2% | 19+-3 / 17% / 3% | 19+-3 / 17% / 3% |
+| giant_popped D1500 | 3+-1 / 0% / 1% | 2+-1 / 0% / 1% | 14+-3 / 11% / 6% | 22+-3 / 21% / 4% | 13+-3 / 12% / 1% | 13+-3 / 12% / 1% |
+| giant_pop D600 | 5+-2 / 3% / 3% | 3+-1 / 1% / 2% | 18+-3 / 16% / 11% | 20+-3 / 15% / 6% | 15+-3 / 13% / 7% | **20+-3 / 19% / 7%** |
+| giant_pop D1000 | 4+-2 / 1% / 1% | 2+-1 / 0% / 1% | 14+-3 / 9% / 5% | 21+-3 / 18% / 2% | 11+-3 / 10% / 2% | 15+-3 / 13% / 6% |
+| giant_pop D1500 | 3+-1 / 0% / 1% | 2+-1 / 0% / 0% | 13+-3 / 7% / 8% | 18+-3 / 14% / 2% | 9+-3 / 9% / 1% | 12+-3 / 11% / 4% |
+
+60 s, D600 (capture at 60 s / overtake / died): giant_popped c3_4 17+-3 / 18% / 19%, oracle 26+-4 / 38% / 28%, **hv_commit_only 33+-4 / 52% / 17%**, scripted hunter 32+-4 / 47% / 22%;
+giant_pop c3_4 8+-3 / 11% / 10%, oracle 29+-4 / 43% / 24%, hv_full 27+-4 / 36% / 17%, hv_commit_only 23+-4 / 30% / 17%.
+Other masses (giant_popped, 30 s, capture / overtake): ours 300: c3_4 0 / 0, hunter genes 4+-1 / 0 (nobody; the chain bound is 26%); ours 1000: c3_4 27 / 38%, hv_commit 37+-3 / 66%;
+ours 1500: 31 / 51% -> 37 / 68%; giant 3k: 38 / 66% -> 42 / 76%; giant 10k: 0 -> 2 / 0.
+With an 800 competitor (D600): giant_pop c3_4 2+-1 -> hv_full 11+-2 (overtake 0 -> 5%), oracle 7; giant_popped everyone 0-2% (the competitor takes the pieces; `race` does not fix it).
+
+Targets: **>= 50% overtake in 60 s: met in giant_popped (52% [42-62]), not in giant_pop (36%). >= 35% capture: not met** (33+-4% at 60 s, 24+-3% at 30 s). Deaths did not rise
+(popped 17% vs 19% at 60 s; giant_pop 17% vs 10%, higher). Why the rest is not reached: the core (2521) holds a lunge circle of about 1190 around us that we respect,
+so 637/1275 pieces are only caught when they drift to us; a random search over the genes (30 candidates, 60-s capture) topped out at about 31% (baseline 27% on the same seeds), so the gene values are near a plateau of this design, not tuned to the limit.
+Deaths at t = 1 s (a thrown 1275/2521 piece landing on us) are the biggest single cause of deaths; `landing_of` dodges it only after the first step's velocity is seen.
+Rule bots only see their view box: at D >= 1000 in `giant_popped` the pieces are never seen, which is why the scripted hunter (oracle fallback walks to unseen pieces) beats the rule-bot variants there.
+
+### Endless leader share (`arena.endless --engine inproc`, usual rule-bot field: champ, r2g9, safe, ramp_r2, ramp300 x2 each + 8 server bots; candidate x2; 8 worlds x 240 min)
+
+| candidate | 3000 | 11000 | 21000 | 31000 | 41000 | mean | deaths/h | harvest_mass/h |
+|---|---|---|---|---|---|---|---|---|
+| c3_4 | 31 | 28 | 31 | 32 | 36 | 31.6 | 16.0 | 14.6k |
+| c3_4 + hv_commit_only | **43** | **44** | **38** | **37** | **37** | **39.8** | 14.6 | 18.6k |
+| c3_4 + hv_full (lurk) | 42 | 40 | 32 | 32 | 31 | 35.4 | 15.7 | 19.8k |
+
+Counters from `--stats-out` (candidate rows, 320 player-hours each; the sum of the 5 sets; `rl/vision/skillstats.py` keys). Gate (mean improves, >= 3 of 5): **hv_commit_only passes (5/5, +8.2)**;
+hv_full wins 3 of 5 strictly (one tie at 32, one loss) with a smaller mean gain: **lurk does not pay on endless, keep it off** (it helps `giant_pop` in the drill only).
+The coordinator's M5 warning (a harvest reflex that chases pieces into the crowd that popped the target raised deaths 57%) does not show up here: deaths/h fell 9% (16.0 -> 14.6) because
+every step re-plays the pursuers (all cells that outweigh us, whatever their owner), thrown pieces and lunge circles, and `race` drops pieces a rival reaches first. "Mass lost per hour" is not in the counters, so it was not compared.
+Not run: the held-out field (it needs vision nets; for rule bots the usual field applies), `plan_c34` variants in endless (the planner defers to the hunter, drill identical), `lurk_shoot` end to end (only a unit test), more than one seed base per set.
+
+### Hook for the vision agents (do not edit visionbot.rs here; vision-m5 owns it)
+
+    use arena_client::hunter::{Hunter, Phase};
+    let genes = Params::from_json(&serde_json::json!({"commit":1,"commit_kite":1,"split_harvest":1,"race":1,"hv_memory":3,"hv_still":100}));
+    let mut hunter = Hunter::new();                       // one per agent; hunter.reset() on respawn
+    // every decision step, with the Snapshot the rule-bot teacher already gets (ogar::agent::snapshot(&world, pi)):
+    if let Some(out) = hunter.step(&snap, &genes) {       // Out { x, y, split, eject }: the aim point and the split bit
+        // teacher: label this step with out; reflex: override the net's aim/split while hunter.phase == Phase::Commit
+    }
+
+`step` is pure apart from velocities/cooldowns/memory kept in `Hunter`; it returns `None` when there is no burst giant (or lurk target), so the net plays on.
+Use the `commit` set only (`lurk` lost on endless). A reflex must keep the hunter's own safety (it already refuses to approach inside any eater's reach or lunge circle); do not add chasing of
+pieces that it did not pick.
