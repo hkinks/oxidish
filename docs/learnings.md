@@ -40,6 +40,22 @@ be #1 on the leaderboard ~80% of the time in endless worlds on the Rust server (
 - **Reward must match the goal.** Δlog(mass) + a tiny #1 bonus does not teach "don't get split-killed while big" or
   "take the leader down", which is how leads are actually won and lost.
 
+- **Bolted-on skills hurt (M5).** Split-kill, harvest and virus-split reflexes on top of p6 work mechanically
+  (38 split kills/h, 11.5 virus pops/h) but cost 11-31 points of leader share: after a split our halves get eaten by
+  mid-size players, harvesting chases pieces into the crowd. A skill is only worth it together with the defence to
+  survive its aftermath.
+- **PPO that executes splits collapses** (deaths 30-50/h, leader ~1%) every time; random splits are too costly to
+  explore. Splitting needs a safe teacher or curriculum (drills), not exploration from scratch.
+- **Engines differ for vision runs**: `--engine inproc` vs `serve` diverge chaotically (p6 58% vs ~45%); compare
+  candidates only within one engine.
+
+## Drills (harvest, escape)
+
+- A 500-mass hunter vs a popped 5k giant captures only 11-17% (bound 51%) and rarely overtakes: bots back away from
+  giants instead of lurking, and competitors take the pieces ([harvest-drill.md](harvest-drill.md)).
+- The human beats the bots mostly by herding fleeing bots into walls and split-killing them (48% of mass lost; 29% lost
+  while in pieces) ([human/2026-10-09-50bots.md](human/2026-10-09-50bots.md)). Escape is the weakest skill.
+
 ## Commander (LLM / heuristic orders)
 
 - Orders over the control port work (`hunt`, `harvest`, `virus-split`, ...), but a simple heuristic commander did not
