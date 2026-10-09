@@ -196,6 +196,12 @@ struct Learner {
     /// the teacher's world-space target for the current observation (kept for tests)
     t_world: (f64, f64),
     prev_mass: f64,
+    /// player cells eaten / their mass since the last observation, and the pops count then (for `events`)
+    kills: f32,
+    kill_mass: f32,
+    pops_prev: u32,
+    /// only for the `reflex_split` label in `events`
+    probe: arena_client::reflex::Reflex,
 }
 
 struct WorldEnv {
@@ -219,6 +225,8 @@ struct WorldOut<'a> {
     rank: &'a mut [i32],
     leader: &'a mut [u8],
     ncells: &'a mut [i32],
+    /// [L, 4] per learner: player cells eaten, their mass, virus pops caused on others, 1 if the rule bots' split-kill check passes
+    events: &'a mut [f32],
 }
 
 pub struct VecEnv {
@@ -241,6 +249,8 @@ pub struct VecEnv {
     pub rank: Vec<i32>,
     pub leader: Vec<u8>,
     pub ncells: Vec<i32>,
+    /// [N, 4]: kills, kill mass, pops, reflex split-kill flag (see WorldOut)
+    pub events: Vec<f32>,
     /// 1 = the teacher drives this learner (the action passed to `step` is ignored)
     pub teacher_mask: Vec<u8>,
 }
@@ -310,6 +320,10 @@ impl WorldEnv {
                 cam: Camera::default(),
                 t_world: (0.0, 0.0),
                 prev_mass: 0.0,
+                kills: 0.0,
+                kill_mass: 0.0,
+                pops_prev: 0,
+                probe: arena_client::reflex::Reflex::from_spec(&serde_json::json!({"reflex_split": true})).expect("reflex probe"),
             });
         }
         let mut we = WorldEnv { w, opps, learners, scratch: Scratch::default(), timing: Timing::default(), giant };
@@ -351,6 +365,12 @@ impl WorldEnv {
         self.timing.tick += t.elapsed().as_nanos() as u64;
         let t = Instant::now();
         step_all(&mut self.opps, &mut self.w);
+        for k in &self.w.kill_log {
+            if let Some(l) = self.learners.iter_mut().find(|l| l.pi as i32 == k.killer_owner) {
+                l.kills += 1.0;
+                l.kill_mass += k.victim_mass as f32;
+            }
+        }
         self.w.kill_log.clear();
         self.timing.opponents += t.elapsed().as_nanos() as u64;
     }
@@ -414,6 +434,12 @@ impl WorldEnv {
             out.rank[k] = r;
             out.leader[k] = (r == 0) as u8;
             out.ncells[k] = self.w.players[l.pi].cells.len() as i32;
+            let pops = self.w.players[l.pi].pops;
+            let flag = !died && l.probe.split_kill(&s).is_some();
+            out.events[k * 4..k * 4 + 4].copy_from_slice(&[l.kills, l.kill_mass, pops.saturating_sub(l.pops_prev) as f32, flag as u8 as f32]);
+            l.kills = 0.0;
+            l.kill_mass = 0.0;
+            l.pops_prev = pops;
             self.timing.decisions += 1;
         }
     }
@@ -459,6 +485,7 @@ impl VecEnv {
             rank: vec![0; n],
             leader: vec![0; n],
             ncells: vec![0; n],
+            events: vec![0.0; n * 4],
             teacher_mask: vec![0; n],
             opts,
         }
@@ -476,6 +503,7 @@ impl VecEnv {
         let mut rk = self.rank.chunks_mut(l);
         let mut ld = self.leader.chunks_mut(l);
         let mut nc = self.ncells.chunks_mut(l);
+        let mut ev = self.events.chunks_mut(l * 4);
         (0..self.opts.n_worlds)
             .map(|_| WorldOut {
                 view: vs.next().unwrap(),
@@ -487,6 +515,7 @@ impl VecEnv {
                 rank: rk.next().unwrap(),
                 leader: ld.next().unwrap(),
                 ncells: nc.next().unwrap(),
+                events: ev.next().unwrap(),
             })
             .collect()
     }

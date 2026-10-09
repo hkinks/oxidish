@@ -230,6 +230,10 @@ fn info_dict<'py>(slf: &Bound<'py, VecEnv>, py: Python<'py>, copy: bool) -> PyRe
     d.set_item("rank", vec1(slf, py, ArrayView1::from(&c.rank[..]), copy))?;
     d.set_item("leader", vec1(slf, py, ArrayView1::from(&c.leader[..]), copy))?;
     d.set_item("ncells", vec1(slf, py, ArrayView1::from(&c.ncells[..]), copy))?;
+    let ev: ArrayView2<f32> = ArrayView2::from_shape((c.n, 4), &c.events).unwrap();
+    // SAFETY: as above.
+    let ev = unsafe { PyArray2::borrow_from_array(&ev, slf.clone().into_any()) };
+    d.set_item("events", finish::<f32>(ev.into_any(), copy))?;
     Ok(d)
 }
 
