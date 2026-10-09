@@ -303,3 +303,111 @@ CUDA), and no split-decision mismatches.
 The M3 gate (≥ c3_4) is met. The vision bot beats its teacher on 4 of 5 seed sets and ties the fifth. The margin
 is small (+1.8), but it was consistent across all five sets. It still dies about 1.7× as often as the planner
 (M2 in-env), which is the first thing for M4 to fix.
+
+## M4 status (2026-10-08/09): fixing deaths, then PPO (branch `worktree-agent-ae99736f13458a832`)
+
+**Result in one line.** Phase A (BC with a danger-state store) took the endless leader share from 42.0 to 51.4 and cut
+in-env deaths/h from 15.6 to 9.2. Phase B (PPO) took it to 78.8 on the training field, **but most of that is the
+field being known**: on a held-out field the PPO nets are ahead of bc3 by about 12-15 points (about 43 vs 28.5, 2 seed
+sets), and a live server with a human and other strong bots did not show the gain (the coordinator's 9600 test, p2:
+#1 3% of the time). Treat 78.8 as an over-fit upper bound and the held-out column as the honest number.
+
+### Phase A: fixes in BC (`train_bc.py`, continued from bc3)
+- **Danger / death-precursor store** (`--danger-cap 30000 --danger-frac 0.15..0.25`): in the collector, a frame is
+  flagged when the learner's mass falls below 70% of its value within the next 30 decisions (2.4 s; a death counts)
+  and the mass was at least 40. The flagged frames (current + previous, as a normal stack) go to a FIFO store that holds
+  about 12 min of wall time, against about 20 s for the ring (ring shrunk to 256 rows). Each batch draws 15-25% from
+  it; labels are still the planner's. About 1.3% of the frames are flagged. DAgger: the student drives 85-90% of the
+  slots from the start (the start net is already bc3).
+- a1 = bc3 + 1.5 h (lr 2e-4, danger-frac 0.15); a2 = a1 + 1.5 h (lr 1.5e-4, danger-frac 0.25). Teacher agreement on
+  the held-out set falls a little (0.77 -> 0.73); as in M2 this is a distribution shift, not worse play.
+
+| net | in-env deaths/h (seeds 11, 12, 33 min) | in-env leader | top-3 |
+|---|---|---|---|
+| planner (M2) | 8.0 | 0.207 | 0.52 |
+| bc3 | 15.6 | 0.230 | 0.49 |
+| a1 | 11.1 | 0.220 | 0.52 |
+| a2 | 9.2 | 0.222 | 0.54 |
+| p1 (PPO) | 6.4 | 0.273 | 0.62 |
+| p2 | 5.6 | 0.316 | 0.65 |
+| p3 | 5.5 | 0.301 | 0.65 |
+| p4 | 5.8 | 0.288 | 0.65 |
+
+### Phase B: PPO (`train_ppo.py`, then `train_ppo2.py`)
+- Policy = categorical over the 64x64 heat-map cells, logits = heat / 0.5; the executed target is the cell centre.
+  Split and eject are not used (always off). Reward per decision: d log(mass) (clipped to +-1) + 0.01 while #1 in the
+  world - 3.0 on a death. GAE gamma 0.997, lambda 0.95, clip 0.1, 2 epochs, minibatch 512, lr 4e-5 (value head
+  3e-4) with a cosine decay, KL early stop at 0.03, entropy 5e-4. 64 worlds x 4 learners, rollout 48 steps, bf16.
+- Value head: pretrained for 30 iterations with the trunk frozen and the policy fixed (p1 only), then trained jointly.
+- Anchor: `train_ppo.py` = cross-entropy to the planner's Gaussian heat label with a coefficient decaying 0.1 -> 0.02
+  (p1) / 0.05 -> 0.01 (p2-p4); `train_ppo2.py` = KL(ref || pi) to a frozen BC net (a2), coefficient 0.2 -> 0.05, no
+  planner labels.
+- Chain: a2 -> p1 (2 h, 1077 it) -> p2 (2 h) -> p3 (2 h) -> p4 (2 h, plateau; no endless run) on the fixed
+  endless field. In-env and training metrics rise up to p2-p3 and then flatten.
+- No rollback was needed: each stage improved in-env. p4 did not improve (0.288 in-env), so it was not evaluated further.
+
+### Endless leader share, training field (champ, r2g9, safe, ramp_r2, ramp300 + 8 server bots; 8 worlds x 240 min)
+
+| spec | 3000 | 11000 | 21000 | 31000 | 41000 | mean |
+|---|---|---|---|---|---|---|
+| planner `plan_c34` | 46 | 35 | 38 | 38 | 44 | 40.2 |
+| vision_bc3 (M3) | 48 | 36 | 40 | 42 | 44 | 42.0 |
+| vision_a1 | 50 | 47 | 59 | 51 | 47 | 50.8 |
+| vision_a2 | 59 | 45 | 51 | 47 | 55 | 51.4 |
+| vision_p1 | 68 | 65 | 62 | 73 | 61 | 65.8 |
+| vision_p2 | 78 | 70 | 64 | 65 | 71 | 69.6 |
+| vision_p3 | 81 | 80 | 78 | 78 | 77 | **78.8** |
+
+Each step beats the previous one on at least 4 of 5 sets (a2 vs a1 is a tie: 51.4 vs 50.8).
+
+### Held-out field (not seen in training)
+Lineup: `vis` x2, `plan` (plan_c34) x2, `plan2` (plan2_c34) x1, `bc3` (vision_bc3) x2, `apos` x1, `hvirus`
+(hunter_virus) x1 + 8 server bots (`endlessH.sh`). The league pool in the p6/p7 runs is disjoint from it, except for the
+frozen bc3 slots in `train_ppo2.py` (requested by the coordinator; bc3 stays in the held-out field, so p6/p7 are not
+fully held out against it).
+
+| spec | 3000 | 11000 | mean of 2 | leader share of the 2 bc3 copies in the same runs |
+|---|---|---|---|---|
+| vision_bc3 as candidate | 26 | 31 | 28.5 | (itself 22 / 24, plan 34 / 26) |
+| vision_p2 | 38 | 47 | 42.5 | 47 / 44 |
+| vision_p3 | 39 | 47 | 43.0 | 52 / 41 |
+| vision_p6 (league PPO, frozen self-play) | 45 | 39 | 42.0 | 38 / 37 |
+| vision_p7 (p6 + 2 h) | 36 | 45 | 40.5 | 48 / 43 |
+
+Reading: against a field with vision opponents every PPO net gets about 40-45%, against 28.5% for bc3 (+8 to +20 per
+seed). Head to head, the p2/p3 candidates are about even with their bc3 opponents (bc3 copies lead on seed 3000);
+p6 is ahead of them on both seeds' family tables. The differences between p2, p3, p6 and p7 are inside the noise
+(2 seeds, about +-5). Only 2 of 5 seed sets were run on the held-out field (a run takes 20-40 min with vision
+opponents); the 5-set rule was not met for it.
+
+### League PPO (`--league`, `train_ppo2.py`) and the Rust options
+- `ogar_py.VecEnv(..., pool=[(name, spec, count)], pool_pick=k, giant_p=p, giant_min, giant_max)`: every world draws k
+  entries of the pool (deterministic in the world seed); with probability p one opponent is a giant, fed (largest cell,
+  up to 500 per 125 ticks) up to a target mass in [3000, 10000] whenever it falls below 70% of it. With a giant the
+  learner is leader almost never (0.3% vs 12% in a test), so the leader bonus does not apply there.
+  `rust/ogar/src/vision.rs`.
+- Pool: the five endless-field bots, c3_4, shoot, hunter_hunt, hunter_reckless, five `runs/ab` c34 variants.
+- Frozen self-play: 2 of 5 learner slots per world are driven by frozen nets (bc3, a2, plus 3-4 snapshots of the
+  policy taken every 40-60 iterations, greedy decode). Vision opponents inside the env's in-process agents are not
+  available (`ogar_py` is built without the `vision-net` feature), so this runs in the trainer on the GPU.
+- Throughput of `train_ppo2.py` alone: rollout 5.7k decisions/s over all 320 slots (planner labels off), training
+  3.0k samples/s (incl. the ref forward), 8.8 s per 9.2k-sample iteration; about 17 s while an endless eval ran at the
+  same time. `train_ppo.py` (planner labels on) took 6 s per 12.3k samples. torch.compile was not tried.
+
+### What limited it
+1. **The training field.** Rule-bot opponents are fixed and exploitable; the policy specialises on them (78.8 vs about
+   43 on the held-out field). Self-play / league came late and its benefit (p6 45/39, p7 36/45) cannot be separated
+   from noise with 2 seeds.
+2. **Eval cost.** One endless run takes 22 min (rule field) to 35 min (vision opponents) and shares the machine with training.
+3. **Splitting stayed off** (the split head is poor and PPO never used it). No virus, split-kill or pop skill was
+   trained or measured; the per-skill stats asked for (kills via split, pops caused, pieces eaten after a pop) were not
+   collected, and the reward has no term for them.
+4. Time: about 14 h of training wall time in total (budget 12 h); p4 and p7 showed plateaus.
+
+### Files
+`bot/vision_{a1,a2,p1,p2,p3,p6,p7}.json` (specs, `split` false), models in `runs/vision/export/vision_*.onnx`
+(gitignored), checkpoints `runs/vision/{a1,a2,p1..p7}/` (gitignored), logs `logs/vision/*.jsonl`, eval JSONs
+`runs/vision/evals/`. Scripts: `rl/vision/train_bc.py` (danger store), `train_ppo.py`, `train_ppo2.py`, `ppo_sum.py`,
+`inenv_sum.py`, `endless5.sh` (training field), `endlessH.sh` (held-out), `queueH*.sh`.
+Recommended: `vision_p3` (best on the training field, equal on the held-out field) or `vision_p6` for the
+league-trained net.
