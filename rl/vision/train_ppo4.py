@@ -153,7 +153,7 @@ def main():
     head_params = list(model.mlp.parameters()) + list(model.head.parameters())
     GRU = model.gru
     if GRU:
-        head_params += list(model.cell.parameters()) + list(model.g_head.parameters()) + list(model.g_dec.parameters())
+        pass   # GRU and its projections stay in the low-lr group: at the head lr (3e-4) g_dec moved the heat map so fast that the KL early stop fired after 1-3 minibatches (g1c, g2c)
     assert a.T % a.chunk == 0
     hp_ids = {id(q) for q in head_params}
     rest = [q for q in model.parameters() if id(q) not in hp_ids]
@@ -347,7 +347,8 @@ def main():
                         for l_ in range(Lc):
                             if l_ > 0:
                                 h = h * (1.0 - rdone[ti[:, l_ - 1], ni])[:, None]
-                            h = model.cell(feat[:, l_], h).float()
+                            with torch.autocast("cuda", enabled=False):
+                                h = model.cell(feat[:, l_].float(), h.float())
                             gs.append(h)
                         g = torch.stack(gs, 1).flatten(0, 1)
                         heat = model.decode(e, g)
@@ -361,6 +362,9 @@ def main():
                 heat = heat.float()
                 lp_all = F.log_softmax(heat.flatten(1) / a.tau, 1)
                 lp = lp_all.gather(1, fa[:, None])[:, 0]
+                if os.environ.get("PPO_DEBUG_KL") and ep == 0 and i == 0:
+                    d_ = (flp - lp).detach().view(P, Lc).abs()
+                    print("DEBUGKL it", it, "abs diff per chunk position", [round(x, 3) for x in d_.mean(0).tolist()], flush=True)
                 sd = torch.distributions.Bernoulli(logits=sl.float())
                 lps = sd.log_prob(fspl) * fsm
                 lp_joint = lp + lps

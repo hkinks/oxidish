@@ -12,7 +12,7 @@
 //! whose `farm`/`params` give the rule genes, default `bot/c3_4.json`), `reflex_params` (object merged over those genes, e.g.
 //! {"flee_margin": 1.0} for a wider berth than the genome's), `reflex_harvest_range` (gene `harvest_range`, default 1),
 //! `reflex_split_clear` (split-kill only when no other player cell above half of our mass is within this many world units;
-//! default 0 = off).
+//! default 0 = off), `reflex_guard` (bool): recombine guard, see `guard`.
 
 use std::collections::HashMap;
 
@@ -27,6 +27,7 @@ pub struct Reflex {
     pub virus: bool,
     harvest_range: f64,
     split_clear: f64,
+    guard: bool,
     genes: HeuristicPolicy,
     tactics: Tactics,
     pub counters: Counters,
@@ -37,7 +38,7 @@ impl Reflex {
     pub fn from_spec(spec: &serde_json::Value) -> Option<Reflex> {
         let on = |k: &str| spec.get(k).and_then(|v| v.as_bool()).unwrap_or(false);
         let (split, harvest, virus) = (on("reflex_split"), on("reflex_harvest"), on("reflex_virus"));
-        if !(split || harvest || virus) {
+        if !(split || harvest || virus || on("reflex_guard")) {
             return None;
         }
         let path = spec.get("reflex_genes").and_then(|v| v.as_str()).unwrap_or("bot/c3_4.json");
@@ -58,6 +59,7 @@ impl Reflex {
         }
         let hr = spec.get("reflex_harvest_range").and_then(|v| v.as_f64()).unwrap_or(1.0);
         let mut r = Reflex::new(split, harvest, virus, hr, &genome);
+        r.guard = spec.get("reflex_guard").and_then(|v| v.as_bool()).unwrap_or(false);
         r.split_clear = spec.get("reflex_split_clear").and_then(|v| v.as_f64()).unwrap_or(0.0);
         Some(r)
     }
@@ -67,7 +69,7 @@ impl Reflex {
         for k in ["reflex_split", "reflex_harvest", "reflex_shot"] {
             counters.0.push((k.to_string(), 0));
         }
-        Reflex { split, harvest, virus, harvest_range, split_clear: 0.0, genes: HeuristicPolicy::from_spec(genome), tactics: Tactics::new(), counters }
+        Reflex { split, harvest, virus, harvest_range, split_clear: 0.0, guard: false, genes: HeuristicPolicy::from_spec(genome), tactics: Tactics::new(), counters }
     }
 
     pub fn reset(&mut self) {
@@ -100,10 +102,43 @@ impl Reflex {
         Some((t.x, t.y))
     }
 
+    /// Recombine guard: while we own >= 2 cells, a player cell that outweighs our biggest piece by the eat ratio and is within
+    /// reach (its radius + ours + 400) makes us run, as a group, straight away from it (weighted by how close it is) until the
+    /// pieces have merged or the danger has passed. None = no danger, the net keeps control.
+    pub fn guard_aim(&self, s: &Snapshot) -> Option<(f64, f64)> {
+        let me = s.main().copied()?;
+        let (mut fx, mut fy, mut any) = (0.0, 0.0, false);
+        let (cx, cy) = {
+            let n = s.mine.len() as f64;
+            (s.mine.iter().map(|c| c.x).sum::<f64>() / n, s.mine.iter().map(|c| c.y).sum::<f64>() / n)
+        };
+        for t in s.others.iter().filter(|c| c.kind == Kind::Player && c.mass() > me.mass() * 1.3) {
+            let gap = (t.x - cx).hypot(t.y - cy) - t.size - me.size;
+            if gap < 400.0 {
+                let d = (t.x - cx).hypot(t.y - cy).max(1.0);
+                let w = 1.0 / (gap.max(0.0) + 100.0);
+                fx -= w * (t.x - cx) / d;
+                fy -= w * (t.y - cy) / d;
+                any = true;
+            }
+        }
+        if !any {
+            return None;
+        }
+        let n = fx.hypot(fy).max(1e-9);
+        Some((cx + fx / n * 1500.0, cy + fy / n * 1500.0))
+    }
+
     /// The net's action `a` for this decision, possibly replaced by a reflex.
     pub fn apply(&mut self, s: &Snapshot, a: Out) -> Out {
         let Some(me) = s.main().copied() else { return a };
         let p = self.genes.params_for(s.total_mass()).clone();
+        if self.guard && s.mine.len() >= 2 {
+            if let Some((x, y)) = self.guard_aim(s) {
+                self.counters.bump("reflex_guard", 1);
+                return Out { x, y, split: false, eject: false };
+            }
+        }
         if self.split {
             if let Some((x, y)) = self.split_kill(s) {
                 self.counters.bump("reflex_split", 1);
@@ -257,6 +292,28 @@ mod tests {
         let _ = r;
         let mut r3 = r3;
         assert!(!r3.apply(&snap(vec![player(10, 800.0, 0.0, 400.0, 1)], 3000.0), net()).split, "split_reach 0.1 must shrink the split distance");
+    }
+
+    #[test]
+    fn guard_runs_from_a_bigger_player_while_split_and_is_silent_otherwise() {
+        let mk = |others: Vec<Cell>, two: bool| {
+            let mut s = snap(others, 1000.0);
+            if two {
+                s.mine.push(Cell::new(2, 60.0, 0.0, (400.0f64 * 100.0).sqrt(), Kind::Mine));
+            }
+            s
+        };
+        let mut r = Reflex::from_spec(&serde_json::json!({"reflex_split": true, "reflex_guard": true, "reflex_genes": "no/such.json"})).unwrap();
+        // east of us a 2500 player at ~700: two pieces -> aim west, away from it
+        let s = mk(vec![player(10, 700.0, 0.0, 2500.0, 1)], true);
+        let o = r.apply(&s, Out { x: 2000.0, y: 0.0, split: false, eject: false });
+        assert!(o.x < 0.0 && !o.split, "guard must turn the aim away, got x={}", o.x);
+        // one cell only: the net keeps control
+        let s = mk(vec![player(10, 700.0, 0.0, 2500.0, 1)], false);
+        assert!(r.apply(&s, Out { x: 2000.0, y: 0.0, split: false, eject: false }).x > 0.0);
+        // two pieces, nothing bigger around: the net keeps control
+        let s = mk(vec![player(10, 700.0, 0.0, 300.0, 1)], true);
+        assert!(r.apply(&s, Out { x: 2000.0, y: 0.0, split: false, eject: false }).x > 0.0);
     }
 
     #[test]

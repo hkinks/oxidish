@@ -103,7 +103,8 @@ class VisionNet(nn.Module):
     def forward_rec(self, view, wide, h):
         """One decision with hidden state h [B, gru] (zeros = new life) -> heat, split, eject, value, h_new."""
         e = self.encode(view, wide)
-        hn = self.cell(e["feat"], h)
+        with torch.autocast("cuda", enabled=False):   # fp32 recurrence: bf16 rounding drifts between rollout and BPTT replay
+            hn = self.cell(e["feat"].float(), h.float())
         heat = self.decode(e, hn)
         sp, ej, v = self.heads(e["feat"], hn)
         return heat, sp, ej, v, hn
