@@ -13,3 +13,9 @@ runs/r2/*
 !runs/r2/champion_009.json
 target/
 target-*/
+
+# raw match rows (large, regenerable)
+runs/ab_*.json
+runs/verdict_*.json
+runs/losses_*.json
+runs/bench_*.json
