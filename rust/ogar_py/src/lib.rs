@@ -31,7 +31,7 @@ impl VecEnv {
     #[new]
     #[pyo3(signature = (n_worlds, learners_per_world, opponents=None, teacher="bot/plan_c34.json".to_string(), px=256, sync=2,
                         bots=8, food_mult=2.0, map=7000.0, seed=1, threads=1, warmup=0, label=true, pool=None, pool_pick=0,
-                        giant_p=0.0, giant_min=3000.0, giant_max=10000.0))]
+                        giant_p=0.0, giant_min=3000.0, giant_max=10000.0, hunter=None))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         n_worlds: usize,
@@ -52,6 +52,7 @@ impl VecEnv {
         giant_p: f64,
         giant_min: f64,
         giant_max: f64,
+        hunter: Option<String>,
     ) -> PyResult<Self> {
         if n_worlds == 0 || learners_per_world == 0 || px < 8 || px % 2 != 0 || sync == 0 {
             return Err(PyValueError::new_err("need n_worlds, learners_per_world >= 1, even px >= 8, sync >= 1"));
@@ -78,6 +79,10 @@ impl VecEnv {
         o.giant_p = giant_p;
         o.giant_min = giant_min;
         o.giant_max = giant_max;
+        // hunter = genome file of the M7 hunter reflex (e.g. bot/drill/hv_commit_only.json); learners opt in via set_hunter
+        if let Some(path) = hunter {
+            o.hunter = Some(serde_json::json!({"reflex_hunter": true, "reflex_hunter_genes": path}));
+        }
         Ok(VecEnv { core: std::sync::Mutex::new(Core::new(o)) })
     }
 
@@ -159,6 +164,24 @@ impl VecEnv {
         Ok(())
     }
 
+    /// Per-learner switch for the hunter reflex (needs `hunter=` in the constructor): True / 1 = its commit phase overrides
+    /// that learner's action; `info["hunter"]` says for which observations. A bool sets all.
+    fn set_hunter(&mut self, mask: &Bound<'_, PyAny>) -> PyResult<()> {
+        let mut core = self.core.lock().unwrap();
+        if let Ok(b) = mask.extract::<bool>() {
+            core.hunter_mask.iter_mut().for_each(|m| *m = b as u8);
+            return Ok(());
+        }
+        let v: Vec<bool> = mask.extract()?;
+        if v.len() != core.n {
+            return Err(PyValueError::new_err(format!("mask must have {} entries", core.n)));
+        }
+        for (m, b) in core.hunter_mask.iter_mut().zip(v) {
+            *m = b as u8;
+        }
+        Ok(())
+    }
+
     /// The teachers' decision counters summed over learners, e.g. plan_steps / plan_gated / plan_deep / plan_us.
     fn teacher_counters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let d = PyDict::new(py);
@@ -230,6 +253,7 @@ fn info_dict<'py>(slf: &Bound<'py, VecEnv>, py: Python<'py>, copy: bool) -> PyRe
     d.set_item("rank", vec1(slf, py, ArrayView1::from(&c.rank[..]), copy))?;
     d.set_item("leader", vec1(slf, py, ArrayView1::from(&c.leader[..]), copy))?;
     d.set_item("ncells", vec1(slf, py, ArrayView1::from(&c.ncells[..]), copy))?;
+    d.set_item("hunter", vec1(slf, py, ArrayView1::from(&c.hunter_flag[..]), copy))?;
     let ev: ArrayView2<f32> = ArrayView2::from_shape((c.n, 6), &c.events).unwrap();
     // SAFETY: as above.
     let ev = unsafe { PyArray2::borrow_from_array(&ev, slf.clone().into_any()) };

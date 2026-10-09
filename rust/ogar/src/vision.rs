@@ -46,6 +46,9 @@ pub struct VisionOpts {
     pub giant_p: f64,
     pub giant_min: f64,
     pub giant_max: f64,
+    /// M7: reflex spec of the hunter (`{"reflex_hunter":true,"reflex_hunter_genes":..}`); learners flagged in
+    /// `VecEnv::hunter_mask` get its commit-phase override instead of their action (flag in `hunter_flag`)
+    pub hunter: Option<Value>,
 }
 
 /// splitmix64 step, for per-world league draws (deterministic in the world seed)
@@ -78,6 +81,7 @@ impl VisionOpts {
             giant_p: 0.0,
             giant_min: 3000.0,
             giant_max: 10000.0,
+            hunter: None,
         }
     }
 }
@@ -204,6 +208,10 @@ struct Learner {
     pops_prev: u32,
     /// only for the `reflex_split` label in `events`
     probe: arena_client::reflex::Reflex,
+    /// M7 hunter reflex (None = the env has no hunter) and its override for the current observation (world x, y, split, eject)
+    hunter: Option<arena_client::reflex::Reflex>,
+    hunter_was_on: bool,
+    ovr: Option<(f64, f64, bool, bool)>,
 }
 
 struct WorldEnv {
@@ -227,6 +235,8 @@ struct WorldOut<'a> {
     rank: &'a mut [i32],
     leader: &'a mut [u8],
     ncells: &'a mut [i32],
+    /// 1 = the hunter reflex overrides this learner's action for this observation
+    hflag: &'a mut [u8],
     /// [L, 6] per learner: player cells eaten, their mass, virus pops caused on others, 1 if the rule bots' split-kill check passes, mass eaten from players at least as big as us (total), our own cell mass eaten by other players
     events: &'a mut [f32],
 }
@@ -251,6 +261,9 @@ pub struct VecEnv {
     pub rank: Vec<i32>,
     pub leader: Vec<u8>,
     pub ncells: Vec<i32>,
+    /// M7: learners (1) that run the hunter reflex, and (output) those whose action the hunter overrides for the current obs
+    pub hunter_mask: Vec<u8>,
+    pub hunter_flag: Vec<u8>,
     /// [N, 6]: kills, kill mass, pops, reflex split-kill flag, big-victim kill mass, mass lost (see WorldOut)
     pub events: Vec<f32>,
     /// 1 = the teacher drives this learner (the action passed to `step` is ignored)
@@ -328,6 +341,9 @@ impl WorldEnv {
                 lost_mass: 0.0,
                 pops_prev: 0,
                 probe: arena_client::reflex::Reflex::from_spec(&serde_json::json!({"reflex_split": true})).expect("reflex probe"),
+                hunter: o.hunter.as_ref().and_then(arena_client::reflex::Reflex::from_spec),
+                hunter_was_on: false,
+                ovr: None,
             });
         }
         let mut we = WorldEnv { w, opps, learners, scratch: Scratch::default(), timing: Timing::default(), giant };
@@ -386,7 +402,7 @@ impl WorldEnv {
     }
 
     /// Render every learner's frames, run the teacher, fill reward/done/info. `first` = no previous frame yet.
-    fn observe(&mut self, o: &VisionOpts, out: &mut WorldOut, first: bool) {
+    fn observe(&mut self, o: &VisionOpts, hmask: &[u8], out: &mut WorldOut, first: bool) {
         let (px, wpx) = (o.px, o.px / 2);
         let (vs, ws) = (px * px, wpx * wpx);
         for (k, l) in self.learners.iter_mut().enumerate() {
@@ -397,6 +413,9 @@ impl WorldEnv {
                 self.w.join_game(l.pi, &l.name, None);
                 self.w.refresh_view(l.pi);
                 l.teacher.reset();
+                if let Some(h) = l.hunter.as_mut() {
+                    h.reset();
+                }
                 mass = self.w.players[l.pi].total_mass(&self.w);
             }
             let t = Instant::now();
@@ -419,6 +438,23 @@ impl WorldEnv {
                 wd.copy_within(0..ws, ws);
             }
             self.timing.render += t.elapsed().as_nanos() as u64;
+            // M7: the hunter must see every snapshot of a learner that runs it; only its commit phase overrides the action
+            l.ovr = None;
+            let on = hmask[k] != 0;
+            if let (true, Some(h)) = (on, l.hunter.as_mut()) {
+                if !l.hunter_was_on {
+                    h.reset();
+                }
+                if !s.mine.is_empty() {
+                    let sentinel = arena_client::policy::Out { x: f64::NAN, y: f64::NAN, split: false, eject: false };
+                    let r = h.apply(&s, sentinel);
+                    if !r.x.is_nan() {
+                        l.ovr = Some((r.x, r.y, r.split, r.eject));
+                    }
+                }
+            }
+            l.hunter_was_on = on;
+            out.hflag[k] = l.ovr.is_some() as u8;
             let ta = &mut out.t_act[k * 4..k * 4 + 4];
             if o.label && !s.mine.is_empty() {
                 let t = Instant::now();
@@ -456,10 +492,16 @@ impl WorldEnv {
         }
     }
 
-    fn step(&mut self, o: &VisionOpts, actions: &[f32], mask: &[u8], out: &mut WorldOut) {
+    fn step(&mut self, o: &VisionOpts, actions: &[f32], mask: &[u8], hmask: &[u8], out: &mut WorldOut) {
         for (k, l) in self.learners.iter().enumerate() {
             let p = &mut self.w.players[l.pi];
             if p.cells.is_empty() {
+                continue;
+            }
+            if let Some((x, y, split, eject)) = l.ovr {
+                p.mouse_in = Some(((x as i32) as f64, (y as i32) as f64));
+                p.p_split |= split;
+                p.p_eject |= eject;
                 continue;
             }
             let a = if mask[k] != 0 { &out.t_act[k * 4..k * 4 + 4] } else { &actions[k * 4..k * 4 + 4] };
@@ -475,7 +517,7 @@ impl WorldEnv {
             }
         }
         self.advance(o.sync);
-        self.observe(o, out, false);
+        self.observe(o, hmask, out, false);
     }
 }
 
@@ -497,6 +539,8 @@ impl VecEnv {
             rank: vec![0; n],
             leader: vec![0; n],
             ncells: vec![0; n],
+            hunter_mask: vec![0; n],
+            hunter_flag: vec![0; n],
             events: vec![0.0; n * 6],
             teacher_mask: vec![0; n],
             opts,
@@ -515,6 +559,7 @@ impl VecEnv {
         let mut rk = self.rank.chunks_mut(l);
         let mut ld = self.leader.chunks_mut(l);
         let mut nc = self.ncells.chunks_mut(l);
+        let mut hf = self.hunter_flag.chunks_mut(l);
         let mut ev = self.events.chunks_mut(l * 6);
         (0..self.opts.n_worlds)
             .map(|_| WorldOut {
@@ -527,6 +572,7 @@ impl VecEnv {
                 rank: rk.next().unwrap(),
                 leader: ld.next().unwrap(),
                 ncells: nc.next().unwrap(),
+                hflag: hf.next().unwrap(),
                 events: ev.next().unwrap(),
             })
             .collect()
@@ -546,10 +592,12 @@ impl VecEnv {
         }
         self.worlds = slots.into_iter().map(|s| s.unwrap()).collect();
         let mut worlds = std::mem::take(&mut self.worlds);
+        let hmask = self.hunter_mask.clone();
+        let l = o.learners_per_world;
         {
             let outs = self.outs();
-            let jobs: Vec<_> = worlds.iter_mut().zip(outs).collect();
-            par(jobs, o.threads, |(we, mut out)| we.observe(&o, &mut out, true));
+            let jobs: Vec<_> = worlds.iter_mut().zip(outs).enumerate().collect();
+            par(jobs, o.threads, |(i, (we, mut out))| we.observe(&o, &hmask[i * l..(i + 1) * l], &mut out, true));
         }
         self.worlds = worlds;
     }
@@ -561,13 +609,14 @@ impl VecEnv {
         let o = self.opts.clone();
         let l = o.learners_per_world;
         let mask = self.teacher_mask.clone();
+        let hmask = self.hunter_mask.clone();
         let mut worlds = std::mem::take(&mut self.worlds);
         assert!(!worlds.is_empty(), "call reset() first");
         {
             let outs = self.outs();
             let jobs: Vec<_> = worlds.iter_mut().zip(outs).enumerate().collect();
             par(jobs, o.threads, |(i, (we, mut out))| {
-                we.step(&o, &actions[i * l * 4..(i + 1) * l * 4], &mask[i * l..(i + 1) * l], &mut out)
+                we.step(&o, &actions[i * l * 4..(i + 1) * l * 4], &mask[i * l..(i + 1) * l], &hmask[i * l..(i + 1) * l], &mut out)
             });
         }
         self.worlds = worlds;
@@ -727,5 +776,37 @@ mod tests {
         assert_eq!(a.t_act, b.t_act);
         assert!(a.view.iter().any(|&p| p > 40), "pellets / cells should be drawn");
         assert!(a.mass.iter().all(|&m| m > 0.0));
+    }
+
+    /// M7: the hunter flag is 0 for learners without the hunter mask and the env stays deterministic with it on.
+    #[test]
+    fn hunter_mask_is_off_by_default_and_deterministic() {
+        let genes = concat!(env!("CARGO_MANIFEST_DIR"), "/../../bot/drill/hv_commit_only.json");
+        let mk = |on: bool| {
+            let mut o = VisionOpts::new(spec());
+            o.n_worlds = 2;
+            o.learners_per_world = 2;
+            o.px = 64;
+            o.threads = 2;
+            o.giant_p = 1.0;
+            o.opponents = vec![("c34".into(), spec(), 3)];
+            o.hunter = Some(json!({"reflex_hunter": true, "reflex_hunter_genes": genes}));
+            let mut e = VecEnv::new(o);
+            e.hunter_mask.iter_mut().for_each(|m| *m = on as u8);
+            e.reset();
+            let mut flagged = 0u32;
+            for _ in 0..600 {
+                e.step(&vec![32.0; 4 * 4]);
+                flagged += e.hunter_flag.iter().map(|&f| f as u32).sum::<u32>();
+            }
+            (e, flagged)
+        };
+        let (off, f_off) = mk(false);
+        assert_eq!(f_off, 0);
+        let (a, fa) = mk(true);
+        let (b, fb) = mk(true);
+        assert_eq!(fa, fb);
+        assert_eq!(a.view, b.view);
+        assert!(off.mass.iter().all(|&m| m > 0.0));
     }
 }
