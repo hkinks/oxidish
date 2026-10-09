@@ -12,11 +12,14 @@
 //! whose `farm`/`params` give the rule genes, default `bot/c3_4.json`), `reflex_params` (object merged over those genes, e.g.
 //! {"flee_margin": 1.0} for a wider berth than the genome's), `reflex_harvest_range` (gene `harvest_range`, default 1),
 //! `reflex_split_clear` (split-kill only when no other player cell above half of our mass is within this many world units;
-//! default 0 = off), `reflex_guard` (bool): recombine guard, see `guard`.
+//! default 0 = off), `reflex_guard` (bool): recombine guard, see `guard`, `reflex_hunter` (bool, M6): the lurk-and-harvest hunter
+//! (hunter.rs): while its `commit` phase is active it overrides aim / split / eject, otherwise the net drives; genes from
+//! `reflex_hunter_genes` (genome file, default `bot/drill/hv_commit_only.json`) + `reflex_hunter_params` (merged over its `params`).
 
 use std::collections::HashMap;
 
 use crate::game::{Kind, Snapshot};
+use crate::hunter::{Hunter, Phase};
 use crate::params::Params;
 use crate::policy::{heuristic_plan, Counters, HeuristicPolicy, Out, Tactics};
 use crate::steer::{split_kill_ok, Mode, Plan};
@@ -28,6 +31,8 @@ pub struct Reflex {
     harvest_range: f64,
     split_clear: f64,
     guard: bool,
+    /// M6 hunter: per-agent state (piece memory, velocities) and its gene tiers
+    hunter: Option<(Hunter, HeuristicPolicy)>,
     genes: HeuristicPolicy,
     tactics: Tactics,
     pub counters: Counters,
@@ -38,7 +43,7 @@ impl Reflex {
     pub fn from_spec(spec: &serde_json::Value) -> Option<Reflex> {
         let on = |k: &str| spec.get(k).and_then(|v| v.as_bool()).unwrap_or(false);
         let (split, harvest, virus) = (on("reflex_split"), on("reflex_harvest"), on("reflex_virus"));
-        if !(split || harvest || virus || on("reflex_guard")) {
+        if !(split || harvest || virus || on("reflex_guard") || on("reflex_hunter")) {
             return None;
         }
         let path = spec.get("reflex_genes").and_then(|v| v.as_str()).unwrap_or("bot/c3_4.json");
@@ -61,19 +66,47 @@ impl Reflex {
         let mut r = Reflex::new(split, harvest, virus, hr, &genome);
         r.guard = spec.get("reflex_guard").and_then(|v| v.as_bool()).unwrap_or(false);
         r.split_clear = spec.get("reflex_split_clear").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        if on("reflex_hunter") {
+            let hp = spec.get("reflex_hunter_genes").and_then(|v| v.as_str()).unwrap_or("bot/drill/hv_commit_only.json");
+            let mut hg = std::fs::read_to_string(hp).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()).unwrap_or_else(|| {
+                eprintln!("reflex: hunter genome {hp} not readable, using the built-in commit set");
+                serde_json::json!({"farm": "field", "params": {"commit": 1, "commit_kite": 1, "split_harvest": 1, "race": 1, "hv_memory": 3, "hv_still": 100}})
+            });
+            if let Some(over) = spec.get("reflex_hunter_params").and_then(|v| v.as_object()) {
+                if !hg["params"].is_object() {
+                    hg["params"] = serde_json::json!({});
+                }
+                for (k, v) in over {
+                    hg["params"][k] = v.clone();
+                }
+            }
+            r.set_hunter(&hg);
+        }
         Some(r)
     }
 
     pub fn new(split: bool, harvest: bool, virus: bool, harvest_range: f64, genome: &serde_json::Value) -> Reflex {
         let mut counters = Counters::default();
-        for k in ["reflex_split", "reflex_harvest", "reflex_shot"] {
+        for k in ["reflex_split", "reflex_harvest", "reflex_shot", "reflex_hunter"] {
             counters.0.push((k.to_string(), 0));
         }
-        Reflex { split, harvest, virus, harvest_range, split_clear: 0.0, guard: false, genes: HeuristicPolicy::from_spec(genome), tactics: Tactics::new(), counters }
+        Reflex { split, harvest, virus, harvest_range, split_clear: 0.0, guard: false, hunter: None, genes: HeuristicPolicy::from_spec(genome), tactics: Tactics::new(), counters }
+    }
+
+    /// Enable the hunter reflex with this genome (`params` hold the commit gene set).
+    pub fn set_hunter(&mut self, genome: &serde_json::Value) {
+        self.hunter = Some((Hunter::new(), HeuristicPolicy::from_spec(genome)));
+    }
+
+    pub fn has_hunter(&self) -> bool {
+        self.hunter.is_some()
     }
 
     pub fn reset(&mut self) {
         self.tactics.reset();
+        if let Some((h, _)) = self.hunter.as_mut() {
+            h.reset();
+        }
     }
 
     /// The split-kill skill alone, without side effects: the aim point if the rule bots' split-kill check passes now
@@ -133,6 +166,17 @@ impl Reflex {
     pub fn apply(&mut self, s: &Snapshot, a: Out) -> Out {
         let Some(me) = s.main().copied() else { return a };
         let p = self.genes.params_for(s.total_mass()).clone();
+        // the hunter must see every snapshot (velocities, piece memory), so it steps first, even when another reflex then wins
+        if let Some((h, hg)) = self.hunter.as_mut() {
+            let hp = hg.params_for(s.total_mass());
+            let out = h.step(s, hp);
+            if h.phase == Phase::Commit {
+                if let Some(o) = out {
+                    self.counters.bump("reflex_hunter", 1);
+                    return Out { x: o.x, y: o.y, split: o.split, eject: o.eject };
+                }
+            }
+        }
         if self.guard && s.mine.len() >= 2 {
             if let Some((x, y)) = self.guard_aim(s) {
                 self.counters.bump("reflex_guard", 1);
@@ -314,6 +358,69 @@ mod tests {
         // two pieces, nothing bigger around: the net keeps control
         let s = mk(vec![player(10, 700.0, 0.0, 300.0, 1)], true);
         assert!(r.apply(&s, Out { x: 2000.0, y: 0.0, split: false, eject: false }).x > 0.0);
+    }
+
+    /// the drill's popped giant (500 vs 5k): 12 small pieces and four big ones, 1100+ east of our 500-mass cell
+    fn burst(extra: Vec<Cell>) -> Snapshot {
+        let mut others = Vec::new();
+        for i in 0..12 {
+            let a = i as f64 * 0.52;
+            others.push(player(20 + i, 1100.0 + 300.0 * a.cos(), 300.0 * a.sin(), 28.0, 9));
+        }
+        others.push(player(40, 1700.0, 500.0, 318.0, 9));
+        others.push(player(41, 1800.0, -500.0, 637.0, 9));
+        others.push(player(42, 2300.0, 0.0, 1275.0, 9));
+        others.push(player(43, 3600.0, 0.0, 2521.0, 9));
+        others.extend(extra);
+        snap(others, 500.0)
+    }
+    fn hunter_reflex() -> Reflex {
+        Reflex::from_spec(&serde_json::json!({"reflex_hunter": true, "reflex_hunter_genes": "no/such.json", "reflex_genes": "no/such.json"})).unwrap()
+    }
+
+    #[test]
+    fn hunter_overrides_the_net_while_committing_to_a_burst() {
+        let mut r = hunter_reflex();
+        assert!(r.has_hunter());
+        // the net goes west, away from the pieces: the hunter turns the aim east
+        let o = r.apply(&burst(vec![]), net());
+        assert!(o.x > 0.0 && !o.split, "hunter should head for the pieces in the east, got {o:?}");
+        assert!(r.counters.0.iter().any(|(k, v)| k == "reflex_hunter" && *v >= 1));
+    }
+
+    #[test]
+    fn hunter_leaves_the_net_alone_without_a_burst_or_when_off() {
+        let mut r = hunter_reflex();
+        // one lone prey: not a burst
+        let s = snap(vec![player(10, 900.0, 0.0, 300.0, 1)], 3000.0);
+        let o = r.apply(&s, net());
+        assert_eq!((o.x, o.split), (net().x, false));
+        // flag off: same burst, the net keeps its action
+        let mut plain = Reflex::from_spec(&serde_json::json!({"reflex_guard": true, "reflex_genes": "no/such.json"})).unwrap();
+        assert!(plain.apply(&burst(vec![]), net()).x < 0.0, "without reflex_hunter the net keeps the aim");
+        assert!(!plain.has_hunter());
+    }
+
+    #[test]
+    fn hunter_refuses_to_walk_into_a_giant_next_to_the_burst() {
+        let mut r = hunter_reflex();
+        // the 2521 core 900 away: inside its lunge, the hunter leaves along the clear side instead of walking at the pieces
+        let mut s = burst(vec![]);
+        let core = s.others.iter_mut().find(|c| c.id == 43).unwrap();
+        core.x = 900.0;
+        core.y = 0.0;
+        let east = Out { x: 2000.0, y: 0.0, split: false, eject: false };
+        let o = r.apply(&s, east);
+        assert!(o.x < 100.0 && o.y.abs() > 300.0 && !o.split, "must flee the core sideways, got {o:?}");
+    }
+
+    #[test]
+    fn hunter_state_is_cleared_by_reset_and_spec_default_is_off() {
+        let mut r = hunter_reflex();
+        let _ = r.apply(&burst(vec![]), net());
+        r.reset();
+        assert!(r.has_hunter());
+        assert!(Reflex::from_spec(&serde_json::json!({"kind": "vision", "reflex_guard": true})).unwrap().hunter.is_none());
     }
 
     #[test]

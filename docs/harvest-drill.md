@@ -408,3 +408,12 @@ Not run: the held-out field (it needs vision nets; for rule bots the usual field
 `step` is pure apart from velocities/cooldowns/memory kept in `Hunter`; it returns `None` when there is no burst giant (or lurk target), so the net plays on.
 Use the `commit` set only (`lurk` lost on endless). A reflex must keep the hunter's own safety (it already refuses to approach inside any eater's reach or lunge circle); do not add chasing of
 pieces that it did not pick.
+
+### Planner + hunter (endless, usual rule-bot field, `--engine inproc`, 8 worlds x 240 min)
+
+| candidate | 3000 | 11000 | 21000 | 31000 | 41000 | mean |
+|---|---|---|---|---|---|---|
+| `bot/plan_c34.json` | 46 | 35 | 38 | 38 | 44 | 40.2 |
+| `bot/drill/plan_hv_commit_only.json` | 49 | 46 | 49 | 47 | 57 | **49.6** |
+
+Wins all 5 sets (+3 to +13). Best rule bot so far; on the live server as `planhv`.
