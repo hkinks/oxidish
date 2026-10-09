@@ -186,7 +186,36 @@ Parameter sweep on M 3000 x 1.4 / 2 / 4 x gap 1200 x open + wall (N = 40 per cel
 `arena.endless --engine inproc`, 8 worlds x 240 game-min, candidate x2 against the field of `endless5.sh` (champ, r2g9, safe, ramp_r2, ramp300, each x2), leader share of the candidate per seed base, rule: a gene is kept only if
 the mean improves **and** it wins >= 3 of the 5 sets.
 
-GATE_PLACEHOLDER
+Leader share (dominance in brackets), binary of this branch, `OGAR_BIN` copy, 8 worlds x 240 min per cell, field of `endless5.sh`. `c3_4` lineup (candidate = `bot/c3_4.json` + genes):
+
+| set | c3_4 | + `nowall` (wall genes off) | + `evade` | + `evade` at total mass >= 1500 (`evade_big`) |
+|---|---|---|---|---|
+| 3000 | 31% | 32% | 33% | 30% |
+| 11000 | 28% (30%) | 31% (34%) | 22% (22%) | 38% (38%) |
+| 21000 | 31% (30%) | 33% (35%) | 34% (34%) | 29% (31%) |
+| 31000 | 32% (32%) | 30% (32%) | 32% (31%) | 31% (30%) |
+| 41000 | 36% (38%) | 28% (30%) | 28% (30%) | 41% (43%) |
+| **mean** | **31.6** | 30.8 | 29.8 | 33.8 |
+| sets won vs c3_4 | - | 3 of 5 | 2 of 5 (one tie) | 2 of 5 |
+
+(the 3000 baseline is from the console output of the first run, 31%, dominance not recorded.) **No candidate passes the gate** (mean up *and* >= 3 of 5 sets): `nowall` wins 3 sets but the mean is lower; `evade_big` has the higher mean (+2.2) but
+from two sets (+10 and +5) and loses three; `evade` loses. All three stay off. The wall genes of c3_4 were found on this very metric, and the drill is the scene in which they hurt: the drill result is not a result on leader share.
+
+What `evade` does in endless (deaths of the two candidate agents per world, summed over the 5 sets x 8 worlds, by total mass at death; `logs/gate/*.stats.json`):
+
+| candidate | < 150 | 150-600 | 600-2000 | >= 2000 | losses >= 1500 mass (count / mass) |
+|---|---|---|---|---|---|
+| c3_4 | 100 | 23.6 | 18.1 | 6.7 | 24.0 / 62243 |
+| evade | 250 | 39.8 | 19.3 | 8.0 | 21.6 / 60919 |
+| nowall | 103 | 25.0 | 17.5 | 6.4 | 23.8 / 61310 |
+| evade_big | (not split by bucket) | | | | 26.4 / 72226 |
+
+`evade` makes the small bots die 2.5 times as often (the centrality term pulls a small flee into the middle of the map, where the field is; the drill had no field), and its big-bot losses
+are 10% fewer only by an amount inside the noise. The mass gate (`evade_min_mass 1500`) removes the small deaths (140 per world vs 128) but not the big-bot losses (26.4 vs 24.0 per world). I did not find a version
+that lowers the big-bot losses in endless; the drill gain (M 7000: 46% -> 62% at 60 s) does not transfer.
+
+`plan_c34` lineup: **not run** (planner + `evade` / `nowall`): I stopped it after the `c3_4` lineup failed (the planner calls the same base bot and was identical to c3_4 in the drill).
+
 
 ## Not done / caveats
 
