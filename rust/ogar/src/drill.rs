@@ -338,33 +338,33 @@ impl Oracle {
         let gap_to = |c: &Piece| s.mine.iter().map(|m| (m.x - c.x).hypot(m.y - c.y) - m.size - c.size).fold(f64::MAX, f64::min);
 
         // 1. flee from what can eat us
-        let (mut fx, mut fy, mut near) = (0.0, 0.0, false);
+        let mut near = false;
         let (cx, cy) = (s.mine.iter().map(|c| c.x * c.mass()).sum::<f64>() / total, s.mine.iter().map(|c| c.y * c.mass()).sum::<f64>() / total);
         for t in &threats {
             let g = gap_to(t);
             // a piece whose half could eat us can lunge by splitting
             let reach = if t.size * t.size / 200.0 >= EAT * EAT * me.mass() { ORACLE_LUNGE } else { 0.0 };
-            if g < 600.0 + reach {
-                let (dx, dy) = (cx - t.x, cy - t.y);
-                let d = dx.hypot(dy).max(1.0);
-                let wgt = 1.0 / g.max(20.0);
-                fx += dx / d * wgt;
-                fy += dy / d * wgt;
-                if g < ORACLE_FLEE_GAP + reach {
-                    near = true;
-                }
+            if g < ORACLE_FLEE_GAP + reach {
+                near = true;
             }
         }
         if near {
+            // the direction (of 16) whose point 450 away keeps the most clearance from every threat, walls counted as threats
             let b = s.border;
-            // away from the wall as well
-            let m = 350.0;
-            if cx - b.left < m { fx += 0.01; }
-            if b.right - cx < m { fx -= 0.01; }
-            if cy - b.top < m { fy += 0.01; }
-            if b.bottom - cy < m { fy -= 0.01; }
-            let n = fx.hypot(fy).max(1e-9);
-            return at(cx + fx / n * 500.0, cy + fy / n * 500.0);
+            let mut best = (f64::MIN, (cx, cy));
+            for k in 0..16 {
+                let a = k as f64 * std::f64::consts::TAU / 16.0;
+                let p = (cx + a.cos() * 450.0, cy + a.sin() * 450.0);
+                let wall = (p.0 - b.left).min(b.right - p.0).min(p.1 - b.top).min(b.bottom - p.1);
+                let mut sc = threats.iter().map(|t| (t.x - p.0).hypot(t.y - p.1) - t.size).fold(f64::MAX, f64::min);
+                if wall < 250.0 {
+                    sc -= (250.0 - wall) * 4.0;
+                }
+                if sc > best.0 {
+                    best = (sc, p);
+                }
+            }
+            return at(best.1 .0, best.1 .1);
         }
         // 2. the nearest edible piece that is safe to approach
         let mut best: Option<(f64, Piece, f64)> = None;
