@@ -796,6 +796,3 @@ impl Server {
         }
     }
 }
-
-#[allow(dead_code)]
-fn _unused(_: &Value) {}

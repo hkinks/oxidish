@@ -1437,10 +1437,6 @@ impl World {
         let p = &self.players[pi];
         (p.vminx, p.vminy, p.vmaxx, p.vmaxy)
     }
-
-    pub fn nodes_virus_len(&self) -> usize {
-        self.nodes_virus.len()
-    }
 }
 
 impl World {
