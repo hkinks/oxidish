@@ -22,6 +22,9 @@ pub fn heuristic_plan(s: &Snapshot, p: &Params) -> Plan {
     if cl.threats.iter().any(|t| gap(t) < danger_radius_at(t, &me, p, &s.border) * p.flee_margin) {
         return Plan::new(Mode::Flee);
     }
+    if crate::evade::triggered(s, p) {
+        return Plan::new(Mode::Flee);
+    }
     if p.flee_pieces > 0.5 {
         for q in guarded_cells(s, p) {
             if q.id != me.id
@@ -434,7 +437,15 @@ impl HeuristicPolicy {
                 o
             }
             None => {
-                let (x, y, split) = steer_to(s, &plan, self.router.as_mut(), p, goto);
+                let (mut x, mut y, mut split) = steer_to(s, &plan, self.router.as_mut(), p, goto);
+                if plan.mode == Mode::Flee && p.evade > 0.5 {
+                    let me = *s.main().unwrap();
+                    if let Some((ex, ey)) = crate::evade::evade_aim(s, p, unit(me.x, me.y, x, y)) {
+                        x = ex;
+                        y = ey;
+                        split = false;
+                    }
+                }
                 let mut o = Out { x, y, split, eject: false };
                 // flee_smooth (Python: HeuristicPolicy._smooth_flee): commit to one escape heading
                 if plan.mode != Mode::Flee || p.flee_smooth <= 0.0 || o.split {

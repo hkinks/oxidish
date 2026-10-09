@@ -2,6 +2,7 @@
 
 pub mod apos;
 pub mod client;
+pub mod evade;
 pub mod farm;
 pub mod game;
 pub mod lineup;

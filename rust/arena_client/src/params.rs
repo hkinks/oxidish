@@ -94,6 +94,13 @@ params! {
     shoot_standoff = 90.0,
     shoot_safety = 0.7,
     shoot_max_cells = 1.0,
+    evade = 0.0,
+    evade_trigger = 0.0,
+    evade_buffer = 0.0,
+    evade_wall = 0.0,
+    evade_cap = 0.0,
+    evade_virus = 0.0,
+    evade_pieces = 0.0,
 }
 
 impl Params {
