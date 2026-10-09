@@ -18,17 +18,12 @@ import time
 from pathlib import Path
 
 from .commander import Commander, Control, make_backend
+from .endless import ROOT, TICKS_PER_MIN, ogar_bin
 from .match import free_port, limit_cpus
 
-ROOT = Path(__file__).resolve().parent.parent
 MAIN = Path(os.environ.get("AGAR_MAIN_REPO", "C:/Users/hkink/Workspace/agario-bot"))
 FIELD = ["champ=runs/final_champion.json", "r2g9=runs/r2/champion_009.json", "safe=bot/champ_safe.json",
          "ramp_r2=bot/r2g9_ramp800.json", "ramp300=runs/r2g9_ramp300.json"]
-TICKS_PER_MIN = 25 * 60
-
-
-def ogar_bin() -> Path:
-    return Path(os.environ.get("OGAR_BIN", ROOT / "rust" / "ogar" / "target" / "release" / "ogar.exe"))
 
 
 def run_world(cand: str, backend: str, seed: int, game_min: float, speed: float, food_mult: float, log_s: float,
