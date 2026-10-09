@@ -28,6 +28,7 @@ from .pooled import wilson
 
 ROOT = Path(__file__).resolve().parent.parent
 TICKS_PER_MIN = 25 * 60
+AGENT_STATS: list = []   # filled by --engine inproc: one list of per-agent stat rows per world
 
 
 def ogar_bin() -> Path:
@@ -72,7 +73,9 @@ def _inproc_shard(specs: list[str], worlds: int, seed_base: int, game_min: float
         if r.returncode:
             raise RuntimeError(f"ogar endless failed ({r.returncode}): " + r.stdout[-2000:])
         print("\n".join("   " + l for l in r.stdout.splitlines() if "wall" in l or l.startswith(("vision", "per call"))), file=sys.stderr)
-        return json.loads(out.read_text())["worlds"]
+        doc = json.loads(out.read_text())
+        AGENT_STATS.extend(doc.get("stats", {}).get("agents", []))   # per world: each agent's counters (deaths, splits, pops, ...)
+        return doc["worlds"]
 
 
 def run_inproc(specs: list[str], worlds: int, seed_base: int, game_min: float, log_s: float, food_mult: float,
@@ -132,6 +135,7 @@ def main() -> None:
                    "(helps when the GPU is shared with other jobs: one time slice per process)")
     p.add_argument("--cpus", type=int, default=11)
     p.add_argument("--out", help="save every world's per-window family masses (JSON)")
+    p.add_argument("--stats-out", help="inproc: save the per-agent skill counters (deaths, splits, split kills, virus pops, harvest mass) as JSON; summarise with rl/vision/skillstats.py")
     a = p.parse_args()
     limit_cpus(a.cpus)
     lineup = parse_lineup(a.agents)
@@ -148,6 +152,9 @@ def main() -> None:
             worlds = list(ex.map(lambda i: run_world(a.agents, a.seed_base + i, a.game_min, a.log_s, a.food_mult,
                                                      *((a.watch_port, a.watch_speed) if i == 0 and a.watch_port else ())),
                                  range(a.worlds)))
+    if a.stats_out:
+        with open(a.stats_out, "w") as f:
+            json.dump({"stats": {"agents": AGENT_STATS}}, f)
     window_ticks = int(a.window_min * TICKS_PER_MIN)
     skip = int(a.skip_min / a.window_min)
     wins = [fm for s in worlds for fm in family_masses(s, families, window_ticks)[skip:]]

@@ -127,17 +127,17 @@ pub struct Tactics {
 }
 
 impl Tactics {
-    fn new() -> Tactics {
+    pub fn new() -> Tactics {
         Tactics { feeding: None, second_split: None, stage: None }
     }
 
-    fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.feeding = None;
         self.second_split = None;
         self.stage = None;
     }
 
-    fn act(&mut self, s: &Snapshot, plan: &Plan, p: &Params, counters: &mut Counters, only: Option<&[u32]>) -> Option<Out> {
+    pub fn act(&mut self, s: &Snapshot, plan: &Plan, p: &Params, counters: &mut Counters, only: Option<&[u32]>) -> Option<Out> {
         let me = *s.main().unwrap();
         let cl = classify(s, None);
         let (threats, viruses) = (&cl.threats, &cl.viruses);

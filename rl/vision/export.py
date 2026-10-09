@@ -15,26 +15,45 @@ import torch
 from evalval import load_model
 
 
+class RecWrap(torch.nn.Module):
+    """Recurrent export (M5): inputs view, wide, h [B, gru]; outputs heat, split, eject, value, h_out."""
+
+    def __init__(self, m):
+        super().__init__()
+        self.m = m
+
+    def forward(self, view, wide, h):
+        return self.m.forward_rec(view, wide, h)
+
+
 def main(ckpt, out):
     model, ck = load_model(ckpt, device="cpu")
     model = model.float().eval().to(memory_format=torch.contiguous_format)
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
     v = torch.randint(0, 255, (2, 2, 256, 256), dtype=torch.uint8)
     w = torch.randint(0, 255, (2, 2, 128, 128), dtype=torch.uint8)
+    gru = getattr(model, "gru", 0)
+    h = torch.randn(2, gru) * 0.5 if gru else None
+    if gru:
+        model = RecWrap(model).eval()
+    args = (v, w, h) if gru else (v, w)
     with torch.no_grad():
-        ref = model(v, w)
-        ts = torch.jit.trace(model, (v, w))
+        ref = model(*args)
+        ts = torch.jit.trace(model, args)
         ts.save(out + ".pt")
-        got = ts(v, w)
+        got = ts(*args)
     print("torchscript max diff", max((a - b).abs().max().item() for a, b in zip(ref, got)))
-    torch.onnx.export(model, (v, w), out + ".onnx", input_names=["view", "wide"],
-                      output_names=["heat", "split", "eject", "value"], opset_version=17,
-                      dynamic_axes={k: {0: "batch"} for k in ("view", "wide", "heat", "split", "eject", "value")},
-                      dynamo=False)
+    ins = ["view", "wide"] + (["h"] if gru else [])
+    outs = ["heat", "split", "eject", "value"] + (["h_out"] if gru else [])
+    torch.onnx.export(model, args, out + ".onnx", input_names=ins, output_names=outs, opset_version=17,
+                      dynamic_axes={k: {0: "batch"} for k in ins + outs}, dynamo=False)
     try:
         import onnxruntime as ort
         sess = ort.InferenceSession(out + ".onnx", providers=["CPUExecutionProvider"])
-        o = sess.run(None, {"view": v.numpy(), "wide": w.numpy()})
+        feed = {"view": v.numpy(), "wide": w.numpy()}
+        if gru:
+            feed["h"] = h.numpy()
+        o = sess.run(None, feed)
         print("onnx max diff", max(np.abs(a.numpy() - b).max() for a, b in zip(ref, o)))
     except ImportError:
         print("onnxruntime not installed; ONNX parity not checked")

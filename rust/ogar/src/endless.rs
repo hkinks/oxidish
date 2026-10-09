@@ -123,6 +123,8 @@ pub struct EndlessStats {
     pub infer_calls: u64,
     pub infer_frames: u64,
     pub infer_s: f64,
+    /// per world: each agent's `AgentStats::row` (deaths, kills, splits, split kills, virus pops, harvest mass, ...)
+    pub agents: Vec<Vec<Value>>,
 }
 
 /// Run all worlds; returns each world's `[players]` samples (`{t, p:[{n,m,c}]}`), up to the first sample at or past the end.
@@ -159,7 +161,15 @@ pub fn run(o: &EndlessOpts) -> Result<(Vec<Vec<Value>>, EndlessStats), String> {
         run_lockstep(&worlds, threads, &mut st);
     }
     st.wall_s = t0.elapsed().as_secs_f64();
-    Ok((worlds.into_iter().map(|m| m.into_inner().unwrap().samples).collect(), st))
+    let mut all = Vec::new();
+    for (i, m) in worlds.into_iter().enumerate() {
+        let ws = m.into_inner().unwrap();
+        let seed = o.seed_base + i as u64;
+        let w = ws.w;
+        st.agents.push(ws.drivers.into_iter().map(|d| { let name = d.name.clone(); let mut r = d.finish(&w).row(seed); r["name"] = json!(name); r }).collect());
+        all.push(ws.samples);
+    }
+    Ok((all, st))
 }
 
 fn is_vision(d: &AgentDriver) -> bool {
