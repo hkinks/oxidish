@@ -553,3 +553,59 @@ Other families in the p6 runs, deaths/h: bc3 23.8, plan 14.1, plan2 12.0, apos 1
 `rust/ogar_py/src/lib.rs` (`info["events"]`), `arena/endless.py` (`--stats-out`), `rl/vision/{model,export,mkgru,train_ppo3,train_ppo4,skillstats,lossdiag,m5_table}.py`,
 `bot/vision_p6_r*.json`, `bot/vision_{g1c,g2c,g3c}.json`, `endlessM5*.sh`, `queueM5*.sh`, `train{S,G}*.sh`. Eval jsons / stats: `runs/vision/evals/M5_*` (gitignored), logs `logs/m5/`.
 Command: `./endlessM5.sh vision_p6_rs 3000` (needs `logs/bin/ogar.exe` = the release build, `runs/vision/export/vision_p6.onnx`, `runs/vision/ort/`).
+
+## M6 status (2026-10-10): the hunter skill as a vision reflex (branch `worktree-agent-aebbfbeedfe65da94`)
+
+**Result in one line.** `reflex_hunter` is the first vision reflex that beats `vision_p6` on the held-out field: **61.2 vs 57.6 mean leader share, strictly better on 4 of 5 seed sets (one tie), deaths/h unchanged**. The keep rule (mean improves, wins >= 3 of 5) is met. Adding M5's `reflex_guard` does not help (60.6, 4 of 5, worse on one set by 6).
+
+### What was built
+- `rust/arena_client/src/reflex.rs`: spec key `reflex_hunter` (bool, default off) with `reflex_hunter_genes` (genome file, default `bot/drill/hv_commit_only.json`) and
+  `reflex_hunter_params` (genes merged over its `params`). `Reflex` keeps one `Hunter` per agent (piece memory, velocities, cooldowns), reset on respawn with the rest of the reflex state.
+  Each decision calls `Hunter::step(&snapshot, genes)` first (it must see every snapshot to keep its velocities and memory); **only while `hunter.phase == Phase::Commit`
+  does its aim / split / eject replace the net's**, otherwise the net drives (and the other reflexes, guard, run as before). Gene tiers (`caution_mass`, giant) go through `HeuristicPolicy::params_for` as in the rule bot.
+  Counter `reflex_hunter` = committed steps. `visionbot.rs` needed no change (it already builds the reflex from the spec). 4 new unit tests (commit overrides the net on the drill's burst, no burst /
+  flag off leaves the net, flees a core that can lunge instead of walking in, reset / default off); `cargo test`: reflex 15 pass.
+- Specs: `bot/vision_p6_hunt.json` (p6 + hunter), `bot/vision_p6_hunt_g.json` (+ `reflex_guard`). Script `endlessM6.sh spec seed [threads]` (= `endlessM5.sh`, files `runs/vision/evals/M6_*`, logs `logs/m6/`).
+
+### Held-out leader share (`arena.endless --engine inproc`, M5 lineup: vis x2, plan x2, plan2, bc3 x2, apos, hvirus + 8 server bots; 8 worlds x 240 min)
+p6 base: seed 3000 re-run here gave **55**, identical to M5's number (same binary behaviour, deterministic), so the other four base values are M5's (59, 66, 53, 55), not re-run.
+
+| spec | 3000 | 11000 | 21000 | 31000 | 41000 | mean | wins | mean diff |
+|---|---|---|---|---|---|---|---|---|
+| p6 (base) | 55 | 59 | 66 | 53 | 55 | 57.6 | - | - |
+| p6 + `reflex_hunter` | **57** | **62** | 66 | **64** | **57** | **61.2** | 4 (+1 tie) | +3.6 |
+| p6 + `reflex_hunter` + `reflex_guard` | **62** | **63** | 60 | **62** | 56 | 60.6 | 4 | +3.0 |
+
+Per-seed differences hunter: +2, +3, 0, +11, +2; with guard: +7, +4, -6, +9, +1. Both pass the keep rule; the plain hunter has the higher mean and no losing set, so it is the one to keep (guard adds nothing measurable; the seed spread is about 5, so +2/+3 on single sets is
+not significant by itself, the consistent sign over five sets is the evidence). No variant was stopped early.
+
+### Counters (`--stats-out`, `rl/vision/skillstats.py`, `vis` family, 320 agent-hours each = 5 sets)
+| spec | deaths/h | splits/h | split kills/h (mass/h) | harvest cells/h (mass/h) | hunter-committed steps |
+|---|---|---|---|---|---|
+| p6 (M5 table) | 6.2 | 0 | 0 | 163 (17.7k) | - |
+| + hunter | 6.07 | 1.5 | 3.8 (322) | 176 (20.3k) | 401.6k (5.0k per agent) |
+| + hunter + guard | 6.39 | 1.6 | 4.2 (373) | 172 (20.3k) | 436.2k |
+
+Harvest mass per hour rises 15% (17.7k -> 20.3k), deaths/h stay at the p6 level (6.2 -> 6.1): the M5 failure mode (halves eaten, harvest into the crowd) does not appear. The hunter splits rarely (about 1.5 per hour),
+i.e. almost all of the gain is the kiting approach to popped pieces, not split kills. The p6 stats here are the M5 doc's, I did not have the M5 stats files to recompute (the same-seed 3000 rerun matches the M5 share exactly, the counters were not diffed).
+
+### Drill (`ogar drill`, giant_popped / giant_pop, 500 vs 5k, D600, bot giant, seed 5000, N = 100, CUDA nets; `runs/drill/m6.json`)
+capture at 10/20/30 s, overtake (any), died:
+
+| agent | giant_popped | giant_pop |
+|---|---|---|
+| p6 | 5/7/10+-2%, overtake 7%, died 12% | 1/2/3+-1%, overtake 0%, died 1% |
+| p6 + hunter | 12/17/23+-3%, overtake 20%, died 11% | 6/11/14+-3%, overtake 8%, died 6% |
+| p6 + hunter + guard | identical to p6 + hunter (guard never fires in the scene) | identical |
+| c3_4 (rule bot) | 7/10/12+-2%, overtake 6%, died 9% | 2/3/5+-2%, overtake 3%, died 3% |
+| scripted hv_commit_only (rule bot) | 12/18/24+-3%, overtake 27%, died 10% | 6/11/15+-3%, overtake 13%, died 7% |
+
+The hunter is engaged in the vision agent and reproduces the rule bot's capture (23 vs 24, 14 vs 15 at 30 s) with no extra deaths; overtake is lower (20 vs 27, 8 vs 13), which I did not investigate (the net drives after the commit phase, the scripted bot keeps going).
+Plain p6 already captures 10% at 30 s in giant_popped, so the net's food-seeking is not blind to bursts, the hunter doubles it.
+
+### Not run / caveats
+- Base p6 only re-run on seed 3000 (matches M5 exactly); seeds 11000-41000 base are M5's, produced by an earlier binary. The only code change since is the new flag, off by default, but other merges on master since M5 could differ for the rule bots in the field (3000 shows no such drift).
+- One seed base per set; 5 sets x 8 worlds; intervals on a single set are about +-5, so only the mean over sets and the sign count are meaningful.
+- No ablation of hunter genes in vision (`lurk` was not tried; it lost on endless for rule bots), no `reflex_hunter` with the vision net's own splitting, no recurrent nets, no serve-engine check.
+- The drill for the guard variant is trivially identical to the hunter (no recombine danger in that scene); the guard's effect is only measured on endless.
+- CPU was at 100% from the other agents' loads during the runs; this does not change the (deterministic) results, only wall time (about 55 min per set).
