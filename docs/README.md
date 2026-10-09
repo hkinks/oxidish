@@ -10,6 +10,7 @@
 | [showcase.md](showcase.md) | the real-server showcase for playing against the bots |
 | [sparring.md](sparring.md) | sparring opponents: AposBot port, hunters (virus play), strength and endless results |
 | [learnings.md](learnings.md) | **what we learned**: metrics, genes, vision bot, RL pitfalls, commander |
+| [harvest-drill.md](harvest-drill.md) | `ogar drill`: how well agents eat a giant that just popped on a virus; oracle, mass-chain bound, results |
 
 Layout:
 
