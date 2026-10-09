@@ -123,7 +123,7 @@ impl Cond {
 #[derive(Clone, Debug)]
 pub enum AgentKind {
     /// scripted harvester; `full` = sees every piece on the map; `brave` = ignores every danger (no fleeing, no safety test)
-    Oracle { full: bool, brave: bool, nearest: bool },
+    Oracle { full: bool, brave: bool, nearest: bool, no_split: bool },
     /// any `Policy` / vision spec
     Policy(Value),
 }
@@ -139,10 +139,11 @@ impl AgentDef {
     pub fn parse(arg: &str) -> Result<AgentDef, String> {
         let (name, val) = arg.split_once('=').ok_or(format!("{arg}: want name=spec.json | name=oracle | name=oracle_view"))?;
         let kind = match val {
-            "oracle" => AgentKind::Oracle { full: true, brave: false, nearest: false },
-            "oracle_near" => AgentKind::Oracle { full: true, brave: false, nearest: true },
-            "oracle_view" => AgentKind::Oracle { full: false, brave: false, nearest: false },
-            "oracle_brave" => AgentKind::Oracle { full: true, brave: true, nearest: false },
+            "oracle" => AgentKind::Oracle { full: true, brave: false, nearest: false, no_split: false },
+            "oracle_nosplit" => AgentKind::Oracle { full: true, brave: false, nearest: false, no_split: true },
+            "oracle_near" => AgentKind::Oracle { full: true, brave: false, nearest: true, no_split: false },
+            "oracle_view" => AgentKind::Oracle { full: false, brave: false, nearest: false, no_split: false },
+            "oracle_brave" => AgentKind::Oracle { full: true, brave: true, nearest: false, no_split: false },
             path => {
                 let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
                 AgentKind::Policy(serde_json::from_str(&text).map_err(|e| format!("{path}: {e}"))?)
@@ -297,6 +298,7 @@ pub struct Oracle {
     full: bool,
     brave: bool,
     nearest: bool,
+    no_split: bool,
     split_cd: u32,
 }
 
@@ -315,8 +317,8 @@ fn seg_dist(p: (f64, f64), a: (f64, f64), b: (f64, f64)) -> f64 {
 }
 
 impl Oracle {
-    pub fn new(full: bool, brave: bool, nearest: bool) -> Oracle {
-        Oracle { full, brave, nearest, split_cd: 0 }
+    pub fn new(full: bool, brave: bool, nearest: bool, no_split: bool) -> Oracle {
+        Oracle { full, brave, nearest, no_split, split_cd: 0 }
     }
 
     pub fn decide(&mut self, w: &World, pi: usize, s: &Snapshot) -> Out {
@@ -386,7 +388,7 @@ impl Oracle {
             let lunge_ok = g > 60.0 && g < 650.0;
             let half = me.size / std::f64::consts::SQRT_2;
             let half_safe = threats.iter().all(|t| t.size < EAT * half * 1.05 || (t.x - me.x).hypot(t.y - me.y) - t.size - me.size > 1100.0);
-            if self.split_cd == 0 && half_ok && lunge_ok && half_safe {
+            if !self.no_split && self.split_cd == 0 && half_ok && lunge_ok && half_safe {
                 out.split = true;
                 self.split_cd = 10;
             }
@@ -475,7 +477,7 @@ pub fn run_rep(agent: &AgentDef, cond: &Cond, seed: u64) -> Value {
         build_scene(cond, seed, &mut mk)
     };
     let mut us_ctl = match (&agent.kind, us_drv) {
-        (AgentKind::Oracle { full, brave, nearest }, _) => Ctl::Orc(Oracle::new(*full, *brave, *nearest)),
+        (AgentKind::Oracle { full, brave, nearest, no_split }, _) => Ctl::Orc(Oracle::new(*full, *brave, *nearest, *no_split)),
         (_, Some(d)) => Ctl::Drv(d),
         _ => unreachable!(),
     };
@@ -760,7 +762,7 @@ pub fn summarize(rows: &[&Value]) -> Value {
     for i in 0..nwin {
         let s = valid[0]["checkpoints"][i]["s"].as_i64().unwrap_or(0);
         let capv = col(&|r| cp(r, i, "capture"));
-        let ratio = col(&|r| cp(r, i, "ours") / cp(r, i, "giant").max(1.0));
+        let ratio = col(&|r| (cp(r, i, "ours") / cp(r, i, "giant").max(1.0)).min(5.0)); // capped: a giant eaten to nothing would blow the mean up
         let over = valid.iter().filter(|r| r["checkpoints"][i]["overtaken"] == true).count();
         let (cm, cc) = mean_ci(&capv);
         let (rm, rc) = mean_ci(&ratio);
@@ -909,7 +911,7 @@ mod tests {
 
     #[test]
     fn oracle_rep_is_deterministic_and_pops() {
-        let agent = AgentDef { name: "oracle".into(), kind: AgentKind::Oracle { full: true, brave: false, nearest: false } };
+        let agent = AgentDef { name: "oracle".into(), kind: AgentKind::Oracle { full: true, brave: false, nearest: false, no_split: false } };
         let mut c = cond(Scenario::GiantPop);
         c.horizon_s = 10.0;
         let (r1, r2) = (run_rep(&agent, &c, 11), run_rep(&agent, &c, 11));

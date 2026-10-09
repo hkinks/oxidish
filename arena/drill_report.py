@@ -18,10 +18,27 @@ def pm(m, h, nd=0):
     return "-" if m is None else (f"{100 * m:.{nd}f}+-{100 * h:.{nd}f}%" if h is not None else f"{100 * m:.{nd}f}%")
 
 
+def ratio_stats(reps, window=30):
+    """mean +- 1.96 se of ours/giant at `window` s over the reps (capped at 5: a giant eaten to nothing has no ratio)"""
+    xs = []
+    for r in reps:
+        for c in r["checkpoints"]:
+            if c["s"] == window:
+                xs.append(min(5.0, c["ours"] / max(c["giant"], 1.0)))
+    if len(xs) < 2:
+        return None, None
+    m = sum(xs) / len(xs)
+    sd = (sum((x - m) ** 2 for x in xs) / (len(xs) - 1)) ** 0.5
+    return m, 1.96 * sd / len(xs) ** 0.5
+
+
 def load(paths):
     rows, order = {}, []
     for p in paths:
-        for s in json.load(open(p))["summary"]:
+        doc = json.load(open(p))
+        for s in doc["summary"]:
+            reps = [r for r in doc["reps"] if r["cond"] == s["cond"] and r["agent"] == s["agent"] and r["popped"]]
+            s["ratio30"] = ratio_stats(reps)
             k = s["cond"]
             if k not in rows:
                 rows[k] = []
@@ -43,7 +60,7 @@ def main_table(cond, sums):
         last = sorted(w, key=lambda k: int(k[:-1]))[-1]
         a, b, c = w["10s"], w["20s"], w["30s"]
         print(f"| {s['agent']} | {s['n']} | {pm(a['capture'], a['capture_ci'])} | {pm(b['capture'], b['capture_ci'])} | {pm(c['capture'], c['capture_ci'])} "
-              f"| {num(c['ours_over_giant'], 2)}+-{num(c['ours_over_giant_ci'], 2)} | {pct(s['overtake_any'])} [{pct(s['overtake_any_lo'])}-{pct(s['overtake_any_hi'])}] "
+              f"| {num(s['ratio30'][0], 2)}+-{num(s['ratio30'][1], 2)} | {pct(s['overtake_any'])} [{pct(s['overtake_any_lo'])}-{pct(s['overtake_any_hi'])}] "
               f"| {num(s['t_overtake_median'])} s | {pct(s['first_piece'])} / {num(s['t_first_mean'])} s | {pct(s['died'])} [{pct(s['died_lo'])}-{pct(s['died_hi'])}] | {num(s['pieces'])} |")
     if len(sums) and any(k not in ("10s", "20s", "30s") for k in sums[0]["windows"]):
         print()
