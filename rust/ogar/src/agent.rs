@@ -33,6 +33,8 @@ const LOSS_DROP: f64 = 0.3;
 const LOSS_LOOKBACK: usize = 4;
 const LOSS_COOLDOWN: u32 = 20;
 const FOOD_KEEP: usize = 3;
+/// a kill within this many ticks (3 s) of the agent's own split decision counts as a split kill
+const SPLIT_KILL_WINDOW: u32 = 75;
 
 pub struct AgentDriver {
     pub pi: usize,
@@ -42,6 +44,8 @@ pub struct AgentDriver {
     pub spec: Value,
     pub stats: AgentStats,
     pub sync: u64,
+    /// tick of this agent's latest split decision (for the split-kill counters)
+    last_split_tick: Option<u32>,
     alive: bool,
     n_cells: Option<usize>,
     /// ring of the last steps; None = recording off (nothing is collected, no cost)
@@ -116,6 +120,7 @@ impl AgentDriver {
             spec: spec.clone(),
             stats: AgentStats { name: name.to_string(), ..Default::default() },
             sync,
+            last_split_tick: None,
             alive: false,
             n_cells: None,
             trace: None,
@@ -183,6 +188,14 @@ impl AgentDriver {
         for k in &w.kill_log {
             if k.killer_owner == pi {
                 self.stats.kills += 1;
+                if self.last_split_tick.map_or(false, |t| w.tick.saturating_sub(t) <= SPLIT_KILL_WINDOW) {
+                    self.stats.split_kills += 1;
+                    self.stats.split_kill_mass += k.victim_mass;
+                }
+                if k.victim_cells >= 3 {
+                    self.stats.harvest_kills += 1;
+                    self.stats.harvest_mass += k.victim_mass;
+                }
             } else if k.victim_owner == pi {
                 let mine: f64 = w.players[self.pi].cells.iter().map(|&h| w.ents[h as usize].mass()).sum();
                 let loss = json!({
@@ -274,9 +287,12 @@ impl AgentDriver {
                     tr[k].food = Vec::new();
                 }
             }
+            let tick = w.tick;
             let p = &mut w.players[self.pi];
             p.mouse_in = Some(((a.x as i32) as f64, (a.y as i32) as f64));
             if a.split {
+                self.stats.splits += 1;
+                self.last_split_tick = Some(tick);
                 p.p_split = true;
             }
             if a.eject {
@@ -292,6 +308,10 @@ impl AgentDriver {
         self.stats.virus_pops = p.pops as u64;
         self.stats.virus_pop_mass = p.pop_mass as f64;
         self.stats.counters = self.policy.counters().clone();
+        #[cfg(feature = "vision-net")]
+        if let Some(r) = self.vision.as_ref().and_then(|v| v.reflex.as_ref()) {
+            self.stats.counters.0.extend(r.counters.0.iter().cloned());
+        }
         self.stats
     }
 }

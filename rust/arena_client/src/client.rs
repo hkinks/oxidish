@@ -30,6 +30,13 @@ pub struct AgentStats {
     pub virus_shots: u64,
     pub virus_pops: u64,
     pub virus_pop_mass: f64,
+    /// ogar engine: split decisions taken / kills within 3 s of one (and their mass) / eaten cells of players that had
+    /// >= 3 cells at that moment (popped or split apart) and their mass
+    pub splits: u64,
+    pub split_kills: u64,
+    pub split_kill_mass: f64,
+    pub harvest_kills: u64,
+    pub harvest_mass: f64,
 }
 
 impl AgentStats {
@@ -56,6 +63,12 @@ impl AgentStats {
             "virus_shots": self.virus_shots,
             "virus_pops": self.virus_pops,
             "virus_pop_mass": self.virus_pop_mass,
+            "ticks": self.ticks,
+            "splits": self.splits,
+            "split_kills": self.split_kills,
+            "split_kill_mass": self.split_kill_mass,
+            "harvest_kills": self.harvest_kills,
+            "harvest_mass": self.harvest_mass,
         })
     }
 }

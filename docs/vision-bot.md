@@ -439,3 +439,117 @@ opponents); the 5-set rule was not met for it.
 `inenv_sum.py`, `endless5.sh` (training field), `endlessH.sh` (held-out), `queueH*.sh`.
 Recommended: `vision_p3` (best on the training field, equal on the held-out field) or `vision_p6` for the
 league-trained net.
+
+## M5 status (2026-10-09): reflex layer, skill counters, recurrent net, split training (branch `worktree-agent-a1e64e46d058e79af`)
+
+**Result in one line.** Nothing in M5 beat `vision_p6`. Every reflex skill (split-kill, harvest, virus-split) lowers the held-out leader
+share by 11-31 points when bolted on to p6, safer gates and a recombine guard did not repair split-kill, and the PPO runs
+(recurrent GRU net, self-play, goal-aligned reward) came out 11-20 points below p6; every run that executed splits collapsed.
+No skill met the keep rule (mean better and wins on >= 3 of 5 sets).
+
+### What was built
+- `rust/arena_client/src/reflex.rs`: the hybrid reflex layer. Spec keys on a vision agent (all off by default):
+  `reflex_split`, `reflex_harvest`, `reflex_virus`, `reflex_guard`, plus `reflex_genes` (genome file, default `bot/c3_4.json`),
+  `reflex_params` (genes merged over it), `reflex_harvest_range`, `reflex_split_clear`. It runs inside `VisionBot::decide` on the
+  agent's Snapshot; the net keeps the movement otherwise. The commander override still applies after it.
+  - split-kill reuses `heuristic_plan` (target and the Flee veto) and the extracted `steer::split_kill_ok` (the very check of
+    `steer_to`: halves big enough, within `split_range * split_reach`, no threat within danger radius + `split_range`; `split_ev` supported);
+  - harvest: `heuristic_plan` with the `harvest` gene on; aims at the target if its owner (protocol colour) is shown in >= 3 pieces;
+  - virus-split: `Tactics::act` (now `pub`) with only the shooting gene forced on, no staging walk;
+  - guard (added after the coordinator's question): while we own >= 2 cells and a player above 1.3x our biggest piece is within
+    400 of the group, run straight away from it.
+  - 11 unit tests in `reflex.rs` (constructed snapshots, per skill: fires, refuses when far / too big / threat near, flag off,
+    spec default off, split_clear, guard). `cargo test`: arena_client 23 pass, ogar 8 pass.
+- Counters (every `ogar endless` run, `--out` json `stats.agents`; `arena.endless --stats-out`; `rl/vision/skillstats.py`,
+  `rl/vision/lossdiag.py`): per agent deaths, kills, splits, split kills (a kill within 3 s of the agent's own split decision, victim mass),
+  virus shots / pops caused on others (+ mass popped), "harvest" cells = cells eaten from a player that had >= 3 cells at that moment
+  (popped or split apart, whoever did it) and their mass, `reflex_*` counters, and the loss list.
+- Recurrent net: `VisionNet(gru=256)` (`model.py`: GRUCell after the MLP; its output enters the split/eject/value head and, as a channel
+  bias at the 16x16 decoder input, the heat map, both through zero-initialised projections, so a fresh GRU net plays exactly like its source;
+  verified 0.0 difference). `rl/vision/mkgru.py` makes the init, `export.py` writes ONNX with input `h` and output `h_out`
+  (torch vs onnxruntime max diff 1e-2 on heat logits, 4e-5 on h over 4 chained steps). Rust: `nn.rs` takes/returns the hidden states
+  (CUDA-graph path binds `h`/`h_out`), `VisionBot.hidden` per agent, zeroed in `reset()` (death), batching unchanged
+  (`infer_batch` stacks the hidden states). `cuda` (graph) and `cuda_plain` runs of a recurrent model agree on the final sample of a 4 min world.
+  Not done: a torch-vs-Rust parity dump of hidden states over a real game (`parity.py` is not extended).
+- PPO: `rl/vision/train_ppo3.py` (split action, kill/pop shaping, BCE of the split head to the reflex flag, `info["events"]` from
+  `ogar_py`: kills, kill mass, pops, flag, mass taken from players at least as big, own mass lost) and `train_ppo4.py` (adds the GRU with BPTT
+  chunks and stored hidden states, self-play with snapshots of the current policy weighted to the strongest, #1 term 0.05,
+  big-victim bonus, lost-mass penalty, anchor decayed to 0.003, `--split-detach`). `ogar_py` was built separately (the main venv has none):
+  `PYTHONPATH=logs/pymod`. Scripts `trainS*.sh`, `trainG*.sh`.
+
+### Baseline: why p6 is 58 here and 42 in M4
+Same lineup (vis x2, plan x2, plan2, bc3 x2, apos, hvirus + 8 server bots), same spec file and model, same seeds, same 240 min x 8 worlds.
+The difference is the evaluator: M4 used `arena.endless` with the default `--engine serve` (one `ogar serve` per world); M5 uses
+`--engine inproc` as asked. To check, I re-ran seed 3000 with the serve engine and the current binary: **vis 48%** (inproc 55%, M4 45%);
+bc3 26% (inproc 14%, M4 38%). Vision worlds diverge chaotically between engines (batch composition changes GPU rounding), so one seed differs
+by +-7 or more; M4's seed 11000 (39) against 59 here is a 20 point gap, so there may also be a real systematic engine effect, but I ran only one serve
+rerun and cannot separate the two. Consequence: **all M5 comparisons are within the inproc engine and paired by seed; absolute numbers are not
+comparable with the M4 tables.** p6 inproc, 5 sets: 55, 59, 66, 53, 55 = 57.6.
+
+### Held-out leader share, `vis` (8 worlds x 240 min; inproc; "wins" = seeds strictly above p6)
+
+| spec | 3000 | 11000 | 21000 | 31000 | 41000 | mean | seeds | wins | mean diff |
+|---|---|---|---|---|---|---|---|---|---|
+| p6 (base) | 55 | 59 | 66 | 53 | 55 | 57.6 | 5 | - | - |
+| p6 + split-kill (`rs`) | 40 | 42 | 39 | - | - | 40.3 | 3 | 0 | -19.7 |
+| p6 + harvest (`rh`) | 44 | (killed) | 41 | - | - | 42.5 | 2 | 0 | -18.0 |
+| p6 + virus-split (`rv`) | 41 | 33 | 41 | - | - | 38.3 | 3 | 0 | -21.7 |
+| p6 + all three (`ra`) | 27 | 25 | - | - | - | 26.0 | 2 | 0 | -31.0 |
+| split-kill, safer (`rs2`: halves in the safety test, safety x3, no half-mass player within 2000) | 40 | - | - | - | - | 40.0 | 1 | 0 | -15 |
+| harvest, wider berth (`rh2`: flee_margin 1.0, danger_margin 250) | 40 | - | - | - | - | 40.0 | 1 | 0 | -15 |
+| virus-split, safer (`rv2`: danger_margin 250, shoot_safety 1.0) | 49 | 52 | 46 | - | - | 49.0 | 3 | 0 | -11.0 |
+| guard only (`rg`) | 58 | 50 | - | - | - | 54.0 | 2 | 1 | -3.0 |
+| split-kill + guard (`rsg`) | 28 | 33 | - | - | - | 30.5 | 2 | 0 | -26.5 |
+| safer split-kill + guard (`rs2g`) | 42 | - | - | - | - | 42.0 | 1 | 0 | -13 |
+| recurrent g1c (no split, ~490 its) | 51 | 45 | 48 | 44 | 45 | 46.6 | 5 | 0 | -11.0 |
+| recurrent g2c (g1c + 900 its) | 41 | 43 | - | - | - | 42.0 | 2 | 0 | -15 |
+| recurrent g3c (GRU at trunk lr, ~780 its) | 38 | 44 | 38 | - | - | 40.0 | 3 | 0 | -20 |
+
+Not all 5 sets were run for the variants: with 0 wins in the first 2-3 sets and mean differences of -11 to -31 (seed spread about 5) the keep rule
+cannot be met, so the remaining sets were not run (each costs 1-1.5 h with several running at once). That is a judgement, not a measurement.
+Verdict: **drop all three skills** (and their safer variants). Guard alone is within noise of p6 (2 seeds).
+
+### Per-skill counters, `vis` family (per agent-hour, summed over the seeds run)
+
+| spec | agent-h | deaths/h | splits/h | split kills/h (mass/h) | virus shots/h | virus pops on others /h (mass/h) | harvest cells/h (mass/h) |
+|---|---|---|---|---|---|---|---|
+| p6 | 320 | 6.2 | 0 | 0 | 0 | 0 | 163 (17.7k) |
+| +split-kill | 192 | 9.1 | 17.6 | 38.3 (8.6k) | 0 | 0 | 203 (19.9k) |
+| +harvest | 128 | 9.7 | 0 | 0 | 0 | 0 | 238 (25.4k) |
+| +virus-split | 192 | 8.4 | 0 | 0 | 14.7 | 11.5 (12.4k) | 187 (17.9k) |
+| +virus-split safer | 192 | 6.7 | 0 | 0 | 12.6 | 9.7 (10.0k) | 179 (18.1k) |
+| +all | 128 | 12.7 | 19.2 | 43.7 (7.4k) | 7.3 | 5.8 (6.6k) | 291 (25.7k) |
+| recurrent g1c | 320 | 7.7 | 0 | 0 | 0 | 0 | 169 (17.6k) |
+
+Other families in the p6 runs, deaths/h: bc3 23.8, plan 14.1, plan2 12.0, apos 12.9 (108 splits/h), hvirus 30.2 (6.3 shots/h, 5.4 pops/h).
+"Split kills" can exceed splits because one split eats several cells. "Harvest" counts every cell eaten from a player that had >= 3 cells.
+
+### Diagnosis of the reflex cost (`rl/vision/lossdiag.py`, recorded losses of `vis`)
+- Split-kill: deaths/h 6.2 -> 9.1, mass lost to other players per hour 16.3k -> 23.5k (+44%), cells lost +52%. The gain is 8.6k mass/h of split kills against 7.1k more mass lost.
+  The killer-to-own mass ratio of what eats us falls from 6.6 to 4.0: after a split our halves are eaten by mid-sized players that would never touch the whole cell.
+  A stricter gate (`rs2`) and a recombine guard (run from anything above 1.3x our biggest piece while split) did not repair it (40; 28/33; 42); the guard alone changes
+  nothing (6.7 deaths/h, 58/50). So the cost is not only "no escape while split": the net (trained with `split:false`, never sees two cells of its own in a plan)
+  does not manage the halves, and the reflex's safety test (rule-bot genes, `flee_margin` 0.2) is looser than the net's own caution.
+- Harvest: cells lost per hour +89%, mass lost +68%, deaths/h +57%: chasing the pieces of a popped player goes into the crowd that popped it. The wider-berth variant did the same on the one seed run (40).
+- Virus-split: works mechanically (11.5 pops/h, 12k mass popped per hour) but costs 36% more deaths; with a stricter safety deaths are back near p6 (6.7/h) and the share is still -11 (49/52/46).
+  The 3 other skills' counters show the reflex does what it is built to do; the loss is in the exposure it creates.
+
+### PPO with split and memory
+- Did g1c / g2c ever split? No, by design: their specs have `"split": false` and they were trained with `--no-split` (control arms), so 0 splits and 0 shots is not a collapse.
+- Runs that executed splits (s1, s3 non-recurrent; g1, g3s recurrent; sampled split from the net's head, BCE to the reflex flag, warm start with the flag as the action):
+  learner leader share ~1% against ~10-15% for the same setup without splitting, deaths/h 30-50 against 6-20, mass 450 against 1500-2000 after 150 iterations;
+  all four were stopped after 150-300 iterations. Detaching the CNN trunk from the split losses (g1) did not help, so it is not the BCE gradient.
+  Controls without splits (s2, g1c, g3c) trained normally, so the harm comes from executing splits (~0.2-1% of the learner's decisions).
+  The reflex flag is rare (about 0.04% of decisions, 18 per agent-hour), so the BC term is a weak teacher.
+- Recurrent, no split (g1c/g2c/g3c): 46.6 / 42 / 40 against 57.6. g1c and g2c were barely trained: the KL early stop (0.03) fired after 1-3 minibatches in most iterations because the GRU
+  parameters sat in the high-lr head group (g_dec moves the heat map). g3c fixes that and its training curve was good (leader share 0.21 at 300 its on its own field with frozen self-play copies),
+  but it scored 40 on the held-out field: more specialisation to its own training field, not generalisation. I did not separate the effects of GRU, self-play, reward and anchor (no ablation
+  of each), and there was no stacked-frame ablation.
+- Not done: split exploration bonus / entropy sweeps; BC warm start of the split head from the `rs2` reflex; a split PPO run with the guard; the remaining seed sets above;
+  a torch-vs-Rust parity check of recurrent states over a game; an ablation separating the PPO changes.
+
+### Files
+`rust/arena_client/src/reflex.rs`, `steer.rs` (`split_kill_ok`), `policy.rs` (`Tactics` pub), `client.rs` (`AgentStats` fields), `rust/ogar/src/{agent,endless,nn,visionbot,vision,world,main}.rs`,
+`rust/ogar_py/src/lib.rs` (`info["events"]`), `arena/endless.py` (`--stats-out`), `rl/vision/{model,export,mkgru,train_ppo3,train_ppo4,skillstats,lossdiag,m5_table}.py`,
+`bot/vision_p6_r*.json`, `bot/vision_{g1c,g2c,g3c}.json`, `endlessM5*.sh`, `queueM5*.sh`, `train{S,G}*.sh`. Eval jsons / stats: `runs/vision/evals/M5_*` (gitignored), logs `logs/m5/`.
+Command: `./endlessM5.sh vision_p6_rs 3000` (needs `logs/bin/ogar.exe` = the release build, `runs/vision/export/vision_p6.onnx`, `runs/vision/ort/`).

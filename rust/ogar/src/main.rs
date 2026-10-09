@@ -149,7 +149,7 @@ fn run_endless_cmd(a: &Args) -> Result<(), String> {
         }
     }
     if let Some(path) = a.kv.get("out") {
-        let stats = serde_json::json!({"wall_s": st.wall_s, "infer_calls": st.infer_calls, "infer_frames": st.infer_frames, "infer_s": st.infer_s});
+        let stats = serde_json::json!({"wall_s": st.wall_s, "infer_calls": st.infer_calls, "infer_frames": st.infer_frames, "infer_s": st.infer_s, "agents": st.agents});
         let doc = serde_json::json!({"worlds": samples, "stats": stats});
         std::fs::write(path, ascii_json(&serde_json::to_string(&doc).unwrap())).map_err(|e| e.to_string())?;
     }
