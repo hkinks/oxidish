@@ -124,6 +124,8 @@ impl Cond {
 pub enum AgentKind {
     /// scripted harvester; `full` = sees every piece on the map; `brave` = ignores every danger (no fleeing, no safety test)
     Oracle { full: bool, brave: bool, nearest: bool, no_split: bool },
+    /// the lurk-and-harvest hunter module (arena_client::hunter) with the scripted oracle as the fallback when it has nothing to do
+    Hunter(arena_client::params::Params),
     /// any `Policy` / vision spec
     Policy(Value),
 }
@@ -144,6 +146,24 @@ impl AgentDef {
             "oracle_near" => AgentKind::Oracle { full: true, brave: false, nearest: true, no_split: false },
             "oracle_view" => AgentKind::Oracle { full: false, brave: false, nearest: false, no_split: false },
             "oracle_brave" => AgentKind::Oracle { full: true, brave: true, nearest: false, no_split: false },
+            v if v == "hunter" || v.starts_with("hunter:") => {
+                // "hunter" = commit + split_harvest + race; "hunter:lurk=1,commit=1,..." sets exactly those genes
+                let mut obj = serde_json::Map::new();
+                match v.strip_prefix("hunter:") {
+                    None => {
+                        for k in ["commit", "split_harvest", "race"] {
+                            obj.insert(k.into(), json!(1.0));
+                        }
+                    }
+                    Some(list) => {
+                        for kv in list.split(',').filter(|s| !s.is_empty()) {
+                            let (k, x) = kv.split_once('=').ok_or(format!("{kv}: want gene=value"))?;
+                            obj.insert(k.into(), json!(x.parse::<f64>().map_err(|e| format!("{kv}: {e}"))?));
+                        }
+                    }
+                }
+                AgentKind::Hunter(arena_client::params::Params::from_json(&Value::Object(obj)))
+            }
             path => {
                 let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
                 AgentKind::Policy(serde_json::from_str(&text).map_err(|e| format!("{path}: {e}"))?)
@@ -409,6 +429,7 @@ impl Oracle {
 enum Ctl {
     Drv(Box<AgentDriver>),
     Orc(Oracle),
+    Hun(Box<arena_client::hunter::Hunter>, Oracle, arena_client::params::Params),
 }
 
 fn apply(w: &mut World, pi: usize, o: &Out) {
@@ -478,6 +499,7 @@ pub fn run_rep(agent: &AgentDef, cond: &Cond, seed: u64) -> Value {
     };
     let mut us_ctl = match (&agent.kind, us_drv) {
         (AgentKind::Oracle { full, brave, nearest, no_split }, _) => Ctl::Orc(Oracle::new(*full, *brave, *nearest, *no_split)),
+        (AgentKind::Hunter(p), _) => Ctl::Hun(Box::new(arena_client::hunter::Hunter::new()), Oracle::new(true, false, false, false), p.clone()),
         (_, Some(d)) => Ctl::Drv(d),
         _ => unreachable!(),
     };
@@ -644,6 +666,16 @@ pub fn run_rep(agent: &AgentDef, cond: &Cond, seed: u64) -> Value {
                         let s = snapshot(&w, us);
                         if !s.dead {
                             let out = o.decide(&w, us, &s);
+                            apply(&mut w, us, &out);
+                        }
+                    }
+                    Ctl::Hun(h, o, p) => {
+                        let s = snapshot(&w, us);
+                        if !s.dead {
+                            let out = match h.step(&s, p) {
+                                Some(out) => out,
+                                None => o.decide(&w, us, &s),
+                            };
                             apply(&mut w, us, &out);
                         }
                     }
@@ -918,6 +950,26 @@ mod tests {
         assert_eq!(r1.to_string(), r2.to_string());
         assert_eq!(r1["popped"], true);
         assert!(r1["g0"].as_f64().unwrap() > 4000.0);
+    }
+
+    #[test]
+    fn hunter_agent_parses_and_is_deterministic() {
+        let a = AgentDef::parse("h=hunter").unwrap();
+        match &a.kind {
+            AgentKind::Hunter(p) => assert!(p.commit > 0.5 && p.split_harvest > 0.5 && p.race > 0.5 && p.lurk < 0.5),
+            _ => panic!("not a hunter"),
+        }
+        let b = AgentDef::parse("h=hunter:lurk=1,commit_kite=1,hv_memory=3").unwrap();
+        match &b.kind {
+            AgentKind::Hunter(p) => assert!(p.lurk > 0.5 && p.commit_kite > 0.5 && p.hv_memory == 3.0 && p.split_harvest < 0.5),
+            _ => panic!("not a hunter"),
+        }
+        assert!(AgentDef::parse("h=hunter:lurk").is_err());
+        let mut c = cond(Scenario::GiantPopped);
+        c.horizon_s = 8.0;
+        let (r1, r2) = (run_rep(&b, &c, 5), run_rep(&b, &c, 5));
+        assert_eq!(r1.to_string(), r2.to_string());
+        assert_eq!(r1["popped"], true);
     }
 
     /// `cargo test dump_pop -- --ignored --nocapture`: the piece masses and spread right after the pop, then 10 s later.

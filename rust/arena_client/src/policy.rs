@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 use crate::farm::FoodRouter;
 use crate::game::{Cell, Kind, Snapshot};
+use crate::hunter::{Hunter, Phase};
 use crate::order::{apply_plan, Order, Verb};
 use crate::params::Params;
 use crate::steer::{classify, danger_radius, danger_radius_at, eaters_of, guarded_cells, half_of, split_threats, steer_to, Mode, Plan, EAT_RATIO};
@@ -116,6 +117,7 @@ fn unit(ax: f64, ay: f64, bx: f64, by: f64) -> (f64, f64) {
     (dx / d, dy / d)
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct Out {
     pub x: f64,
     pub y: f64,
@@ -344,6 +346,8 @@ pub struct HeuristicPolicy {
     pub last_plan: Option<(Plan, &'static str)>,
     /// the commander's standing order (set by the server each step; None = none)
     pub order: Option<Order>,
+    /// lurk-and-harvest hunter (genes lurk / commit / split_harvest); `hunter.phase != Idle` when it decided the last step
+    pub hunter: Hunter,
 }
 
 impl HeuristicPolicy {
@@ -369,6 +373,7 @@ impl HeuristicPolicy {
             flee_dir: None,
             last_plan: None,
             order: None,
+            hunter: Hunter::new(),
         }
     }
 
@@ -407,6 +412,28 @@ impl HeuristicPolicy {
             if s.total_mass() > self.p_small.giant_mass {
                 p = g; // giant stage: its own genes above giant_mass
                 stage = "giant";
+            }
+        }
+        if self.order.is_none() && Hunter::enabled(p) {
+            if let Some(mut o) = self.hunter.step(s, p) {
+                self.last_plan = Some((Plan::new(Mode::Hunt), stage));
+                if self.hunter.phase == Phase::Lurk && p.lurk_shoot > 0.5 {
+                    // feed the virus into the giant: the shoot tactic, on the giant only
+                    if let Some(g) = self.hunter.lurk_target {
+                        let forced = Params { shoot_enable: 1.0, shoot_target_mult: 1.0, shoot_min_mass: 40.0, shoot_max_cells: 16.0,
+                                              shoot_stage: 0.0, shoot_threats: 1.0, shoot_range: p.shoot_range.max(900.0), shoot_reach: p.shoot_reach.max(1300.0), ..p.clone() };
+                        if let Some(sh) = self.tactics.act(s, &Plan::new(Mode::Hunt), &forced, &mut self.counters, Some(&[g])) {
+                            if sh.eject {
+                                o = sh;
+                            }
+                        }
+                    }
+                }
+                self.flee_dir = None;
+                self.counters.bump(if self.hunter.phase == Phase::Lurk { "hunter_lurk" } else { "hunter_commit" }, 1);
+                self.counters.bump("steps", 1);
+                self.counters.bump("splits", o.split as i64);
+                return o;
             }
         }
         let mut plan = heuristic_plan(s, p);
@@ -493,6 +520,7 @@ impl HeuristicPolicy {
         self.prev.clear();
         self.flee_dir = None;
         self.tactics.reset();
+        self.hunter.reset();
         if let Some(r) = self.router.as_mut() {
             r.reset();
         }
@@ -612,5 +640,43 @@ mod scavenge_tests {
         let scavenge = Params { harvest: 1.0, harvest_range: 2.5, ..Params::default() };
         assert_eq!(heuristic_plan(&s, &harvest).mode, Mode::Farm, "pieces beyond hunt_range should be ignored without it");
         assert_eq!(heuristic_plan(&s, &scavenge).mode, Mode::Hunt, "no rush onto the broken giant's pieces");
+    }
+}
+
+#[cfg(test)]
+mod hunter_policy_tests {
+    use super::*;
+    use crate::game::{Border, Cell, Kind, Snapshot};
+
+    fn snap(giant_x: f64) -> Snapshot {
+        let me = Cell::new(1, 0.0, 0.0, (500.0f64 * 100.0).sqrt(), Kind::Mine);
+        let virus = Cell::new(2, 700.0, 0.0, (120.0f64 * 100.0).sqrt(), Kind::Virus);
+        let mut giant = Cell::new(3, giant_x, 0.0, (5000.0f64 * 100.0).sqrt(), Kind::Player);
+        giant.color = 0x00ff00;
+        Snapshot { mine: vec![me], others: vec![virus, giant], border: Border { left: -4000.0, right: 4000.0, top: -4000.0, bottom: 4000.0 }, dead: false }
+    }
+
+    fn policy(genes: serde_json::Value) -> HeuristicPolicy {
+        HeuristicPolicy::from_spec(&serde_json::json!({"farm": "field", "params": genes}))
+    }
+
+    #[test]
+    fn lurk_shoots_the_virus_into_the_giant_only_with_lurk_shoot() {
+        // we stand in line: us - virus - giant, giant outside its split reach
+        let mut on = policy(serde_json::json!({"lurk": 1.0, "lurk_shoot": 1.0}));
+        let mut s = snap(1700.0);
+        let out = on.act(&mut s);
+        assert_eq!(on.hunter.phase, Phase::Lurk);
+        assert!(out.eject, "no shot at the virus: {out:?}");
+        let mut off = policy(serde_json::json!({"lurk": 1.0}));
+        let mut s = snap(1700.0);
+        let out = off.act(&mut s);
+        assert_eq!(off.hunter.phase, Phase::Lurk);
+        assert!(!out.eject && !out.split);
+        // genes off: the ordinary bot, no hunter
+        let mut base = policy(serde_json::json!({}));
+        let mut s = snap(1700.0);
+        base.act(&mut s);
+        assert_eq!(base.hunter.phase, Phase::Idle);
     }
 }
