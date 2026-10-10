@@ -7,6 +7,7 @@ pub mod commander;
 pub mod config;
 pub mod drill;
 pub mod endless;
+pub mod escape;
 pub mod matches;
 #[cfg(feature = "vision-net")]
 pub mod nn;
