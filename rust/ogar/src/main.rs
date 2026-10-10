@@ -320,12 +320,58 @@ fn run_drill_cmd(a: &Args) -> Result<(), String> {
     Ok(())
 }
 
+/// `ogar escape`: the escape drill (escape.rs, docs/escape-drill.md).
+fn run_escape_cmd(a: &Args) -> Result<(), String> {
+    use ogar::drill::AgentDef;
+    use ogar::escape::{print_table, run_all, summarize_all, EscCond, EscOpts, Place};
+    let agents: Vec<AgentDef> = a.agents.iter().map(|s| AgentDef::parse(s)).collect::<Result<_, _>>()?;
+    if agents.is_empty() {
+        return Err("need --agents name=spec.json|oracle ...".into());
+    }
+    let places: Vec<Place> = a.kv.get("place").map(String::as_str).unwrap_or("open,wall,corner").split(',').map(Place::parse).collect::<Result<_, _>>()?;
+    let virus: Vec<bool> = a.kv.get("virus").map(String::as_str).unwrap_or("0").split(',').map(|v| v == "1").collect();
+    let pieces: Vec<f64> = num_list(a, "pieces", "1")?;
+    let mut conds = Vec::new();
+    for om in num_list(a, "our-mass", "3000")? {
+        for ratio in num_list(a, "ratio", "2")? {
+            for gap in num_list(a, "gap", "1200")? {
+                for &pl in &places {
+                    for &vr in &virus {
+                        for &pc in &pieces {
+                            let mut c = EscCond::new(om, ratio, gap, pl);
+                            c.virus = vr;
+                            c.pieces = pc as usize;
+                            c.horizon_s = a.num("horizon", 60.0f64)?;
+                            c.map = a.num("map", 7000.0f64)?;
+                            c.food_mult = a.num("food-mult", 2.0f64)?;
+                            conds.push(c);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let o = EscOpts { agents, conds, reps: a.num("reps", 50usize)?, seed: a.num("seed", 1u64)?, threads: a.num("threads", 3usize)? };
+    let t0 = std::time::Instant::now();
+    let rows = run_all(&o);
+    let sums = summarize_all(&rows);
+    print_table(&sums);
+    println!("
+{} reps in {:.0}s wall on {} thread(s)", rows.len(), t0.elapsed().as_secs_f64(), o.threads);
+    if let Some(path) = a.kv.get("out") {
+        let doc = serde_json::json!({"summary": sums, "reps": rows});
+        std::fs::write(path, ascii_json(&serde_json::to_string(&doc).unwrap())).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
         Some("match") => parse_args(&args[1..]).and_then(|a| run_match_cmd(&a)),
         Some("endless") => parse_args(&args[1..]).and_then(|a| run_endless_cmd(&a)),
         Some("drill") => parse_args(&args[1..]).and_then(|a| run_drill_cmd(&a)),
+        Some("escape") => parse_args(&args[1..]).and_then(|a| run_escape_cmd(&a)),
         Some("serve") => parse_args(&args[1..]).and_then(|a| run_serve_cmd(&a)),
         Some("render") => parse_args(&args[1..]).and_then(|a| run_render_cmd(&a)),
         #[cfg(feature = "vision-net")]

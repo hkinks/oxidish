@@ -15,6 +15,10 @@
 //! default 0 = off), `reflex_guard` (bool): recombine guard, see `guard`, `reflex_hunter` (bool, M6): the lurk-and-harvest hunter
 //! (hunter.rs): while its `commit` phase is active it overrides aim / split / eject, otherwise the net drives; genes from
 //! `reflex_hunter_genes` (genome file, default `bot/drill/hv_commit_only.json`) + `reflex_hunter_params` (merged over its `params`).
+//! `reflex_flee` (bool, docs/escape-drill.md): when the rule bots' flee check (genes with `flee_margin` = `reflex_flee_margin`, default 1.0, and
+//! `evade_trigger` = `reflex_flee_trigger`, default 600; only at a total mass of `reflex_flee_min_mass` or more, default 0) says Flee, the aim is the look-ahead flee (`evade.rs`; in several pieces the rule bots' own flee
+//! steering) and nothing else may override it, not even the hunter's commit phase. The human scenes of 2026-10-09 show nets that stand or walk
+//! on while a 3-6x bigger human closes in (they have no flee reflex; the scene classifier calls that `no_flee`).
 
 use std::collections::HashMap;
 
@@ -22,7 +26,7 @@ use crate::game::{Kind, Snapshot};
 use crate::hunter::{Hunter, Phase};
 use crate::params::Params;
 use crate::policy::{heuristic_plan, Counters, HeuristicPolicy, Out, Tactics};
-use crate::steer::{split_kill_ok, Mode, Plan};
+use crate::steer::{split_kill_ok, steer_to, Mode, Plan};
 
 pub struct Reflex {
     pub split: bool,
@@ -31,6 +35,8 @@ pub struct Reflex {
     harvest_range: f64,
     split_clear: f64,
     guard: bool,
+    /// flee reflex (`reflex_flee`): flee margin and evade trigger given to the rule bots' flee check
+    flee: Option<(f64, f64, f64)>,
     /// M6 hunter: per-agent state (piece memory, velocities) and its gene tiers
     hunter: Option<(Hunter, HeuristicPolicy)>,
     genes: HeuristicPolicy,
@@ -43,7 +49,7 @@ impl Reflex {
     pub fn from_spec(spec: &serde_json::Value) -> Option<Reflex> {
         let on = |k: &str| spec.get(k).and_then(|v| v.as_bool()).unwrap_or(false);
         let (split, harvest, virus) = (on("reflex_split"), on("reflex_harvest"), on("reflex_virus"));
-        if !(split || harvest || virus || on("reflex_guard") || on("reflex_hunter")) {
+        if !(split || harvest || virus || on("reflex_guard") || on("reflex_flee") || on("reflex_hunter")) {
             return None;
         }
         let path = spec.get("reflex_genes").and_then(|v| v.as_str()).unwrap_or("bot/c3_4.json");
@@ -66,6 +72,10 @@ impl Reflex {
         let mut r = Reflex::new(split, harvest, virus, hr, &genome);
         r.guard = spec.get("reflex_guard").and_then(|v| v.as_bool()).unwrap_or(false);
         r.split_clear = spec.get("reflex_split_clear").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        if on("reflex_flee") {
+            let g = |k: &str, d: f64| spec.get(k).and_then(|v| v.as_f64()).unwrap_or(d);
+            r.flee = Some((g("reflex_flee_margin", 1.0), g("reflex_flee_trigger", 600.0), g("reflex_flee_min_mass", 0.0)));
+        }
         if on("reflex_hunter") {
             let hp = spec.get("reflex_hunter_genes").and_then(|v| v.as_str()).unwrap_or("bot/drill/hv_commit_only.json");
             let mut hg = std::fs::read_to_string(hp).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()).unwrap_or_else(|| {
@@ -90,7 +100,7 @@ impl Reflex {
         for k in ["reflex_split", "reflex_harvest", "reflex_shot", "reflex_hunter"] {
             counters.0.push((k.to_string(), 0));
         }
-        Reflex { split, harvest, virus, harvest_range, split_clear: 0.0, guard: false, hunter: None, genes: HeuristicPolicy::from_spec(genome), tactics: Tactics::new(), counters }
+        Reflex { split, harvest, virus, harvest_range, split_clear: 0.0, guard: false, flee: None, hunter: None, genes: HeuristicPolicy::from_spec(genome), tactics: Tactics::new(), counters }
     }
 
     /// Enable the hunter reflex with this genome (`params` hold the commit gene set).
@@ -162,20 +172,48 @@ impl Reflex {
         Some((cx + fx / n * 1500.0, cy + fy / n * 1500.0))
     }
 
+    /// The flee reflex: the aim of a flee step if the rule bots would flee now (their check with a wider margin and the evade trigger).
+    pub fn flee_aim(&self, s: &Snapshot) -> Option<Out> {
+        let (margin, trigger, min_mass) = self.flee?;
+        let me = s.main().copied()?;
+        if s.total_mass() < min_mass {
+            return None;
+        }
+        let mut p = self.genes.params_for(s.total_mass()).clone();
+        p.flee_margin = margin;
+        p.evade = 1.0;
+        p.evade_wall = 1.0;
+        p.evade_trigger = trigger;
+        let plan = heuristic_plan(s, &p);
+        if plan.mode != Mode::Flee {
+            return None;
+        }
+        let (x, y, _) = steer_to(s, &plan, None, &p, None);
+        let d = (x - me.x).hypot(y - me.y).max(1e-9);
+        let pref = ((x - me.x) / d, (y - me.y) / d);
+        let (ax, ay) = crate::evade::evade_aim(s, &p, pref).unwrap_or((x, y));
+        Some(Out { x: ax, y: ay, split: false, eject: false })
+    }
+
     /// The net's action `a` for this decision, possibly replaced by a reflex.
     pub fn apply(&mut self, s: &Snapshot, a: Out) -> Out {
         let Some(me) = s.main().copied() else { return a };
         let p = self.genes.params_for(s.total_mass()).clone();
+        let flee = self.flee_aim(s);
         // the hunter must see every snapshot (velocities, piece memory), so it steps first, even when another reflex then wins
         if let Some((h, hg)) = self.hunter.as_mut() {
             let hp = hg.params_for(s.total_mass());
             let out = h.step(s, hp);
-            if h.phase == Phase::Commit {
+            if flee.is_none() && h.phase == Phase::Commit {
                 if let Some(o) = out {
                     self.counters.bump("reflex_hunter", 1);
                     return Out { x: o.x, y: o.y, split: o.split, eject: o.eject };
                 }
             }
+        }
+        if let Some(f) = flee {
+            self.counters.bump("reflex_flee", 1);
+            return f;
         }
         if self.guard && s.mine.len() >= 2 {
             if let Some((x, y)) = self.guard_aim(s) {
@@ -428,5 +466,36 @@ mod tests {
         assert!(Reflex::from_spec(&serde_json::json!({"kind": "vision"})).is_none());
         let r = Reflex::from_spec(&serde_json::json!({"kind": "vision", "reflex_split": true, "reflex_genes": "no/such/file.json"})).unwrap();
         assert!(r.split && !r.harvest && !r.virus);
+    }
+}
+
+#[cfg(test)]
+mod flee_tests {
+    use super::*;
+    use crate::game::{Border, Cell};
+
+    fn snap(others: Vec<Cell>, mass: f64) -> Snapshot {
+        let me = Cell::new(1, 0.0, 0.0, (mass * 100.0).sqrt(), Kind::Mine);
+        Snapshot { mine: vec![me], others, border: Border { left: -5000.0, right: 5000.0, top: -5000.0, bottom: 5000.0 }, dead: false }
+    }
+
+    fn human(x: f64, y: f64, mass: f64) -> Cell {
+        Cell::new(9, x, y, (mass * 100.0).sqrt(), Kind::Player)
+    }
+
+    /// The 2026-10-09 scenes: a net standing 500 from a 4x human. With `reflex_flee` the aim leaves it; without, the net keeps control.
+    #[test]
+    fn flee_reflex_takes_the_aim_from_a_net_that_does_not_run() {
+        let spec = serde_json::json!({"reflex_flee": true, "reflex_genes": "no/such.json"});
+        let mut r = Reflex::from_spec(&spec).unwrap();
+        let s = snap(vec![human(-900.0, 0.0, 6000.0)], 1500.0);
+        let o = r.apply(&s, Out { x: -2000.0, y: 0.0, split: false, eject: false });
+        assert!(o.x > -100.0 && !o.split, "reflex should turn the aim away from the human at -900, got {o:?}");
+        let far = snap(vec![human(-4000.0, 0.0, 6000.0)], 1500.0);
+        let o = r.apply(&far, Out { x: -2000.0, y: 0.0, split: false, eject: false });
+        assert_eq!(o.x, -2000.0);
+        let spec = serde_json::json!({"reflex_guard": true, "reflex_genes": "no/such.json"});
+        let o = Reflex::from_spec(&spec).unwrap().apply(&s, Out { x: -2000.0, y: 0.0, split: false, eject: false });
+        assert_eq!(o.x, -2000.0);
     }
 }

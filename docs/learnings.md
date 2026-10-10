@@ -63,6 +63,13 @@ be #1 on the leaderboard ~80% of the time in endless worlds on the Rust server (
   help the planner (28 → 25%, noise) and hurt the vision bot (22 → 2.5%): overriding the net's aim point throws away
   what it sees. LLM backends are untested (no keys). See [commander.md](commander.md).
 
+## Escape drill (docs/escape-drill.md)
+
+- `ogar escape`: a scripted human-like chaser (lead pursuit, herding to the wall, split-kill by the real reach) against our bot, 30/60 s survival. In it c3_4's wall genes (`wall_danger`, `wall_wary`) hurt
+  (off: +3.6 s, 26% -> 40% alive at 60 s) and a look-ahead flee (`evade*` genes, off) helps big bots; **neither moves leader share in endless** (0 of 3 variants pass the 3-of-5 gate) and `evade` doubles small-bot deaths.
+  A drill with one chaser and no field rewards what the field punishes. The `no_flee` human scenes of 2026-10-09 are all vision nets (the classifier sees no rule mode); a rule-flee reflex for the nets (`reflex_flee`) won the drill (+5 s) and lost endless (44-45% vs 55%).
+- No flee-in-pieces variant (guard every piece, close up the pieces, `flee_pieces`, `flee_plan`) beat the old flee in the pieces scenario.
+
 ## Process
 
 - Merge agent branches promptly; long-lived worktrees conflict on docs and `main.rs`.
