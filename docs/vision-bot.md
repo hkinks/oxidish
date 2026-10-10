@@ -665,3 +665,35 @@ planhv 10-12, c34h 5-9, plan 2-5 in all runs. The new net takes mass from its p6
 ### Files
 `rust/ogar/src/vision.rs`, `rust/ogar_py/src/lib.rs`, `rl/vision/train_ppo5.py`, `trainM7.sh`, `trainM7b.sh`, `endlessM7.sh`, `exportM7.sh`, `bot/vision_m7a_final.json`, `bot/vision_m7a_ck_*.json`, `bot/vision_m7b_final.json`.
 Models (gitignored): `runs/vision/export/vision_m7a_final.onnx`, checkpoints `runs/vision/m7a`, `m7b`; evals `runs/vision/evals/M7_*`, logs `logs/m7/`.
+
+## M8 status (2026-10-10): m7a continued for 9 h (m8a), stopped early by the user (branch `worktree-agent-aa7a0565d655ef1b1`)
+
+**Result in one line.** 9 h of league PPO from m7a (2306 iterations, `--chaser-p 0.1`, m7a as a frozen league member with the hunter, learner snapshots every 60 its) gave **no measurable gain** on held-out sets 3000 / 11000. The keep rule vs m7a was **not evaluated** (the final checkpoint's 5-set, champions and `ogar escape` runs were cut off). **m7a remains the best model.**
+
+### Run
+`m8a`: init m7a final, anchor p6, 40 worlds x 5 learners (2 frozen per world), 4 env threads, lr 4e-5 cosine over 9 h, `--chaser-p 0.1`, `--hunt-frozen runs/vision/m7a/final.pt` (new flag in `train_ppo5.py`: m7a plays in the frozen slots with the hunter, listed twice), `--snap-every 60 --snap-keep 6`, vpre 20, seed 8100. Script `trainM8.sh` (called with `--worlds 40 --threads 4` defaults overridden by the script's 60/6 only in a first, aborted attempt; the real run used the script defaults, see caveat below).
+~13 s/iteration (2306 its in 9 h; m7a: 898 in 3 h) with evals sharing the CPU. VRAM 18.5 GB. Learner leader share in its own league was flat after ~it 300: 0.17-0.20 (frozen copies 0.16-0.21), deaths/h 14-24. Log `logs/vision/m8a.jsonl`.
+No control run: a first attempt to run `m8b` (no chasers) alongside doubled the iteration time and pushed VRAM to 31.5 GB (> 25 GB cap), so it was killed after 4 min and not rerun. The chaser effect is therefore **not separated**.
+
+### Field 1, held-out (8 worlds x 240 min, `--engine inproc`, binary rebuilt for this branch)
+
+| spec | 3000 | 11000 | 21000 | 31000 | 41000 |
+|---|---|---|---|---|---|
+| m7a final (M7 numbers) | 64 | 68 | 69 | 58 | 63 |
+| m8a ck 280 (1.2 h) | 64 | 57 | - | - | - |
+| m8a ck 720 (3.5 h) | 66 | 65 | - | - | - |
+| m8a ck 1180 (5.5 h) | 64 | 57 | - | - | - |
+| m8a ck 1640 (7.5 h) | 65 | 63 | - | - | - |
+| m8a ck 2120 (~9 h) | 67 | not finished | - | - | - |
+| m8a final (it 2306) | not run | not run | - | - | - |
+
+Mean of 3000 / 11000: ck 280 60.5, ck 720 65.5, ck 1180 60.5, ck 1640 64.0, vs m7a 66.0. The differences are inside seed-set noise (11000 swings 57-65 between neighbouring checkpoints); no trend and no evidence that m8a beats m7a. On 3000 alone m8a is +0 to +3, on 11000 -3 to -11.
+
+### Field 2, champions
+Only the baseline: m7a final on seed 21000 = **48%** (p6_hunt 31, planhv 10, c34h 7, plan 3); with M7's 40 (3000) and 44 (11000) that is 40 / 44 / 48 for m7a. No m8a number.
+
+### Not done
+Final checkpoint on all 5 held-out sets, field 2 for m8a, the `ogar escape` drill (m7a vs m8a), the m8b control, a repro of m7a on this binary. Single training seed. No checkpoint was promoted (picking the best of the 3000/11000 numbers would be selection bias).
+
+### Files
+`trainM8.sh`, `endlessM8.sh`, `exportM8.sh`, `queueM8.sh`, `streamM8.sh`, `rl/vision/train_ppo5.py` (`--hunt-frozen`), specs `bot/vision_m8a_*.json`. Models (gitignored): `runs/vision/m8a`, `runs/vision/export/vision_m8a_*.onnx`; evals `runs/vision/evals/M8_*`, logs `logs/m8/`.

@@ -118,6 +118,8 @@ def main():
     p.add_argument("--giant-p", type=float, default=0.25)
     p.add_argument("--extra-frozen", nargs="*", default=["runs/vision/bc3/final.pt", "runs/vision/p6/final.pt"],
                    help="more permanent frozen opponents (checkpoints)")
+    p.add_argument("--hunt-frozen", nargs="*", default=[],
+                   help="more permanent frozen opponents that play WITH the hunter reflex (M8: m7a, true self-play)")
     a = p.parse_args()
 
     os.chdir(ROOT)
@@ -141,6 +143,10 @@ def main():
                             betas=(0.9, 0.99))
 
     perm_frozen = [ref] + [load_model(c)[0] for c in a.extra_frozen]
+    hfz = [load_model(c)[0] for c in a.hunt_frozen]
+    for m_ in hfz:
+        for q in m_.parameters():
+            q.requires_grad_(False)
     snaps = []   # recent snapshots of the policy
     for m in perm_frozen:
         for q in m.parameters():
@@ -195,6 +201,7 @@ def main():
         m = [(net, False) for net in perm_frozen]
         if hunt:
             m += [(p6net, True), (p6net, True)]
+            m += [(h_, True) for h_ in hfz for _ in range(2)]
             m += [(s_, True) for s_ in snaps for _ in range(2)]
         else:
             m += [(s_, False) for s_ in snaps]
