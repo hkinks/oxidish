@@ -609,3 +609,59 @@ Plain p6 already captures 10% at 30 s in giant_popped, so the net's food-seeking
 - No ablation of hunter genes in vision (`lurk` was not tried; it lost on endless for rule bots), no `reflex_hunter` with the vision net's own splitting, no recurrent nets, no serve-engine check.
 - The drill for the guard variant is trivially identical to the hunter (no recombine danger in that scene); the guard's effect is only measured on endless.
 - CPU was at 100% from the other agents' loads during the runs; this does not change the (deterministic) results, only wall time (about 55 min per set).
+
+## M7 status (2026-10-10): PPO with the hunter reflex in the loop, stronger league (branch `worktree-agent-af25e36448856cf44`)
+
+**Result in one line.** `vision_m7a_final` (p6 + 3 h of league PPO with the hunter overriding the net during Commit, masked out of the PG loss) scores **64.4 vs 61.2** for `vision_p6_hunt` on the held-out field,
+strictly better on **4 of 5** seed sets (+7, +6, +3, -6, +6). The keep rule is met, but the gain is small (+3.2 mean, one set -6) and nowhere near 80. On the new champions field it ties on seed 3000 (40 vs 40) and wins seed 11000 (44 vs 40); only 2 sets.
+The chaser continuation (`m7b`) was worse on the one set run (53).
+
+### What was built
+- `ogar::vision::VecEnv`: the hunter reflex inside the env (`VisionOpts.hunter`, `ogar_py.VecEnv(hunter="bot/drill/hv_commit_only.json")`, `env.set_hunter(mask)` per learner slot). Each observation the env feeds the learner's snapshot to a hunter-only
+  `Reflex` (it must see every snapshot); while its Commit phase is active the env replaces the action (aim / split / eject) and flags it in `info["hunter"]`. Hunter state resets on death and when the slot is switched on.
+  Rust test `hunter_mask_is_off_by_default_and_deterministic`.
+- `rl/vision/train_ppo5.py` (= `train_ppo2.py` plus): policy-gradient and entropy terms are masked on flagged decisions (advantage normalised over the unmasked ones; the value head still trains on them; KL-to-ref anchor on all);
+  reward = M5 terms (d log mass, +0.05 while #1, + 0.5 x big-victim mass / own mass, - 1.0 x own mass eaten / own mass, - 3 death); league pool = old pool + `plan_hv_commit_only` x2 entries + `hv_commit_only` x2 entries (5 drawn per world, giant opponent in 25% of worlds);
+  frozen slots (2 of 5 per world; the other 3 learn) = bc3, p6 (anchor), p6, p6 + hunter (listed twice) and snapshots of the policy + hunter (twice) every 40 its; KL anchor to p6 decaying 0.2 -> 0.01; KL early stop 0.05 and only after >= 4 minibatches
+  (the M5 stall: it fired after 1-3 minibatches; here `nmb` stayed 18-22 of 22); no split head (hunter does the safe splits); value pre-training 20 its with the policy fixed.
+- Scripts: `trainM7.sh`, `endlessM7.sh field spec seed` (field 1 = held-out, field 2 = champions), `exportM7.sh run ckpt` (ONNX export needs `onnx`+`onnxscript`, installed with `uv pip install --target logs/pyextra`; ONNX-vs-torch parity was not checked, onnxruntime python is not installed).
+- Scripted human-like chaser (coordinator request, `escape.rs::Chaser`) as a league opponent: `VisionOpts.chaser_p/chaser_min/chaser_max`, `ogar_py.VecEnv(chaser_p=..)`, `train_ppo5.py --chaser-p`. In that fraction of worlds a player driven by the Chaser hunts learner 0 (mass tracks 1.5-3 x the learner, +500 per 125 ticks, floor 100, cap 20000, respawns when eaten). Smoke-tested only (random learners die 119 vs 85 times).
+
+### Training run `m7a`
+`runs/vision/m7a`, init and anchor p6, 40 worlds x 5 learners, 4 env threads, 898 iterations in 3.0 h (~9-12 s each while evals ran), lr 4e-5 cosine, rollout 48. Hunter overrode 3-6% of the learners' decisions. Learner leader share inside its own league rose 0.06 (it 70) -> 0.15-0.18 (it 480-890),
+about equal to the frozen copies (0.14-0.21), deaths/h 6-20. Log `logs/vision/m7a.jsonl`.
+
+### Field 1, held-out (M6 lineup, `--engine inproc`, 8 worlds x 240 min)
+
+| spec | 3000 | 11000 | 21000 | 31000 | 41000 | mean | wins vs p6_hunt |
+|---|---|---|---|---|---|---|---|
+| p6 + hunter (`vision_p6_hunt`, M6) | 57 | 62 | 66 | 64 | 57 | 61.2 | - |
+| m7a ck 300 | 57 | - | - | - | - | - | - |
+| m7a ck 620 | 59 | - | - | - | - | - | - |
+| **m7a final** | **64** | **68** | **69** | 58 | **63** | **64.4** | 4 of 5 (mean +3.2) |
+| m7b final (m7a + 1.5 h with chasers in 30% of worlds) | 53 | - | - | - | - | - | 0 of 1 |
+
+The p6_hunt numbers are M6's (not re-run); m7a is evaluated with the same binary family, 3000 matches M6's behaviour for p6 exactly.
+
+### Field 2, champions (candidate x2, p6_hunt x2 as opponents, planhv x2, c34h x2, plan x1 + 8 server bots; 8 worlds x 240 min)
+Leader share of the candidate family ("vis"), baseline = `vision_p6_hunt` in the same slot:
+
+| spec | 3000 | 11000 | opponent p6_hunt family (3000 / 11000) |
+|---|---|---|---|
+| p6_hunt as candidate | 40 | 40 | 42 / 39 |
+| m7a ck 620 | 41 | - | 36 / - |
+| m7a final | 40 | 44 | 36 / 32 |
+
+planhv 10-12, c34h 5-9, plan 2-5 in all runs. The new net takes mass from its p6_hunt rivals (their share 42 -> 36 and 39 -> 32) but its own share moves 0 and +4: two sets, intervals about +-5, so this is not established.
+
+### What I did not run / caveats
+- Field 2: 2 seed sets only (3000, 11000), no m7b. Field 1: m7b only on 3000; the chaser league (`m7b`, 1.5 h) lost 11 points there, but it is one set and no flee drill (`ogar escape`) was run on m7a or m7b, so whether the chaser teaches fleeing is untested.
+- No ablations: hunter-in-loop vs outside, the stronger league, the reward and the anchor were changed together; I cannot attribute the +3.2. No control run `--no-hunter` (flag exists). A single training seed.
+- Training field vs held-out: planhv / c34h are rule bots of the plan / c3_4 families that are also in the held-out field as `plan` (different genes); disjoint specs but similar behaviour. bc3 is a frozen member of the training pool, as in M4.
+- The ONNX export was not parity-checked against torch (no onnxruntime python); the eval results come from the exported nets, so they include any export error.
+- The evals ran with other agents at ~90% CPU; results are deterministic, only wall time (1-1.5 h per set) is affected.
+- Next step for the chaser idea: evaluate m7b with `ogar escape` and on the other held-out sets before drawing conclusions, try a smaller `--chaser-p` (0.1) from the start of training rather than as a continuation.
+
+### Files
+`rust/ogar/src/vision.rs`, `rust/ogar_py/src/lib.rs`, `rl/vision/train_ppo5.py`, `trainM7.sh`, `trainM7b.sh`, `endlessM7.sh`, `exportM7.sh`, `bot/vision_m7a_final.json`, `bot/vision_m7a_ck_*.json`, `bot/vision_m7b_final.json`.
+Models (gitignored): `runs/vision/export/vision_m7a_final.onnx`, checkpoints `runs/vision/m7a`, `m7b`; evals `runs/vision/evals/M7_*`, logs `logs/m7/`.
