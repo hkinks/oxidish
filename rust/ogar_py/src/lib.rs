@@ -31,7 +31,8 @@ impl VecEnv {
     #[new]
     #[pyo3(signature = (n_worlds, learners_per_world, opponents=None, teacher="bot/plan_c34.json".to_string(), px=256, sync=2,
                         bots=8, food_mult=2.0, map=7000.0, seed=1, threads=1, warmup=0, label=true, pool=None, pool_pick=0,
-                        giant_p=0.0, giant_min=3000.0, giant_max=10000.0, hunter=None))]
+                        giant_p=0.0, giant_min=3000.0, giant_max=10000.0, hunter=None,
+                        chaser_p=0.0, chaser_min=1.5, chaser_max=3.0))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         n_worlds: usize,
@@ -53,6 +54,9 @@ impl VecEnv {
         giant_min: f64,
         giant_max: f64,
         hunter: Option<String>,
+        chaser_p: f64,
+        chaser_min: f64,
+        chaser_max: f64,
     ) -> PyResult<Self> {
         if n_worlds == 0 || learners_per_world == 0 || px < 8 || px % 2 != 0 || sync == 0 {
             return Err(PyValueError::new_err("need n_worlds, learners_per_world >= 1, even px >= 8, sync >= 1"));
@@ -79,6 +83,9 @@ impl VecEnv {
         o.giant_p = giant_p;
         o.giant_min = giant_min;
         o.giant_max = giant_max;
+        o.chaser_p = chaser_p;
+        o.chaser_min = chaser_min;
+        o.chaser_max = chaser_max;
         // hunter = genome file of the M7 hunter reflex (e.g. bot/drill/hv_commit_only.json); learners opt in via set_hunter
         if let Some(path) = hunter {
             o.hunter = Some(serde_json::json!({"reflex_hunter": true, "reflex_hunter_genes": path}));

@@ -49,6 +49,12 @@ pub struct VisionOpts {
     /// M7: reflex spec of the hunter (`{"reflex_hunter":true,"reflex_hunter_genes":..}`); learners flagged in
     /// `VecEnv::hunter_mask` get its commit-phase override instead of their action (flag in `hunter_flag`)
     pub hunter: Option<Value>,
+    /// M7: probability that a world has a scripted human-like chaser (escape.rs `Chaser`: lead pursuit, herding to the wall,
+    /// split-kill at the real reach) that hunts learner 0 of the world; its mass follows `ratio x` the learner's mass,
+    /// ratio drawn per world in [chaser_min, chaser_max], fed +500 per 125 ticks like the giant (floor 100, cap 20000)
+    pub chaser_p: f64,
+    pub chaser_min: f64,
+    pub chaser_max: f64,
 }
 
 /// splitmix64 step, for per-world league draws (deterministic in the world seed)
@@ -82,6 +88,9 @@ impl VisionOpts {
             giant_min: 3000.0,
             giant_max: 10000.0,
             hunter: None,
+            chaser_p: 0.0,
+            chaser_min: 1.5,
+            chaser_max: 3.0,
         }
     }
 }
@@ -222,6 +231,8 @@ struct WorldEnv {
     timing: Timing,
     /// (opponent index, target mass): the giant is fed back up to the target when it is eaten down
     giant: Option<(usize, f64)>,
+    /// M7: (player index, chaser brain, chaser mass / learner-0 mass)
+    chaser: Option<(usize, crate::escape::Chaser, f64)>,
 }
 
 /// Output buffers of one world (slices into the env's arrays).
@@ -346,7 +357,15 @@ impl WorldEnv {
                 ovr: None,
             });
         }
-        let mut we = WorldEnv { w, opps, learners, scratch: Scratch::default(), timing: Timing::default(), giant };
+        let chaser = if o.chaser_p > 0.0 && u(mix(&mut rs)) < o.chaser_p {
+            let ratio = o.chaser_min + (o.chaser_max - o.chaser_min) * u(mix(&mut rs));
+            let cpi = w.add_player(PKind::Agent);
+            w.join_game(cpi, "chaser", None);
+            Some((cpi, crate::escape::Chaser::new(cpi), ratio))
+        } else {
+            None
+        };
+        let mut we = WorldEnv { w, opps, learners, scratch: Scratch::default(), timing: Timing::default(), giant, chaser };
         for o2 in we.opps.iter_mut() {
             o2.step(&mut we.w); // spawn
         }
@@ -355,6 +374,33 @@ impl WorldEnv {
             we.advance(o.sync);
         }
         we
+    }
+
+    /// M7: respawn / feed the chaser towards ratio x the hunted learner's mass and let it decide (every `sync` ticks).
+    fn drive_chaser(&mut self) {
+        let Some((cpi, ch, ratio)) = self.chaser.as_mut() else { return };
+        let Some(us) = self.learners.first().map(|l| l.pi) else { return };
+        let cpi = *cpi;
+        let w = &mut self.w;
+        if w.players[cpi].cells.is_empty() {
+            w.join_game(cpi, "chaser", None);
+            w.refresh_view(cpi);
+        }
+        let (cm, um) = (w.players[cpi].total_mass(w), w.players[us].total_mass(w));
+        let target = (*ratio * um).clamp(300.0, 20000.0);
+        if cm > 0.0 && cm < 0.85 * target && w.tick % 125 < 2 {
+            if let Some(&big) = w.players[cpi].cells.iter().max_by(|&&a, &&b| w.ents[a as usize].size.partial_cmp(&w.ents[b as usize].size).unwrap()) {
+                let s = w.ents[big as usize].size;
+                let add = (target - cm).min(500.0);
+                w.set_size(big, (s * s + add * 100.0).sqrt());
+            }
+        }
+        let o = ch.decide(w, us);
+        let p = &mut w.players[cpi];
+        p.mouse_in = Some(((o.aim.0 as i32) as f64, (o.aim.1 as i32) as f64));
+        if o.split {
+            p.p_split = true;
+        }
     }
 
     /// Keep the giant opponent at its target mass (the live server's +500 mass feed, applied to the largest cell).
@@ -382,6 +428,7 @@ impl WorldEnv {
             self.w.tick();
         }
         self.feed_giant(sync);
+        self.drive_chaser();
         self.timing.tick += t.elapsed().as_nanos() as u64;
         let t = Instant::now();
         step_all(&mut self.opps, &mut self.w);

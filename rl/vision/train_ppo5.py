@@ -108,6 +108,7 @@ def main():
     p.add_argument("--bigkill", type=float, default=0.5, help="reward x (mass eaten from players >= us / our mass)")
     p.add_argument("--lostpen", type=float, default=1.0, help="penalty x (our mass eaten by other players / our mass)")
     p.add_argument("--no-hunter", action="store_true", help="control: no hunter reflex in the loop")
+    p.add_argument("--chaser-p", type=float, default=0.0, help="fraction of worlds with a scripted human-like chaser hunting learner 0 (escape.rs)")
     p.add_argument("--death", type=float, default=3.0)
     p.add_argument("--leader", type=float, default=0.05)
     p.add_argument("--vpre", type=int, default=0, help="value-pretrain iterations (policy fixed)")
@@ -151,7 +152,7 @@ def main():
 
     env = ogar_py.VecEnv(a.worlds, a.learners, opponents=[], pool=LEAGUE, pool_pick=a.pick, giant_p=a.giant_p,
                          teacher="bot/plan_c34.json", px=256, threads=a.threads, seed=a.seed, warmup=0, label=False,
-                         hunter=HUNT_GENES if hunt else None)
+                         hunter=HUNT_GENES if hunt else None, chaser_p=a.chaser_p)
     n = env.n
     L = a.learners
     env.set_teacher(False)
