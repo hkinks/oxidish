@@ -156,6 +156,42 @@ Not run: the nets with `reflex` layers, or the nets on the corner / virus / piec
    The scripted `oracle` (flee along the clearest of 16 directions) is as good as `evade` in the open and at M 7000, and the worst agent in the virus and pieces cells (it splits at the wrong time).
 6. **The lookahead planner is not involved.** `plan` is identical to c3_4 in every cell (its trigger needs a predicted loss; the chaser stays outside its horizon until the last second). It was not tuned for this scene.
 
+## The 2026-10-09 hunters session (`docs/human/2026-10-09-hunters.md`): what the `no_flee` losses are
+
+Of the mass the bots lost to the human: pieces 35% (22 scenes), no_flee 31% (17 scenes, 20990 mass), fled 27%. I looked at the 17 `no_flee` scenes of `scenes-1791576644.jsonl.gz`:
+
+* **All 17 are vision nets**: p6 6, p3 2, p6h 9 (the rule bots c34h, planhv, plan, r2g9, ramp300, champ, c3_4 are in `fled` / `pieces` only: none of their ~40 human scenes). The classifier calls a scene `no_flee` when the rule mode of the
+  last second is not `flee`; the nets record no mode (`-`), so every net loss with a visible eater is `no_flee` by construction. The number is therefore "nets that lost to the human", not "bots that decided not to flee".
+* **They do not run.** The centre distance to the human falls steadily over the last 0.8 s in 12 of 17 (about 10-15 per decision step, e.g. 486 -> 289, 259 -> 190, 562 -> 476), in 4 it holds for half a second and then falls (625, 1250, 1372, 1392), in 1 it grows at the end (1452).
+  The human is 1.4x to 300x the bot's mass (median about 2x; p6h scenes: 3080 vs 4316 at the wall; 1421 vs 5655 in a corner; 615 vs 6642). 12 of 17 happen with the bot's edge within 150 of a wall (tag `wall`).
+* **The hunter's commit phase does not explain it by itself**: p6 and p3 (no hunter) show the same picture (8 of 17), and in the drill `p6h` (hunter + guard) is identical to `p6` because no burst is on the field. In the recorded scenes I could not see the commit
+  phase (it is not in the scene steps), so whether the p6h losses were commits into the human is **not known**. What the code does say (`reflex.rs`): the hunter's commit override was ahead of every other reflex and nothing vetoed it for a near giant except `Hunter::step`'s own checks.
+* The rule-based check "would a flee fire here?" (lethal reach + 600, as `evade_trigger`) is true in the first half of the scene (about 1.5 s before the loss) in **all 17** `no_flee`, 25 of 25 `fled`, 18 of 22 `pieces` scenes.
+
+Fix built (`rust/arena_client/src/reflex.rs`, spec key `reflex_flee`, off by default): when the rule bots' flee check says Flee (genes `bot/c3_4.json` with `flee_margin` = `reflex_flee_margin`, default 1.0, and the evade trigger
+`reflex_flee_trigger`, default 600), the net's aim is replaced by the look-ahead flee (`evade.rs`; in pieces the rule bots' own flee steering) and **nothing overrides it, not even the hunter's commit**. Specs: `bot/escape/vision_p6f.json`,
+`vision_p3f.json`, `vision_p6hf.json` (= p6 / p3 / p6h + `"reflex_flee": true`). Unit test `flee_reflex_takes_the_aim_from_a_net_that_does_not_run`.
+
+Drill (M 3000 / 7000 x ratio 1.4 / 2 / 4 x gap 1200 x open / wall, 12 reps per cell, 144 per agent, CUDA `cuda_plain`):
+
+| agent | survive 30 s | survive 60 s | survival time s | paired dt vs p6 s | mass kept 60 s | in split reach s |
+|---|---|---|---|---|---|---|
+| p6 | 90% [84-94] | 27% [20-35] | 47.7+-1.9 | - | 0.25+-0.07 | 6.0+-1.1 |
+| p6 + `reflex_flee` (p6f) | 98% [94-99] | 42% [35-51] | 52.7+-1.5 | **+5.0+-1.2** | 0.39+-0.07 | 6.1+-1.1 |
+| p6h (hunter + guard) | = p6 (no burst on the field) | | | | | |
+| p6h + `reflex_flee` | = p6f | | | | | |
+
+The gain is at the walls and for the 2x chaser (p6: 0-25% at 60 s there, p6f: 25-58%); in the open at M 3000 x 1.4 and in `our7000/x4/wall` (0% -> 0%) there is none.
+This is the same pattern as the rule bots (the nets had no flee at all; the look-ahead flee is as good as the rule bots' best on this scene).
+
+Endless, vision candidate p6 (held-out field of `endlessH.sh`: plan x2, plan2, bc3 x2, apos, hunter_virus), `--engine inproc`, 8 worlds x 240 min:
+
+' + vp6f + '
+
+What the evasion would fix of the human losses, as far as I can say: the `no_flee` losses (31% of the mass in this session, 20990) are nets with no flee, a gap `reflex_flee` closes in the drill (+5 s, 90% -> 98% at 30 s); whether it keeps them alive against the *human* I cannot show,
+the replay of a recorded scene needs the Python policy, not the Rust reflex. `pieces` (35%): no flee-in-pieces rule helped in the drill (four variants), so the evasion fixes none of it; the guard (`reflex_guard`, M5) is the remaining tool. `fled` (27%): the `evade` search
+is as good as the best rule bots in the drill and not better in endless: not a fix.
+
 ## The `evade` genes (`rust/arena_client/src/evade.rs`, all off by default)
 
 When the rule bot decides to flee and `evade = 1`, the aim is the first move of the best path of a search tree: 4 moves (1 + 1 + 2 + 3 s) over 8 headings (4096 paths, 7 s), cell speed `88 * size^-0.439`, walls clamp the cell (a
@@ -223,7 +259,7 @@ that lowers the big-bot losses in endless; the drill gain (M 7000: 46% -> 62% at
 * The search tree, its weights (cap 800, centrality 0.5, headings 8) and the chaser model were tuned on the drill itself (in-sample); the sweep above is the only tuning. `evade_wall` has a cliff between 1 and 2.
 * The optional last-resort split / eject was not implemented as a new gene: the existing `escape_split` was measured instead (no effect; it splits only in the 4x cells).
 * Merge-direction flee in pieces: three variants measured, none helped; the pieces scenario is only 2 / 4 pieces thrown sideways at the start, not pieces that come from a split near a chaser.
-* Nets: only the 18-cell gap-1200 grid, 20 reps, open + wall, no corner / virus / pieces; no reflex variants.
-* The planner (`plan_c34`) was not tuned for or against these scenes; the drill does not exercise it.
+* Nets: only the gap-1200 grids (18 cells x 20 reps for p6/p3; 12 cells x 12 reps for the `reflex_flee` variants), open + wall, no corner / virus / pieces. The vision endless gate was run on one seed set (3000) for p6 and two `reflex_flee` variants.
+* The `plan_c34` endless lineup was not run (see above). The planner (`plan_c34`) was not tuned for or against these scenes; the drill does not exercise it.
 * `touched wall` is ~90-100% for everyone within 60 s (it is a map of 7000 with cells of 300-1500); `outgrew` is rare; the survivors' method labels are dominated by `wall_slide` because the first applicable label wins.
 * Mass kept above 1 (food) is included in the means.
