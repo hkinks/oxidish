@@ -36,6 +36,8 @@ in the same slot. Among near-equal top bots every family sits near 40%.
 | `bot/plan_c34.json` (lookahead planner) | 46 | 35 | 38 | 38 | 44 | 40.2 |
 | **`bot/drill/plan_hv_commit_only.json`** (planner + hunter) | 49 | 46 | 49 | 47 | 57 | **49.6** |
 
+**Live 9600, 2026-10-10 (11 h, 50 players, [report](human/2026-10-10-m7.md))**: #1 share over the whole session m7 30%, p6h 25%, planhv 11%, p6 10%, plan 8%, human 7%; the user (no boost this time) was #1 for 63% of their 77 min alive. m7a is the best bot overall.
+
 **Against the human** (live 9600, recorded): the user was #1 for 66-70% of the session against the hunter bots
 (partly with the +500 boost). Bots lost mass to the human mostly while in pieces (35%), by not fleeing at all (31%,
 all vision nets) and after fleeing into walls (27%) ([human/2026-10-09-hunters.md](human/2026-10-09-hunters.md)).
