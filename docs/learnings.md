@@ -46,6 +46,7 @@ be #1 on the leaderboard ~80% of the time in endless worlds on the Rust server (
   survive its aftermath.
 - **PPO that executes splits collapses** (deaths 30-50/h, leader ~1%) every time; random splits are too costly to
   explore. Splitting needs a safe teacher or curriculum (drills), not exploration from scratch.
+- **Hunter in the RL loop (M7)**: PPO with the hunter overriding aim during Commit (loss masked there), a league with planhv/c34h and a goal-aligned reward: p6_hunt 61.2 -> m7a 64.4 held-out (4/5 sets). In a "champions" field of the best bots everything sits near 40%; 80% there means beating near-copies of itself.
 - **Engines differ for vision runs**: `--engine inproc` vs `serve` diverge chaotically (p6 58% vs ~45%); compare
   candidates only within one engine.
 
