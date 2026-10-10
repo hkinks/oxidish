@@ -21,8 +21,8 @@ against: plan ×2, plan2, bc3 ×2, apos, hunter_virus + 8 server bots):
 | **`bot/vision_m7a_final.json`** | PPO with the hunter in the loop, stronger league (M7) | 64 | 68 | 69 | 58 | 63 | **64.4** |
 
 \* bc3 numbers are from the serve engine (M4); the engines diverge for vision runs, so compare rows only within inproc.
-M8 (8-10 h continuation of m7a with a 10% human-like chaser) was stopped during evaluation: checkpoints scored
-57-66 on sets 3000/11000, none clearly above m7a (see the M8 section of [vision-bot.md](vision-bot.md)).
+M8 (9 h continuation of m7a, 10% human-like chaser, m7a as a frozen league member) plateaued after ~1 h: checkpoints scored
+57-67 on sets 3000/11000 vs m7a 64/68, no gain; no checkpoint promoted (see the M8 section of [vision-bot.md](vision-bot.md)).
 
 **Champions field** (candidate ×2 vs p6_hunt ×2, planhv ×2, c34h ×2, plan + 8 server bots): m7a 40/44 vs p6_hunt 40/40
 in the same slot. Among near-equal top bots every family sits near 40%.
