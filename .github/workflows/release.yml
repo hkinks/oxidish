@@ -1,0 +1,85 @@
+name: release
+
+# Push a tag like v0.1.0 to build Windows and Linux bundles and attach them to a GitHub release.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  ORT_VERSION: 1.24.4
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: linux-x64
+            exe: ""
+          - os: windows-latest
+            target: win-x64
+            exe: .exe
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            rust/ogar
+            rust/game_client
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libx11-dev libxi-dev libgl1-mesa-dev libasound2-dev
+      - name: Build
+        run: |
+          cargo build --release --features vision-net --manifest-path rust/ogar/Cargo.toml
+          cargo build --release --manifest-path rust/game_client/Cargo.toml
+      - name: Package
+        run: |
+          name=oxidish-${GITHUB_REF_NAME}-${{ matrix.target }}
+          mkdir -p $name/runs/vision/export
+          cp rust/ogar/target/release/ogar${{ matrix.exe }} rust/game_client/target/release/game_client${{ matrix.exe }} $name/
+          cp -r bot $name/
+          cp runs/*.json $name/runs/ 2>/dev/null || true
+          mkdir -p $name/runs/r2 && cp runs/r2/champion_009.json $name/runs/r2/
+          cp runs/vision/export/*.onnx runs/vision/export/*.json $name/runs/vision/export/
+          cp README.md LICENSE $name/
+          cp rust/ogar/LICENSE $name/LICENSE-ogar && cp rust/ogar/NOTICE $name/NOTICE-ogar
+          cp rust/game_client/assets/fonts/*.txt $name/ 2>/dev/null || true
+          if [ "$RUNNER_OS" = Windows ]; then
+            curl -sfLO https://github.com/microsoft/onnxruntime/releases/download/v$ORT_VERSION/onnxruntime-win-x64-$ORT_VERSION.zip
+            unzip -q onnxruntime-win-x64-$ORT_VERSION.zip
+            cp onnxruntime-win-x64-$ORT_VERSION/lib/onnxruntime.dll $name/
+            cp onnxruntime-win-x64-$ORT_VERSION/LICENSE $name/LICENSE-onnxruntime
+            7z a -tzip $name.zip $name > /dev/null
+          else
+            curl -sfL https://github.com/microsoft/onnxruntime/releases/download/v$ORT_VERSION/onnxruntime-linux-x64-$ORT_VERSION.tgz | tar xz
+            cp -L onnxruntime-linux-x64-$ORT_VERSION/lib/libonnxruntime.so $name/
+            cp onnxruntime-linux-x64-$ORT_VERSION/LICENSE $name/LICENSE-onnxruntime
+            tar czf $name.tar.gz $name
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: oxidish-*.*z*
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" oxidish-* -R "$GITHUB_REPOSITORY" --title "oxidish $GITHUB_REF_NAME" --generate-notes

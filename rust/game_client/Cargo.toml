@@ -2,6 +2,7 @@
 name = "game_client"
 version = "0.1.0"
 edition = "2021"
+license = "WTFPL"
 
 [dependencies]
 macroquad = { version = "0.4", default-features = false }

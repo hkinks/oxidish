@@ -1,0 +1,9 @@
+ogar: a Rust port of the MultiOgar agar.io server (FFA mode).
+
+Ported from MultiOgar (https://github.com/agarian-2/MultiOgar, Barbosik and contributors),
+which is based on Ogar (https://github.com/OgarProject/Ogar), Copyright 2015 Devin Ryan.
+Both are licensed under the Apache License, Version 2.0; so is this port (see LICENSE).
+
+Changes: rewritten in Rust; FFA only (no teams, experimental mode, minions, chat, user roles);
+headless evaluation matches, in-process bot agents, lockstep training protocol, drills,
+a vision environment for neural-net bots, and a control port were added.

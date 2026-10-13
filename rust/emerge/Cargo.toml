@@ -2,6 +2,7 @@
 name = "emerge"
 version = "0.1.0"
 edition = "2021"
+license = "WTFPL"
 description = "EMERGE: an agar.io that grows an economy (Substrate x EVE experiment)"
 
 [dependencies]
