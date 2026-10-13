@@ -73,7 +73,7 @@ fn parse_args() -> Args {
 
 fn window_conf() -> Conf {
     Conf {
-        window_title: "agario-bot native client".to_owned(),
+        window_title: "oxidish".to_owned(),
         window_width: 1280,
         window_height: 720,
         window_resizable: true,
@@ -616,7 +616,7 @@ impl Game {
             f.outlined("You died", w / 2.0, h / 2.0 - 150.0, 56.0, Color::new(1.0, 0.4, 0.4, 1.0), 1.0);
             f.outlined(&format!("Score: {}", self.last_score), w / 2.0, h / 2.0 - 100.0, 32.0, white, 1.0);
         } else {
-            f.outlined("agario-bot", w / 2.0, h / 2.0 - 150.0, 56.0, white, 1.0);
+            f.outlined("oxidish", w / 2.0, h / 2.0 - 150.0, 56.0, white, 1.0);
         }
         // nickname box
         let (bw, bh) = (340.0, 44.0);

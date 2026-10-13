@@ -50,4 +50,4 @@ Also standalone tools (module docstrings have the usage): `rust_runner.py` / `ru
 - `arena_client/` (lib + bin): the rule-bot policy code. `policy.rs` (route/field bot, modes), `steer.rs`, `farm.rs`, `plan.rs` (lookahead planner), `order.rs` (commander orders), `params.rs` (genes), `lineup.rs` (`name=genome.json:N` parsing, shared with `ogar`), `client.rs` (lockstep websocket client).
 - `ogar/`: the Rust MultiOgar server (`world.rs`, `server.rs`) with in-process agents (`agent.rs`), headless `match`, `endless` worlds, the commander layer, human-play recording, and the vision bot (`vision.rs`, `visionbot.rs`, `nn.rs`); see ogar.md and vision-bot.md.
 - `ogar_py/`: Python bindings of the vision `VecEnv` (training environment for `rl/vision/`).
-- `game_client/`: the playable native client (see showcase.md). `emerge/`: the EMERGE economy game (emerge.md).
+- `game_client/`: the playable native client (see showcase.md).

@@ -11,6 +11,8 @@ Bots that learn to play agar.io, and a Rust port of the MultiOgar server to trai
   bots**: a CNN that sees grayscale frames rendered by the server and was trained with league PPO, plus a rule-based
   "hunter" reflex that eats freshly popped giants.
 - **`game_client`**: a native client (Rust, macroquad) for playing against them.
+
+  ![Playing against the bots: a human split into four next to planhv-2, ranked #5 behind the m7 and p6h vision bots](docs/img/play.png)
 - Drills (eat a giant that just popped on a virus, escape a hunting human), a GPU simulator, and the training code.
 
 ## Results
@@ -77,7 +79,6 @@ rust/ogar          server port, headless matches, drills, frame renderer, vision
 rust/arena_client  bot policies: rules, planner, hunter, reflexes
 rust/game_client   native client
 rust/ogar_py       Python bindings: vectorised envs for training
-rust/emerge        side experiment: an agar.io that grows an economy
 bot/               bot specs (genes, planner settings, vision model + reflexes)
 rl/                PPO / imitation training, ONNX export
 arena/             Node MultiOgar harness, tournaments, evolution, reports

@@ -20,7 +20,7 @@ bot/     rule-based bot: game state, steering, food routing, tactics, params (ge
 arena/   real-server harness: MultiOgar wrapper (server/arena.js), clients, tournaments, evolution, QD, showcase
 rl/      networks and trainers: real-server PPO (ppo.py), sim PPO (ppo_sim.py), evolution (evo.py)
 sim/     GPU simulator, encoder, tournaments, viewer
-rust/    Rust crates: arena_client (bot policies), ogar (server, engine, vision bot), ogar_py, game_client, emerge
+rust/    Rust crates: arena_client (bot policies), ogar (server, engine, vision bot), ogar_py, game_client
 runs/    checkpoints and genomes (not in git)
 logs/    logs and TensorBoard (not in git)
 vendor/  MultiOgar server and web client (not in git; see plan.md and client-hook.patch)
