@@ -69,8 +69,9 @@ OGAR_VISION_THREADS=4 rust/ogar/target/release/ogar serve --port 9600 --bots 12 
 - `scripts/client.sh [args]` builds and starts the client in one step; on NixOS it also supplies the X11/GL
   libraries macroquad loads at run time.
 
-Training (Python, `uv sync`; the `ogar_py` module is built with `maturin develop --release` in `rust/ogar_py`):
-`scripts/train.sh`, `scripts/eval.sh`, `scripts/export.sh`, and [docs/vision-bot.md](docs/vision-bot.md).
+**Writing, testing and training your own bot:** [docs/training.md](docs/training.md) covers the three ways a bot can
+connect (in-process spec, external websocket bot in any language, Python RL environment), evaluation, and training
+far faster than real time.
 
 ## Layout
 

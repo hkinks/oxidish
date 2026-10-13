@@ -245,9 +245,9 @@ class StepConn(AgentClient):
         else:
             await self.ws.send(struct.pack("<BiiI", 0x10, int(x), int(y), 0))
             if split:
-                await self.ws.send(b"")
+                await self.ws.send(b"\x11")
             if eject:
-                await self.ws.send(b"")
+                await self.ws.send(b"\x15")
         await self.ws.send(struct.pack("<BI", OP_STEP, self.tick))
 
     async def set_spawn_size(self, size: int) -> None:
