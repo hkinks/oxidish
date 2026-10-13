@@ -23,7 +23,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from .match import free_port, limit_cpus, parse_lineup
+from .util import free_port, limit_cpus, parse_lineup
 from .pooled import wilson
 
 ROOT = Path(__file__).resolve().parent.parent

@@ -1,6 +1,6 @@
 """Read `ogar serve --record DIR` recordings (events / scenes / humans, gzip JSONL) and classify loss scenes.
 
-Shared by arena.human_report and arena.scene_replay. Truncated gzip files (a killed server) are read as far
+Used by arena.human_report. Truncated gzip files (a killed server) are read as far
 as they go.
 """
 
@@ -11,7 +11,8 @@ import re
 import zlib
 from pathlib import Path
 
-from bot.steer import EAT_RATIO
+EAT_RATIO = 1.3          # mass ratio needed to eat a cell (MultiOgar game rule)
+
 
 KINDS = {0: "player", 1: "food", 2: "virus", 3: "ejected"}
 
@@ -108,7 +109,7 @@ def near_players(step, limit=6, max_gap=900):
 
 
 def classify_scene(sc) -> dict:
-    """Cause + tags of a loss scene, like arena/losses.py: popped / split_kill / pieces / unseen / fled / no_flee.
+    """Cause + tags of a loss scene: popped / split_kill / pieces / unseen / fled / no_flee.
     Tags: wall (main cell edge < 150 from a wall), corner, human (a human ate), solo/multi eater."""
     steps = sc["steps"]
     if not steps:

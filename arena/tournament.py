@@ -2,12 +2,11 @@
 
     uv run python -m arena.tournament --agents route:4 field:4 --matches 24 --workers 6
 
-Each match gets its own arena server (free port) and seed i+1. The same seeds
+Each match runs in the Rust engine (`ogar match`, rule bots only) with seed i+1. The same seeds
 give the same results, so variants can be compared on identical matches.
 """
 
 import argparse
-import asyncio
 import json
 import math
 import statistics
@@ -15,51 +14,26 @@ import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
-from .match import free_port, limit_cpus, parse_lineup, run_match, start_server
+from . import rust_runner
+from .util import limit_cpus
 
 METRICS = ("log_mass", "avg_mass", "peak_mass", "deaths", "kills")
 VIRUS_METRICS = ("virus_shots", "virus_pops")   # viruses fed to fire / players popped by them
 
 
 def _play(index: int, specs: list[str], ticks: int, bots: int, map_size: int,
-          sync: int, seed_base: int, food_mult: float = 1.0, rust: bool = False,
-          engine: str = "node") -> list[dict]:
-    seed = seed_base + index
-    if engine == "ogar":   # the Rust re-implementation of the server (rust/ogar): whole match in one process
-        from . import rust_runner
-        if not rust_runner.supported(specs):
-            raise SystemExit("--engine ogar: only rule bots (route, field, name=genome.json) are supported")
-        return rust_runner.play_ogar(specs, ticks, sync, seed, bots, map_size, food_mult)
-    port = free_port()
-    if rust:   # rule-bot lineups only: the Rust client plays the whole lineup in one process
-        from . import rust_runner
-        if not rust_runner.supported(specs):
-            raise SystemExit("--rust: only rule bots (route, field, name=genome.json) are supported")
-        server = start_server(port, bots, seed, len(parse_lineup(specs)), sync, map_size, food_mult=food_mult)
-        try:
-            return rust_runner.play_rust(specs, ticks, port, sync, seed)
-        finally:
-            server.terminate()
-    lineup = parse_lineup(specs)
-    server = start_server(port, bots, seed, len(lineup), sync, map_size, food_mult=food_mult)
-    try:
-        stats = asyncio.run(run_match(lineup, ticks, port, sync))
-    finally:
-        server.terminate()
-    return [{"policy": s.name.rsplit("-", 1)[0], "seed": seed, "avg_mass": s.avg_mass,
-             "log_mass": math.log(max(s.avg_mass, 1.0)),
-             "peak_mass": s.peak_mass, "deaths": s.deaths, "kills": s.kills, "losses": s.losses,
-             "counters": s.counters, "popped": s.popped}
-            for s in stats]
+          sync: int, seed_base: int, food_mult: float = 1.0) -> list[dict]:
+    if not rust_runner.supported(specs):
+        raise SystemExit("only rule bots (route, field, name=genome.json) are supported")
+    return rust_runner.play_ogar(specs, ticks, sync, seed_base + index, bots, map_size, food_mult)
 
 
 def play_many(specs: list[str], matches: int, workers: int = 8, ticks: int = 6000, bots: int = 8,
-              map_size: int = 7000, sync: int = 2, seed_base: int = 1, food_mult: float = 2.0,
-              engine: str = "node") -> list[dict]:
+              map_size: int = 7000, sync: int = 2, seed_base: int = 1, food_mult: float = 2.0) -> list[dict]:
     """`matches` seeded matches of the lineup `specs` in parallel; one row per agent per match."""
     rows: list[dict] = []
     with ProcessPoolExecutor(workers) as pool:
-        futures = [pool.submit(_play, i, specs, ticks, bots, map_size, sync, seed_base, food_mult, False, engine)
+        futures = [pool.submit(_play, i, specs, ticks, bots, map_size, sync, seed_base, food_mult)
                    for i in range(matches)]
         for fut in as_completed(futures):
             try:
@@ -77,7 +51,7 @@ def print_losses(rows: list[dict]) -> None:
     print("\nmass lost to (share of each policy's eaten mass); split-kill = killer had 2+ cells,"
           " while split = we had 2+ cells")
     for policy in sorted(names):
-        ls = [l for r in rows if r["policy"] == policy for l in r["losses"]]
+        ls = [l for r in rows if r["policy"] == policy for l in r.get("losses", [])]
         total = sum(l["mass"] for l in ls)
         if not total:
             continue
@@ -110,9 +84,6 @@ def main() -> None:
     p.add_argument("--food-mult", type=float, default=1.0, help="2 = the showcase's food")
     p.add_argument("--seed-base", type=int, default=1, help="use fresh seeds for unbiased checks")
     p.add_argument("--out", help="also write every agent's per-match stats (incl. losses) to this JSON")
-    p.add_argument("--rust", action="store_true", help="play rule-bot lineups with the Rust client (rust/arena_client)")
-    p.add_argument("--engine", choices=("node", "ogar"), default="node",
-                   help="ogar = the Rust engine (rust/ogar), rule bots only; ~10x faster than node + clients")
     p.add_argument("--cpus", type=int, default=11, help="pin to this many CPUs (0 = all): stay under 90% CPU")
     args = p.parse_args()
     limit_cpus(args.cpus)
@@ -121,7 +92,7 @@ def main() -> None:
     rows: list[dict] = []
     with ProcessPoolExecutor(args.workers) as pool:
         futures = [pool.submit(_play, i, args.agents, args.ticks, args.bots,
-                               args.map, args.sync, args.seed_base, args.food_mult, args.rust, args.engine) for i in range(args.matches)]
+                               args.map, args.sync, args.seed_base, args.food_mult) for i in range(args.matches)]
         for n, fut in enumerate(as_completed(futures), 1):
             try:
                 rows += fut.result()
@@ -135,7 +106,7 @@ def main() -> None:
     per_match: dict[str, dict[int, list[dict]]] = {}
     for r in rows:
         per_match.setdefault(r["policy"], {}).setdefault(r["seed"], []).append(r)
-    metrics = METRICS + (VIRUS_METRICS if any("virus_shots" in r for r in rows) else ())   # ogar engine only
+    metrics = METRICS + (VIRUS_METRICS if any("virus_shots" in r for r in rows) else ())
     print(f"\n{'policy':<10}" + "".join(f"{m:>20}" for m in metrics))
     for policy, by_seed in per_match.items():
         cells = []

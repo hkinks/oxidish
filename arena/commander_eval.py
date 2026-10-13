@@ -19,7 +19,7 @@ from pathlib import Path
 
 from .commander import Commander, Control, make_backend
 from .endless import ROOT, TICKS_PER_MIN, ogar_bin
-from .match import free_port, limit_cpus
+from .util import free_port, limit_cpus
 
 MAIN = Path(os.environ.get("AGAR_MAIN_REPO", "C:/Users/hkink/Workspace/agario-bot"))
 FIELD = ["champ=runs/final_champion.json", "r2g9=runs/r2/champion_009.json", "safe=bot/champ_safe.json",

@@ -142,7 +142,7 @@ class JevBackend:
         key = os.environ.get("JEV_API_KEY")
         if not key:
             raise SystemExit("JEV_API_KEY is not set: no Jev credentials available")
-        from bot.systemone import SystemOne
+        from .systemone import SystemOne
         kw = {}
         if os.environ.get("JEV_BASE_URL"):
             kw["base_url"] = os.environ["JEV_BASE_URL"]

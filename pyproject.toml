@@ -6,11 +6,7 @@ dependencies = [
     "cma>=4.5.0",
     "httpx>=0.28.1",
     "numpy>=2.2.6",
-    "playwright>=1.63.0",
-    "python-dotenv>=1.2.4",
-    "tensorboard>=2.21.0",
     "torch>=2.11.0",
-    "websockets>=16.1.1",
 ]
 
 [[tool.uv.index]]
@@ -26,6 +22,11 @@ dev = [
     "pytest>=9.1.1",
     "maturin>=1.7",
 ]
+# ONNX export of trained vision nets (scripts/export.sh)
+export = [
+    "onnx>=1.17",
+    "onnxscript>=0.2",
+]
 
 [tool.pytest.ini_options]
-testpaths = ["bot", "sim", "arena", "rl/vision"]
+testpaths = ["arena", "rl/vision"]

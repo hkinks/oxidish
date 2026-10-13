@@ -14,7 +14,7 @@ import subprocess
 from collections import defaultdict
 
 from .endless import ogar_bin, ROOT, TICKS_PER_MIN
-from .match import free_port
+from .util import free_port
 
 FIELD = ["champ=runs/final_champion.json:2", "r2g9=runs/r2/champion_009.json:2", "safe=bot/champ_safe.json:2",
          "ramp_r2=bot/r2g9_ramp800.json:2", "ramp300=runs/r2g9_ramp300.json:2"]

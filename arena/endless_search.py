@@ -19,10 +19,10 @@ import warnings
 warnings.filterwarnings("ignore", message="Could not import matplotlib")
 import cma  # noqa: E402
 
-from bot.params import BOUNDS, Params, from_unit, to_unit
+from .params import BOUNDS, Params, from_unit, to_unit
 
 from .endless import run_world
-from .match import limit_cpus
+from .util import limit_cpus
 
 GENES = ["danger_margin", "threat_force", "flee_margin", "farm_threat", "hunt_threat", "flee_threat", "split_safety",
          "hunt_range", "min_prey_frac", "food_pull", "target_bonus", "virus_avoid", "farm_prey", "split_reach",

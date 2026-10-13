@@ -1,4 +1,4 @@
-"""arena.human_report / arena.scene_replay on a synthetic recording (no server).
+"""arena.human_report on a synthetic recording (no server).
 
     uv run pytest arena/test_human_report.py
 """
@@ -8,7 +8,6 @@ import json
 
 from .human_log import classify_scene, load
 from .human_report import build_report
-from .scene_replay import pytest_stub, replay
 
 BORDER = [-3500, 3500, -3500, 3500]
 
@@ -56,14 +55,10 @@ def test_classify_no_flee(tmp_path):
     assert classify_scene(sc)["cause"] == "no_flee"
 
 
-def test_report_and_replay(tmp_path):
+def test_report(tmp_path):
     d = make_dir(tmp_path)
     md = build_report(str(d), None, 3)
     assert "#1 for 100%" in md and "safe" in md and "scene 1-0" in md
-    data = load(d)
-    assert len(replay(data["scenes"][0])) > 3
-    stub = pytest_stub(data["scenes"][0], 0.5)
-    compile(stub, "stub", "exec")
 
 
 def test_truncated_gzip_is_readable(tmp_path):

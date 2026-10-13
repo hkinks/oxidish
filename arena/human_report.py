@@ -5,9 +5,8 @@
 
 Sections: the human's leader share (#1 time) and mass stats, deaths; mass taken from each bot family; loss
 scenes (an in-process bot lost >= 30% of its mass or died; humans' kills, or all kills if the server ran with
---record-all) classified like arena/losses.py (popped / split_kill / pieces / unseen / fled / no_flee) with
-geometry tags (wall, corner); the worst scenes with a text rendering. Replay a scene with
-`uv run python -m arena.scene_replay logs/human <scene id>`.
+--record-all) classified by cause (popped / split_kill / pieces / unseen / fled / no_flee) with
+geometry tags (wall, corner); the worst scenes with a text rendering.
 """
 
 import argparse
@@ -151,7 +150,6 @@ def build_report(rec_dir: str, session: str | None, top_n: int) -> str:
         md += [f"## Worst {len(rendered)} scenes (human eaters first, then by mass lost)", ""]
         for r in rendered:
             md += ["```", r, "```", ""]
-        md += ["Replay: `uv run python -m arena.scene_replay <dir> <scene id> [--spec bot/x.json] [--pytest]`.", ""]
     return "\n".join(md)
 
 

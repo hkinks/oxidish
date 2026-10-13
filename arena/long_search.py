@@ -1,8 +1,8 @@
-"""CMA-ES over the champion's genes, scored in long real-server games against a fixed field.
+"""CMA-ES over the champion's genes, scored in long Rust-engine games (`ogar match`) against a fixed field.
 
     uv run python -m arena.long_search --run long1 --init runs/champ_safe.json [--popsize 6] [--matches 6]
 
-Long games (15 game-min, 2x food, 8 MultiOgar bots) reward survival (bot/params.py caution genes) far
+Long games (15 game-min, 2x food, 8 MultiOgar bots) reward survival (arena/params.py caution genes) far
 more than the 3-4 min matches the earlier evolutions used. Each generation every candidate plays
 `--matches` matches as 2 copies among a fixed field (champ x3, r2g9 x3: the reckless champion family);
 all candidates share the generation's seeds (common random numbers). Fitness = mean over its matches
@@ -25,9 +25,9 @@ import warnings
 warnings.filterwarnings("ignore", message="Could not import matplotlib")
 import cma  # noqa: E402
 
-from bot.params import BOUNDS, Params, from_unit, to_unit
+from .params import BOUNDS, Params, from_unit, to_unit
 
-from .match import limit_cpus
+from .util import limit_cpus
 from .tournament import _play
 
 GENES = ["danger_margin", "threat_force", "flee_margin", "farm_threat", "hunt_threat", "flee_threat",
@@ -48,8 +48,6 @@ def main() -> None:
     p.add_argument("--ticks", type=int, default=22500)
     p.add_argument("--field", nargs="+", default=FIELD, help="the fixed opponents (arena lineup specs)")
     p.add_argument("--genes", nargs="+", default=GENES, help="the searched genes (others stay as in --init)")
-    p.add_argument("--rust", action="store_true", help="play the matches with the Rust client (rule bots only)")
-    p.add_argument("--engine", choices=("node", "ogar"), default="node", help="ogar = the Rust engine (rule bots only)")
     p.add_argument("--cpus", type=int, default=11, help="pin to this many CPUs (0 = all): stay under 90% CPU")
     args = p.parse_args()
     limit_cpus(args.cpus)
@@ -87,7 +85,7 @@ def main() -> None:
             jobs += [(c, s, lineup) for s in seeds]
         scores: dict[int, list[float]] = {c: [] for c in range(len(specs))}
         with ProcessPoolExecutor(args.workers) as pool:
-            futs = {pool.submit(_play, s - 1, lineup, args.ticks, 8, 7000, 2, 1, 2.0, args.rust, args.engine): c for c, s, lineup in jobs}
+            futs = {pool.submit(_play, s - 1, lineup, args.ticks, 8, 7000, 2, 1, 2.0): c for c, s, lineup in jobs}
             for fut, c in futs.items():
                 try:
                     rows = fut.result()
