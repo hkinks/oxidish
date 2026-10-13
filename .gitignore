@@ -11,6 +11,15 @@ runs/*
 !runs/r2/
 runs/r2/*
 !runs/r2/champion_009.json
+# the two vision models the best bots use (6 MB each)
+!runs/vision/
+runs/vision/*
+!runs/vision/export/
+runs/vision/export/*
+!runs/vision/export/vision_m7a_final.onnx
+!runs/vision/export/vision_m7a_final.json
+!runs/vision/export/vision_p6.onnx
+!runs/vision/export/vision_p6.json
 target/
 target-*/
 

@@ -1,0 +1,9 @@
+{
+ "cfg": {
+  "width": 1.0
+ },
+ "split_thr": 0.5,
+ "px": 256,
+ "heat": 64,
+ "metrics": null
+}
