@@ -132,6 +132,11 @@ impl Camera {
 
 struct Fonts {
     font: Option<Font>,
+    /// for characters the main font lacks (fancy-Unicode bot names)
+    fallback: Option<Font>,
+    /// the same two fonts parsed by fontdue, only to ask which glyphs they have
+    cover: Option<fontdue::Font>,
+    fallback_cover: Option<fontdue::Font>,
 }
 
 /// Bundled fonts (assets/fonts, licences alongside); the first is the default.
@@ -141,25 +146,102 @@ const FONTS: [(&str, &[u8]); 4] = [
     ("inter", include_bytes!("../assets/fonts/Inter-Bold.ttf")),
     ("quicksand", include_bytes!("../assets/fonts/Quicksand-Bold.ttf")),
 ];
+const FALLBACK_FONT: &[u8] = include_bytes!("../assets/fonts/DejaVuSans-Bold.ttf");
+
+/// How to draw `c`: (font, char) pieces, 0 = main font, 1 = fallback. A character neither font has is replaced by its
+/// compatibility form when both fonts can draw that (mathematical, fullwidth and circled letters become plain ones),
+/// dropped when it is a combining mark or an invisible format character, and drawn as '?' otherwise.
+fn glyphs_for(c: char, main_has: &impl Fn(char) -> bool, fallback_has: &impl Fn(char) -> bool) -> Vec<(usize, char)> {
+    use unicode_normalization::{char::is_combining_mark, UnicodeNormalization};
+    let direct = |c: char| {
+        if c.is_whitespace() || main_has(c) {
+            Some((0, c))
+        } else if fallback_has(c) {
+            Some((1, c))
+        } else {
+            None
+        }
+    };
+    if let Some(g) = direct(c) {
+        return vec![g];
+    }
+    if is_combining_mark(c) || matches!(c, '\u{200B}'..='\u{200F}' | '\u{2060}'..='\u{2064}' | '\u{FE00}'..='\u{FE0F}' | '\u{FEFF}') {
+        return Vec::new();
+    }
+    let compat: Vec<char> = std::iter::once(c).nfkc().collect();
+    if compat != [c] {
+        if let Some(gs) = compat.iter().map(|&k| direct(k)).collect::<Option<Vec<_>>>() {
+            return gs;
+        }
+    }
+    vec![(0, '?')]
+}
+
+fn has_glyph(f: &Option<fontdue::Font>, c: char) -> bool {
+    f.as_ref().is_some_and(|f| f.lookup_glyph_index(c) != 0)
+}
+
+fn cover(bytes: &[u8]) -> Option<fontdue::Font> {
+    fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default()).ok()
+}
 
 impl Fonts {
     /// A bundled font by name, else a .ttf path, else the default; macroquad's built-in font if all fail.
     fn load(name: &str) -> Fonts {
         let bytes = FONTS.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, b)| b.to_vec()).or_else(|| std::fs::read(name).ok());
+        let fallback = load_ttf_font_from_bytes(FALLBACK_FONT).ok();
+        let fallback_cover = cover(FALLBACK_FONT);
         for b in [bytes, Some(FONTS[0].1.to_vec())].into_iter().flatten() {
             if let Ok(f) = load_ttf_font_from_bytes(&b) {
-                return Fonts { font: Some(f) };
+                return Fonts { font: Some(f), fallback, cover: cover(&b), fallback_cover };
             }
         }
-        Fonts { font: None }
+        Fonts { font: None, fallback, cover: None, fallback_cover }
+    }
+
+    /// The text split into runs drawn with one font each; None when the main font has every glyph (the usual case).
+    fn runs(&self, text: &str) -> Option<Vec<(usize, String)>> {
+        if self.cover.is_none() || text.chars().all(|c| c.is_whitespace() || has_glyph(&self.cover, c)) {
+            return None;
+        }
+        let mut runs: Vec<(usize, String)> = Vec::new();
+        let (main_has, fallback_has) = (|c| has_glyph(&self.cover, c), |c| has_glyph(&self.fallback_cover, c));
+        for (i, c) in text.chars().flat_map(|c| glyphs_for(c, &main_has, &fallback_has)) {
+            match runs.last_mut() {
+                Some((j, s)) if *j == i => s.push(c),
+                _ => runs.push((i, c.to_string())),
+            }
+        }
+        Some(runs)
+    }
+
+    fn font_of(&self, i: usize) -> Option<&Font> {
+        if i == 1 { self.fallback.as_ref() } else { self.font.as_ref() }
     }
 
     fn size(&self, text: &str, px: f32) -> TextDimensions {
-        measure_text(text, self.font.as_ref(), px as u16, 1.0)
+        let Some(runs) = self.runs(text) else { return measure_text(text, self.font.as_ref(), px as u16, 1.0) };
+        let mut d = TextDimensions { width: 0.0, height: 0.0, offset_y: 0.0 };
+        for (i, s) in &runs {
+            let r = measure_text(s, self.font_of(*i), px as u16, 1.0);
+            d.width += r.width;
+            d.height = d.height.max(r.height);
+            d.offset_y = d.offset_y.max(r.offset_y);
+        }
+        d
     }
 
     fn draw(&self, text: &str, x: f32, y: f32, px: f32, color: Color) {
-        draw_text_ex(text, x, y, TextParams { font: self.font.as_ref(), font_size: px as u16, color, ..Default::default() });
+        let Some(runs) = self.runs(text) else {
+            draw_text_ex(text, x, y, TextParams { font: self.font.as_ref(), font_size: px as u16, color, ..Default::default() });
+            return;
+        };
+        let mut x = x;
+        for (i, s) in &runs {
+            let font = self.font_of(*i);
+            draw_text_ex(s, x, y, TextParams { font, font_size: px as u16, color, ..Default::default() });
+            x += measure_text(s, font, px as u16, 1.0).width;
+        }
     }
 
     /// Centered at (cx, cy) with a dark outline.
@@ -806,5 +888,34 @@ async fn main() {
             }
         }
         next_frame().await;
+    }
+}
+
+#[cfg(test)]
+mod font_tests {
+    use super::*;
+
+    #[test]
+    fn glyph_choice() {
+        let main = |c: char| c.is_ascii();
+        let fb = |c: char| c == 'β' || c.is_ascii();
+        assert_eq!(glyphs_for('a', &main, &fb), vec![(0, 'a')]);
+        assert_eq!(glyphs_for('β', &main, &fb), vec![(1, 'β')]);
+        assert_eq!(glyphs_for('\u{1D4D0}', &main, &fb), vec![(0, 'A')]); // mathematical bold script A
+        assert_eq!(glyphs_for('Ａ', &main, &fb), vec![(0, 'A')]); // fullwidth
+        assert_eq!(glyphs_for('\u{0365}', &main, &fb), vec![]); // combining mark
+        assert_eq!(glyphs_for('漢', &main, &fb), vec![(0, '?')]);
+        assert_eq!(glyphs_for(' ', &|_| false, &|_| false), vec![(0, ' ')]);
+    }
+
+    #[test]
+    fn bundled_fonts_cover_what_bot_names_use() {
+        let main = cover(FONTS[0].1).unwrap();
+        let fb = cover(FALLBACK_FONT).unwrap();
+        assert!(main.lookup_glyph_index('A') != 0);
+        // letterlike symbols and the like appear in MultiOgar bot names; Ubuntu lacks some, DejaVu has them
+        for c in ['ℜ', 'β', '★'] {
+            assert!(main.lookup_glyph_index(c) != 0 || fb.lookup_glyph_index(c) != 0, "no glyph for {c}");
+        }
     }
 }

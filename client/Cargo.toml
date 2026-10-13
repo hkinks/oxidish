@@ -6,5 +6,7 @@ license = "WTFPL"
 
 [dependencies]
 macroquad = { version = "0.4", default-features = false }
+fontdue = "0.9"
+unicode-normalization = "0.1"
 tungstenite = "0.26"
 serde_json = "1"
