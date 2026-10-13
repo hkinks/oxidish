@@ -1,0 +1,1 @@
+{"kind":"vision","model":"bots/models/vision_m8a_ck_01640.onnx","split":false,"reflex_hunter":true,"reflex_hunter_genes":"bots/specs/best/rules.json"}

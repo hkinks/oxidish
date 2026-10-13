@@ -15,7 +15,7 @@ rl/pbt.py (one process, population)      rl/evo.py (one trainer process per memb
    v
 sim/tourney.py, sim/progress.py (evaluation)      sim/watch.py (+ watch.html, live browser viewer)
    v
-checkpoints (rl/common.save) -> rl/policy.py NNPolicy -> arena/ (showcase, autojoin) on a real MultiOgar server
+checkpoints (rl/common.save) -> rl/policy.py NNPolicy -> training/eval/ (showcase, autojoin) on a real MultiOgar server
 ```
 
 ## sim/ - the GPU simulator
@@ -38,10 +38,10 @@ checkpoints (rl/common.save) -> rl/policy.py NNPolicy -> arena/ (showcase, autoj
 - `common.py`: checkpoint IO (`save`/`load`), opponent pool, env configs. `policy.py`: `NNPolicy`, plays a checkpoint on the real server (`nohint.py`, `obs.py`, `guided.py` build its observations).
 - Real-server PPO (history, see training-plan.md): `ppo.py`, `bc.py`, `vec.py`, `env.py` (ArenaEnv), `guided.py` (residual net over the champion).
 
-## bot/ - rule-based bot
+## bots/specs/ - rule-based bot
 `params.py` (genome of the bot), `steer.py` (potential-field steering), `farm.py` (food routes), `tactics.py` (virus skills), `modes.py` (rule-based mode choice), `game.py` (state `Snapshot`/`Cell`), `main.py` + `strategist.py` + `systemone.py` + `hud.py` (browser bot with the Jev strategist).
 
-## arena/ - real MultiOgar server
+## training/eval/ - real MultiOgar server
 `server/arena.js` (server wrapper), `client.py` (lockstep client), `policies.py` (arena policies from picklable specs), `match.py` / `tournament.py` (seeded matches), `evolve.py` (CMA-ES over bot params), `qd.py` (MAP-Elites), `stuck.py`, `food.py`, `watch.py`; showcase: `showcase.py`, `join.py`, `autojoin.py`, `showcase_stats.py` (see showcase.md).
 
 Also standalone tools (module docstrings have the usage): `rust_runner.py` / `rust_tools.py` (matches and parity with the Rust client), `endless.py` + `endless_search.py` (endless worlds on `ogar serve`; CMA-ES scored by leader share), `long_search.py`, `verdict.py`, `plan_val.py`, `commander*.py`, human-play tools (`human_log.py`, `human_report.py`, `scene_replay.py`, `scripted_human.py`), `make_sparring.py`. `sim/rulebots.py` plays rule-bot policies in the GPU sim; `sim/check_entity_obs.py` checks the entity encoder against the real-server one.
@@ -49,5 +49,5 @@ Also standalone tools (module docstrings have the usage): `rust_runner.py` / `ru
 ## rust/ - native bots, server and tools
 - `arena_client/` (lib + bin): the rule-bot policy code. `policy.rs` (route/field bot, modes), `steer.rs`, `farm.rs`, `plan.rs` (lookahead planner), `order.rs` (commander orders), `params.rs` (genes), `lineup.rs` (`name=genome.json:N` parsing, shared with `ogar`), `client.rs` (lockstep websocket client).
 - `ogar/`: the Rust MultiOgar server (`world.rs`, `server.rs`) with in-process agents (`agent.rs`), headless `match`, `endless` worlds, the commander layer, human-play recording, and the vision bot (`vision.rs`, `visionbot.rs`, `nn.rs`); see ogar.md and vision-bot.md.
-- `ogar_py/`: Python bindings of the vision `VecEnv` (training environment for `rl/vision/`).
-- `game_client/`: the playable native client (see showcase.md).
+- `oxidish_env/`: Python bindings of the vision `VecEnv` (training environment for `training/rl/`).
+- `oxidish/`: the playable native client (see showcase.md).

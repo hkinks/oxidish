@@ -1,0 +1,19 @@
+[package]
+name = "ogar"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[dependencies]
+arena_client = { path = "../bots/brain" }
+serde_json = "1"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "net", "time", "sync", "io-util", "io-std"] }
+tokio-tungstenite = "0.26"
+futures-util = { version = "0.3", features = ["sink"] }
+flate2 = "1"
+ort = { version = "=2.0.0-rc.13", optional = true, default-features = false, features = ["std", "load-dynamic", "cuda"] }
+libloading = { version = "0.9", optional = true }
+
+[features]
+default = ["vision-net"]
+vision-net = ["dep:ort", "dep:libloading"]

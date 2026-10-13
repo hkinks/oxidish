@@ -23,10 +23,10 @@ uv run python -m bot.main
 
 ## How it works
 
-- **State.** `bot/game.py` reads cells (id, x, y, size, kind) plus the camera from `window.__bot` every 50 ms.
+- **State.** `bots/specs/game.py` reads cells (id, x, y, size, kind) plus the camera from `window.__bot` every 50 ms.
 - **Control.** The bot moves the **real mouse** with Playwright, so the client sends it to the server like any player's input. Split is a real Space key press. Respawning calls the client's `play(name)`, which is the same as pressing Play.
-- **Steering** (`bot/steer.py`, 20 Hz, code only). A potential field: food pulls, prey pulls (the hunt target extra strongly), threats push inside their danger radius (wider if they're heavy enough to split onto us), viruses push when we'd pop on them, and map borders push back.
-- **Jev** (`bot/strategist.py`). One `choice` picks the mode: farm / flee / hide (only offered when a virus is visible) / chase prey pN. When a split-kill is possible, one `noul` asks "is splitting safe now?". Jev is asked when the set of nearby threats or prey changes, at most once a second and at least every 5 s while players are visible, and never when the screen is empty. Each call takes 220–410 ms. Decisions are logged to `logs/decisions-*.jsonl`.
+- **Steering** (`bots/specs/steer.py`, 20 Hz, code only). A potential field: food pulls, prey pulls (the hunt target extra strongly), threats push inside their danger radius (wider if they're heavy enough to split onto us), viruses push when we'd pop on them, and map borders push back.
+- **Jev** (`bots/specs/strategist.py`). One `choice` picks the mode: farm / flee / hide (only offered when a virus is visible) / chase prey pN. When a split-kill is possible, one `noul` asks "is splitting safe now?". Jev is asked when the set of nearby threats or prey changes, at most once a second and at least every 5 s while players are visible, and never when the screen is empty. Each call takes 220–410 ms. Decisions are logged to `logs/decisions-*.jsonl`.
 
 ## Next ideas
 

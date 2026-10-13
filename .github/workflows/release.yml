@@ -31,29 +31,21 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            rust/ogar
-            rust/game_client
       - name: Linux build dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libx11-dev libxi-dev libgl1-mesa-dev libasound2-dev
       - name: Build
-        run: |
-          cargo build --release --features vision-net --manifest-path rust/ogar/Cargo.toml
-          cargo build --release --manifest-path rust/game_client/Cargo.toml
+        run: cargo build --release -p ogar -p oxidish
       - name: Package
         run: |
           name=oxidish-${GITHUB_REF_NAME}-${{ matrix.target }}
-          mkdir -p $name/runs/vision/export
-          cp rust/ogar/target/release/ogar${{ matrix.exe }} rust/game_client/target/release/game_client${{ matrix.exe }} $name/
-          cp -r bot $name/
-          cp runs/*.json $name/runs/ 2>/dev/null || true
-          mkdir -p $name/runs/r2 && cp runs/r2/champion_009.json $name/runs/r2/
-          cp runs/vision/export/*.onnx runs/vision/export/*.json $name/runs/vision/export/
+          mkdir -p $name/bots
+          cp target/release/ogar${{ matrix.exe }} target/release/oxidish${{ matrix.exe }} $name/
+          cp -r bots/specs $name/bots/
+          mkdir -p $name/bots/models && cp bots/models/*.onnx bots/models/*.json $name/bots/models/
           cp README.md LICENSE $name/
-          cp rust/ogar/LICENSE $name/LICENSE-ogar && cp rust/ogar/NOTICE $name/NOTICE-ogar
-          cp rust/game_client/assets/fonts/*.txt $name/ 2>/dev/null || true
+          cp server/LICENSE $name/LICENSE-ogar && cp server/NOTICE $name/NOTICE-ogar
+          cp client/assets/fonts/*.txt $name/
           if [ "$RUNNER_OS" = Windows ]; then
             curl -sfLO https://github.com/microsoft/onnxruntime/releases/download/v$ORT_VERSION/onnxruntime-win-x64-$ORT_VERSION.zip
             unzip -q onnxruntime-win-x64-$ORT_VERSION.zip

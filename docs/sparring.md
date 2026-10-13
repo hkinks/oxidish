@@ -8,15 +8,15 @@ give little pressure. This adds opponents that hunt and use viruses.
 
 | Name | Spec | What |
 |---|---|---|
-| `hunter_hunt` | `bot/sparring/hunter_hunt.json` | c3_4 farming genes + chase everything from 1800 away, split-kill, double split |
-| `hunter_virus` | `bot/sparring/hunter_virus.json` | + stages and feeds viruses at big players, hides behind viruses |
-| `hunter_reckless` | `bot/sparring/hunter_reckless.json` | + chases everything (no prey floor), up to 4 pieces |
+| `hunter_hunt` | `bots/specs/sparring/hunter_hunt.json` | c3_4 farming genes + chase everything from 1800 away, split-kill, double split |
+| `hunter_virus` | `bots/specs/sparring/hunter_virus.json` | + stages and feeds viruses at big players, hides behind viruses |
+| `hunter_reckless` | `bots/specs/sparring/hunter_reckless.json` | + chases everything (no prey floor), up to 4 pieces |
 
-Use them like any genome: `arena.tournament --engine ogar --agents
-hhunt=bot/sparring/hunter_hunt.json:1 ...`, `arena.endless --agents ...`, `ogar match|serve --agents ...`.
-`arena.make_sparring` regenerates the hunter files.
+Use them like any genome: `training.eval.tournament --engine ogar --agents
+hhunt=bots/specs/sparring/hunter_hunt.json:1 ...`, `training.eval.endless --agents ...`, `ogar match|serve --agents ...`.
+`training.eval.make_sparring` regenerates the hunter files.
 
-## Hunter genes (`bot/tactics.py`, `rust/arena_client/src/policy.rs`, all default off, in Python and Rust)
+## Hunter genes (`bots/specs/tactics.py`, `bots/brain/src/policy.rs`, all default off, in Python and Rust)
 
 - `shoot_stage` > 0.5: with the shoot skill on and no shot lined up, walk round a virus (within `shoot_walk`) to the
   side away from a big player, `shoot_standoff` from its edge, and hold position while
@@ -27,11 +27,11 @@ Not in `BOUNDS`, so evolution is unchanged; existing genomes behave identically 
 
 ## Results
 
-**Parity (Python vs Rust, `arena.rust_tools dump` on real node-server matches + `arena_client parity`):**
+**Parity (Python vs Rust, `training.eval.rust_tools dump` on real node-server matches + `arena_client parity`):**
 26996 decisions (hunter_virus, c3_4, champ and a heuristic bot since removed), 0 aim mismatches, 0 split/eject
 mismatches, max |aim diff| 5e-12; 16000 fuzz decisions (hunter genes with staging, c3_4, champ) also 0 mismatches.
 
-**15-min matches** (`arena.tournament --engine ogar --matches 24 --ticks 22500 --food-mult 2`, one copy each, 8 server bots, seeds 5000+):
+**15-min matches** (`training.eval.tournament --engine ogar --matches 24 --ticks 22500 --food-mult 2`, one copy each, 8 server bots, seeds 5000+):
 
 | bot | log mass | avg mass | deaths | kills (cells) | virus shots | virus pops |
 |---|---|---|---|---|---|---|
@@ -49,7 +49,7 @@ c3_4 still beats every one of them head to head (71-96% of matches vs the hunter
 killer of the other bots (13-18% of c3_4's, champ's, ramp's lost mass). Virus shots are rare (a staged feed needs ~8 aligned ejects while a
 big player stays put): ~2 per hunter_virus per 15 min, nearly every shot popped someone.
 
-**Endless worlds** (`arena.endless`, 4 worlds x 240 game-min, windows of 10 min, first 30 min skipped, seeds 800+;
+**Endless worlds** (`training.eval.endless`, 4 worlds x 240 game-min, windows of 10 min, first 30 min skipped, seeds 800+;
 field = c3_4 x2, champ, r2g9, safe, rampr2, ramp300; "+ sparring" adds one each of hunter_hunt,
 hunter_virus, hunter_reckless and a heuristic bot since removed):
 

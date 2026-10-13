@@ -1,0 +1,11 @@
+[workspace]
+resolver = "2"
+members = ["server", "client", "bots/brain", "training/env"]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+
+[profile.release.package.oxidish]
+codegen-units = 4

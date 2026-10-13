@@ -7,7 +7,7 @@ goal was **not** reached. Lessons are in [learnings.md](learnings.md); this page
 ## Results
 
 Metric: endless leader share (share of 15-s samples where the candidate family is #1), 8 worlds × 240 game-min per
-seed set, seed sets 3000/11000/21000/31000/41000, `arena.endless --engine inproc`. Noise ~±5 per set; a change is kept
+seed set, seed sets 3000/11000/21000/31000/41000, `training.eval.endless --engine inproc`. Noise ~±5 per set; a change is kept
 only if the mean improves and it wins ≥ 3 of 5 sets.
 
 **Vision bot** (grayscale frames rendered in the engine, ONNX net in `ogar`), held-out field (opponents never trained
@@ -15,10 +15,10 @@ against: plan ×2, plan2, bc3 ×2, apos, hunter_virus + 8 server bots; `apos` wa
 
 | spec | what | 3000 | 11000 | 21000 | 31000 | 41000 | mean |
 |---|---|---|---|---|---|---|---|
-| `bot/vision_bc3.json` | imitation of the planner (M2/M3) | 26 | 31 | | | | ~28 * |
-| `bot/vision_p6.json` | league PPO (M4) | 55 | 59 | 66 | 53 | 55 | 57.6 |
-| `bot/vision_p6_hunt.json` | p6 + hunter reflex (M6) | 57 | 62 | 66 | 64 | 57 | 61.2 |
-| **`bot/vision_m7a_final.json`** | PPO with the hunter in the loop, stronger league (M7) | 64 | 68 | 69 | 58 | 63 | **64.4** |
+| `bots/specs/vision_bc3.json` | imitation of the planner (M2/M3) | 26 | 31 | | | | ~28 * |
+| `bots/specs/vision_p6.json` | league PPO (M4) | 55 | 59 | 66 | 53 | 55 | 57.6 |
+| `bots/specs/best/vision-old.json` | p6 + hunter reflex (M6) | 57 | 62 | 66 | 64 | 57 | 61.2 |
+| **`bots/specs/best/vision.json`** | PPO with the hunter in the loop, stronger league (M7) | 64 | 68 | 69 | 58 | 63 | **64.4** |
 
 \* bc3 numbers are from the serve engine (M4); the engines diverge for vision runs, so compare rows only within inproc.
 M8 (9 h continuation of m7a, 10% human-like chaser, m7a as a frozen league member) plateaued after ~1 h: checkpoints scored
@@ -31,10 +31,10 @@ in the same slot. Among near-equal top bots every family sits near 40%.
 
 | spec | 3000 | 11000 | 21000 | 31000 | 41000 | mean |
 |---|---|---|---|---|---|---|
-| `bot/c3_4.json` | 31 | 28 | 31 | 32 | 36 | 31.6 |
-| `bot/drill/hv_commit_only.json` (c3_4 + hunter) | 43 | 44 | 38 | 37 | 37 | 39.8 |
-| `bot/plan_c34.json` (lookahead planner) | 46 | 35 | 38 | 38 | 44 | 40.2 |
-| **`bot/drill/plan_hv_commit_only.json`** (planner + hunter) | 49 | 46 | 49 | 47 | 57 | **49.6** |
+| `bots/specs/c3_4.json` | 31 | 28 | 31 | 32 | 36 | 31.6 |
+| `bots/specs/best/rules.json` (c3_4 + hunter) | 43 | 44 | 38 | 37 | 37 | 39.8 |
+| `bots/specs/plan_c34.json` (lookahead planner) | 46 | 35 | 38 | 38 | 44 | 40.2 |
+| **`bots/specs/best/planner.json`** (planner + hunter) | 49 | 46 | 49 | 47 | 57 | **49.6** |
 
 **Live 9600, 2026-10-10 (11 h, 50 players, [report](human/2026-10-10-m7.md))**: #1 share over the whole session m7 30%, p6h 25%, planhv 11%, p6 10%, plan 8%, human 7%; the user (no boost this time) was #1 for 63% of their 77 min alive. m7a is the best bot overall.
 
@@ -53,15 +53,15 @@ all vision nets) and after fleeing into walls (27%) ([human/2026-10-09-hunters.m
 
 ## What was built in this stretch
 
-- **Vision bot pipeline** (M0-M8): `rust/ogar/src/render.rs` (frames), `vision.rs` + `rust/ogar_py` (VecEnv for
+- **Vision bot pipeline** (M0-M8): `server/src/render.rs` (frames), `vision.rs` + `training/env` (VecEnv for
   training, league pool, giants, scripted chaser, hunter in the loop), `visionbot.rs` + `nn.rs` (ONNX Runtime with CUDA
-  graphs, batched, GRU state), `rl/vision/` (BC/DAgger, PPO v1-v5, export, eval scripts). [vision-bot.md](vision-bot.md)
-- **Fast evaluator**: `ogar endless` / `arena.endless --engine inproc [--stats-out]` with per-skill counters.
+  graphs, batched, GRU state), `training/rl/` (BC/DAgger, PPO v1-v5, export, eval scripts). [vision-bot.md](vision-bot.md)
+- **Fast evaluator**: `ogar endless` / `training.eval.endless --engine inproc [--stats-out]` with per-skill counters.
 - **Drills**: `ogar drill` (giant pop harvest, oracle, mass-chain bound) and `ogar escape` (human-like chaser).
-- **Skills in `rust/arena_client`**: `hunter.rs` (lurk/commit/split-harvest/race), `reflex.rs` (vision reflex layer:
+- **Skills in `bots/brain`**: `hunter.rs` (lurk/commit/split-harvest/race), `reflex.rs` (vision reflex layer:
   hunter, split-kill, harvest, virus, flee, guard), `evade.rs`, `order.rs`.
 - **Commander**: control-port orders (`hunt`, `harvest`, `virus-split`, `goto`, `flee`, ...), `scene`/`frame`, an MCP
-  server (`arena/commander_mcp.py`) and an LLM/heuristic loop; the heuristic did not help, LLM backends untested (no
+  server (`training/eval/commander_mcp.py`) and an LLM/heuristic loop; the heuristic did not help, LLM backends untested (no
   keys). [commander.md](commander.md)
 - Cleanup: dead code removed, `parse_lineup` deduplicated, `.gitignore` for raw match rows.
 
@@ -69,19 +69,19 @@ all vision nets) and after fleeing into walls (27%) ([human/2026-10-09-hunters.m
 
 ```bash
 # live server (as running now on 9600, control port 9601), best bots, 50 players
-rust/ogar/target-live4/release/ogar.exe serve --port 9600 --bots 12 --food-mult 2 --map 10000 --control-port 9601 \
-  --record logs/human --record-all --agents m7=bot/vision_m7a_final.json:6 planhv=bot/drill/plan_hv_commit_only.json:6 \
-  c34h=bot/drill/hv_commit_only.json:4 p6h=bot/vision_p6_hunt.json:4 ...
-rust/game_client/target/release/game_client.exe          # client, server from %APPDATA%\agario-client\settings.json
-uv run python -m arena.human_report logs/human --session <stamp> --out docs/human/<date>.md   # after playing
+server/target-live4/release/ogar.exe serve --port 9600 --bots 12 --food-mult 2 --map 10000 --control-port 9601 \
+  --record logs/human --record-all --agents vision=bots/specs/best/vision.json:6 planner=bots/specs/best/planner.json:6 \
+  rules=bots/specs/best/rules.json:4 vision-old=bots/specs/best/vision-old.json:4 ...
+target/release/oxidish.exe          # client, server from %APPDATA%\agario-client\settings.json
+uv run python -m training.eval.human_report logs/human --session <stamp> --out docs/human/<date>.md   # after playing
 
 # leader share of a candidate (see docs/vision-bot.md for the held-out lineup)
-uv run python -m arena.endless --candidate vis --agents vis=<spec>:2 ... --worlds 8 --game-min 240 \
+uv run python -m training.eval.endless --candidate vis --agents vis=<spec>:2 ... --worlds 8 --game-min 240 \
   --seed-base 3000 --engine inproc --stats-out out.json
 ogar drill --agents ... --scenario giant_popped      # harvest drill;  ogar escape ... for the escape drill
 ```
 
-Vision models are gitignored: `runs/vision/export/vision_*.onnx` (+ `runs/vision/ort` DLLs; CUDA needs
+Vision models are gitignored: `bots/models/vision_*.onnx` (+ `runs/vision/ort` DLLs; CUDA needs
 `OGAR_DLL_DIRS`, see harvest-drill.md).
 
 ## If work resumes
@@ -90,4 +90,4 @@ Vision models are gitignored: `runs/vision/export/vision_*.onnx` (+ `runs/vision
    the field): train against the scripted chaser at a low rate from the start, and add the human recordings as data.
 2. Splitting only through a safe teacher (the hunter's split-harvest, drills as curriculum), never free exploration.
 3. Judge in the champions field and live against the human, not only the held-out field.
-4. Try a real LLM commander once a key is available (`arena.commander --backend anthropic|jev`).
+4. Try a real LLM commander once a key is available (`training.eval.commander --backend anthropic|jev`).

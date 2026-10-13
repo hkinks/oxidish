@@ -4,13 +4,13 @@ How a bot connects to the game, how to measure it, and how to train it faster th
 repo root. On Windows the binaries are `ogar.exe` / `arena_client.exe`.
 
 ```bash
-cargo build --release --features vision-net --manifest-path rust/ogar/Cargo.toml   # server + evaluators (drop the feature without ONNX Runtime)
-cargo build --release --manifest-path rust/arena_client/Cargo.toml                 # external Rust bot client
+cargo build --release --features vision-net --manifest-path server/Cargo.toml   # server + evaluators (drop the feature without ONNX Runtime)
+cargo build --release --manifest-path bots/brain/Cargo.toml                 # external Rust bot client
 ```
 
 ## Three ways to connect a bot
 
-| | in-process agent | external websocket bot | `ogar_py` VecEnv |
+| | in-process agent | external websocket bot | `oxidish_env` VecEnv |
 |---|---|---|---|
 | what | a spec JSON run inside `ogar` | your own program speaking the game protocol | Python RL environment, N worlds in one process |
 | use for | rule bots, planner, exported vision nets; evaluation | bots in any language, quick experiments, Python policies | training nets (PPO, imitation) |
@@ -24,9 +24,9 @@ Every `ogar` command takes `--agents name=spec.json:N` (N copies, named `name-0`
 
 | kind | example | keys |
 |---|---|---|
-| rule bot | `bot/c3_4.json` | `"farm": "route" \| "field"`, `"params": {...}` (the genes, see `bot/params.py` / `rust/arena_client/src/params.rs`) |
-| planner | `bot/plan_c34.json` | `"kind": "plan"`, `"base": <rule-bot spec used for the plan's rollouts>`, `"need_loss"` |
-| vision net | `bot/vision_m7a_final.json` | `"kind": "vision"`, `"model": <.onnx>`, `"split"`, `"split_thr"`, `"eject"`, reflexes (below), `"ep"`, `"threads"` |
+| rule bot | `bots/specs/c3_4.json` | `"farm": "route" \| "field"`, `"params": {...}` (the genes, see `bots/specs/params.py` / `bots/brain/src/params.rs`) |
+| planner | `bots/specs/plan_c34.json` | `"kind": "plan"`, `"base": <rule-bot spec used for the plan's rollouts>`, `"need_loss"` |
+| vision net | `bots/specs/best/vision.json` | `"kind": "vision"`, `"model": <.onnx>`, `"split"`, `"split_thr"`, `"eject"`, reflexes (below), `"ep"`, `"threads"` |
 
 Vision reflexes are rule-based overrides on top of the net: `"reflex_hunter": true` with `"reflex_hunter_genes"`
 (eat the pieces of a giant that just popped; the best bots use it), and `reflex_split`, `reflex_harvest`,
@@ -78,12 +78,12 @@ usual camera box around your cells (not the whole map).
 
 Ready-made clients:
 
-- **Python** `arena.client.StepConn`: the protocol above as `await next_step()`, `snapshot()`, `await act(x, y, split, eject)`.
+- **Python** `training.eval.client.StepConn`: the protocol above as `await next_step()`, `snapshot()`, `await act(x, y, split, eject)`.
   A complete bot:
 
   ```python
   import asyncio
-  from arena.client import StepConn
+  from training.eval.client import StepConn
 
   async def main():
       bot = StepConn("ws://127.0.0.1:9800", "mybot", sync=2)    # sync must match the server's --sync
@@ -102,20 +102,20 @@ Ready-made clients:
   asyncio.run(main())
   ```
 
-- **Rust** `arena_client run --port 9800 --agents planhv=bot/drill/plan_hv_commit_only.json:2 route:1 --ticks 6000 --sync 2`:
+- **Rust** `arena_client run --port 9800 --agents planner=bots/specs/best/planner.json:2 route:1 --ticks 6000 --sync 2`:
   plays rule-bot specs as external agents and prints avg / peak mass, deaths, kills.
-- **Python** `python -m arena.join --port 9800 --agents name=spec.json:N`: rule bots that stay until you stop it.
+- **Python** `python -m training.eval.join --port 9800 --agents name=spec.json:N`: rule bots that stay until you stop it.
 
-### 3. `ogar_py` VecEnv (Python RL)
+### 3. `oxidish_env` VecEnv (Python RL)
 
 N worlds in one process, stepped in parallel on worker threads, with the GIL released. Frames are rendered in the
 engine, so no websocket and no real time are involved.
 
 ```python
-import numpy as np, ogar_py
+import numpy as np, oxidish_env
 
-env = ogar_py.VecEnv(8, 4,                                   # 8 worlds x 4 learners = env.n = 32
-                     opponents=[("c34", "bot/c3_4.json", 2), ("planhv", "bot/drill/plan_hv_commit_only.json", 2)],
+env = oxidish_env.VecEnv(8, 4,                                   # 8 worlds x 4 learners = env.n = 32
+                     opponents=[("c34", "bots/specs/c3_4.json", 2), ("planhv", "bots/specs/best/planner.json", 2)],
                      px=256, sync=2, bots=8, food_mult=2, map=7000, seed=1, threads=8, label=False)
 obs = env.reset()                    # {"view": u8[N,2,256,256], "wide": u8[N,2,128,128]}  (this frame + the previous one)
 a = np.zeros((env.n, 4), np.float32) # (u, v, split, eject): target in view-frame pixels 0..px; split / eject if > 0.5
@@ -128,8 +128,8 @@ obs, reward, done, info = env.step(a)
 - Opponents are in-process rule bots / planners (not vision nets; frozen nets play learner slots from Python instead,
   as `train_ppo5.py` does). `pool=[...]`, `pool_pick=k` draws k opponents per world from a league;
   `giant_p` adds a fed giant to that share of worlds; `chaser_p` adds a scripted human-like hunter.
-- `teacher="bot/plan_c34.json"` with `label=True` computes teacher labels; `env.set_teacher(mask)` lets the teacher drive
-  chosen learners (DAgger). `hunter="bot/drill/hv_commit_only.json"` with `env.set_hunter(mask)` lets the hunter
+- `teacher="bots/specs/plan_c34.json"` with `label=True` computes teacher labels; `env.set_teacher(mask)` lets the teacher drive
+  chosen learners (DAgger). `hunter="bots/specs/best/rules.json"` with `env.set_hunter(mask)` lets the hunter
   reflex take over during its commit phase (flagged in `info["hunter"]`).
 - Full reference: [vision-bot.md](vision-bot.md), M1 and M4-M7.
 
@@ -138,8 +138,8 @@ obs, reward, done, info = env.step(a)
 **Watch it.** Start a server with your bot and the best bots, then join with the client (or spectate with Tab):
 
 ```bash
-rust/ogar/target/release/ogar serve --port 9800 --control-port 9801 --bots 8 --food-mult 2 --map 7000 \
-    --agents mine=bot/my_bot.json:2 m7=bot/vision_m7a_final.json:2 planhv=bot/drill/plan_hv_commit_only.json:2
+target/release/ogar serve --port 9800 --control-port 9801 --bots 8 --food-mult 2 --map 7000 \
+    --agents mine=bots/specs/my_bot.json:2 vision=bots/specs/best/vision.json:2 planner=bots/specs/best/planner.json:2
 scripts/client.sh --server ws://127.0.0.1:9800
 ```
 
@@ -159,25 +159,25 @@ The server reads one command per line from its stdin or from the control port (1
 python3 -c 'import socket,sys; s=socket.create_connection(("127.0.0.1",9801)); s.sendall((sys.argv[1]+"\n").encode()); print(s.makefile().readline())' status
 ```
 
-`--record DIR --record-all` logs eat events and the agents' losses for `arena.human_report` / `rl/vision/lossdiag.py`.
+`--record DIR --record-all` logs eat events and the agents' losses for `training.eval.human_report` / `training/rl/lossdiag.py`.
 
 **Head-to-head matches** (fresh worlds, fixed length, several matches in parallel):
 
 ```bash
-rust/ogar/target/release/ogar match --agents mine=bot/my_bot.json:2 c34=bot/c3_4.json:2 route:1 \
+target/release/ogar match --agents mine=bots/specs/my_bot.json:2 c34=bots/specs/c3_4.json:2 route:1 \
     --ticks 22500 --food-mult 2 --seed 1 --matches 48 --threads 8 --out rows.json
 ```
 
 prints log-mass, average and peak mass, deaths and kills per policy. Same seeds give the same matches, so variants can be
-compared on identical games (`arena.tournament --engine ogar` adds confidence intervals).
+compared on identical games (`training.eval.tournament --engine ogar` adds confidence intervals).
 
 **Leader share**, the project's main metric: the share of 15-s samples in which a bot family is #1 on the leaderboard,
 in endless worlds that never reset (giants keep growing, dead players respawn):
 
 ```bash
-python -m arena.endless --engine inproc --threads 8 --cpus 8 --candidate mine \
-    --agents mine=bot/my_bot.json:2 p6h=bot/vision_p6_hunt.json:2 planhv=bot/drill/plan_hv_commit_only.json:2 \
-             c34h=bot/drill/hv_commit_only.json:2 plan=bot/plan_c34.json:1 \
+python -m training.eval.endless --engine inproc --threads 8 --cpus 8 --candidate mine \
+    --agents mine=bots/specs/my_bot.json:2 vision-old=bots/specs/best/vision-old.json:2 planner=bots/specs/best/planner.json:2 \
+             rules=bots/specs/best/rules.json:2 plan=bots/specs/plan_c34.json:1 \
     --worlds 8 --game-min 240 --seed-base 3000 --out ls.json --stats-out ls.stats.json
 ```
 
@@ -193,13 +193,13 @@ python -m arena.endless --engine inproc --threads 8 --cpus 8 --candidate mine \
 
 ```bash
 # eat a giant that just popped on a virus
-rust/ogar/target/release/ogar drill --agents mine=bot/my_bot.json c34h=bot/drill/hv_commit_only.json oracle=oracle \
+target/release/ogar drill --agents mine=bots/specs/my_bot.json rules=bots/specs/best/rules.json oracle=oracle \
     --scenario giant_popped --our-mass 500 --giant-mass 5000 --dist 600 --giant-mode bot --reps 100 --seed 1 --threads 8 --out drill.json
-python -m arena.drill_report drill.json
+python -m training.eval.drill_report drill.json
 # escape a human-like chaser
-rust/ogar/target/release/ogar escape --agents mine=bot/my_bot.json c3_4=bot/c3_4.json --our-mass 1000,3000 --ratio 2,4 \
+target/release/ogar escape --agents mine=bots/specs/my_bot.json c3_4=bots/specs/c3_4.json --our-mass 1000,3000 --ratio 2,4 \
     --gap 1200 --place open,wall,corner --reps 30 --seed 1 --threads 8 --horizon 60 --out esc.json
-python -m arena.escape_report esc.json
+python -m training.eval.escape_report esc.json
 ```
 
 Details: [harvest-drill.md](harvest-drill.md), [escape-drill.md](escape-drill.md).
@@ -211,7 +211,7 @@ Details: [harvest-drill.md](harvest-drill.md), [escape-drill.md](escape-drill.md
 | live server, in-process bots | `--max-tps 0` or `speed 0` | ~9,500 ticks/s (380x) with 2 rule bots + 8 server bots |
 | live server, external lockstep bots | `speed 0`; lockstep waits for every agent's ack | 75x real time with 3 external Rust bots |
 | `ogar match` / `ogar endless` | no clock at all, worlds on threads | 290x real time per thread (rule bots) |
-| `ogar_py` VecEnv | no clock, no network, worlds on threads | 45k learner decisions/s = 114x real time per world (8 worlds, 32 learners, random actions) |
+| `oxidish_env` VecEnv | no clock, no network, worlds on threads | 45k learner decisions/s = 114x real time per world (8 worlds, 32 learners, random actions) |
 
 The server's tick rate is `--max-tps` (25 = real time; 0 = unthrottled) at startup, and `speed X` (`max_tps = 25 x X`)
 while it runs. Lockstep agents keep working at any speed and while paused, because the server waits for their acks.
@@ -219,23 +219,23 @@ Human clients get at most ~40 updates/s, so you can watch a sped-up game.
 
 ### Rule bots: gene search
 
-`arena.endless_search` runs CMA-ES over a rule bot's genes, scored by leader share in endless Rust-engine worlds:
+`training.eval.endless_search` runs CMA-ES over a rule bot's genes, scored by leader share in endless Rust-engine worlds:
 
 ```bash
-python -m arena.endless_search --run es1 --init bot/c3_4.json \
-    --field champ=runs/final_champion.json:2 planhv=bot/drill/plan_hv_commit_only.json:2 --popsize 8 --worlds 12 --game-min 120
+python -m training.eval.endless_search --run es1 --init bots/specs/c3_4.json \
+    --field champ=bots/specs/final_champion.json:2 planner=bots/specs/best/planner.json:2 --popsize 8 --worlds 12 --game-min 120
 ```
 
 Each generation is written to `runs/es1/gen_###.json` and the best genome to `runs/es1/best.json`, which is a spec
-you can pass to `--agents`. `arena.evolve`, `arena.qd` and `arena.long_search` are the older searches on the Node
+you can pass to `--agents`. `training.eval.evolve`, `training.eval.qd` and `training.eval.long_search` are the older searches on the Node
 MultiOgar server; they need `vendor/MultiOgar` (see [plan.md](plan.md)).
 
 ### Vision bots: imitation, then league PPO
 
 Training needs an NVIDIA GPU (the trainers keep their buffers on CUDA) and the Python setup below.
 
-1. **Held-out set** for imitation: `python rl/vision/make_val.py --out runs/vision/val --windows 4 --worlds 64 --learners 4 --threads 10`
-2. **Imitation + DAgger** of the planner: `python rl/vision/train_bc.py --name bc1 --hours 1.5`. The result is
+1. **Held-out set** for imitation: `python training/rl/make_val.py --out runs/vision/val --windows 4 --worlds 64 --learners 4 --threads 10`
+2. **Imitation + DAgger** of the planner: `python training/rl/train_bc.py --name bc1 --hours 1.5`. The result is
    `runs/vision/bc1/final.pt`.
 3. **League PPO with the hunter in the loop**, the recipe that made m7a:
 
@@ -253,11 +253,11 @@ Training needs an NVIDIA GPU (the trainers keep their buffers on CUDA) and the P
      and -3 per death. A KL anchor to `--ref` decays from 0.2 to 0.01.
    - While the hunter reflex is committed it drives the learner, and those decisions are masked out of the policy
      loss.
-   - Checkpoints go to `runs/vision/m7/`, the log to `logs/vision/m7.jsonl`. All flags: `python rl/vision/train_ppo5.py -h`.
+   - Checkpoints go to `runs/vision/m7/`, the log to `logs/vision/m7.jsonl`. All flags: `python training/rl/train_ppo5.py -h`.
 
-4. **Export and use** (needs `uv pip install onnx onnxscript`): `PYTHON=python scripts/export.sh m7 final` writes `runs/vision/export/vision_m7_final.onnx` and
-   the spec `bot/vision_m7_final.json` (with the hunter reflex). That spec works in every command above (`--agents
-   m7=bot/vision_m7_final.json:2`). Then measure it with `scripts/eval.sh` against p6_hunt and m7a.
+4. **Export and use** (needs `uv pip install onnx onnxscript`): `PYTHON=python scripts/export.sh m7 final` writes `bots/models/vision_m7_final.onnx` and
+   the spec `bots/specs/vision_m7_final.json` (with the hunter reflex). That spec works in every command above (`--agents
+   m7=bots/specs/vision_m7_final.json:2`). Then measure it with `scripts/eval.sh` against p6_hunt and m7a.
 
 What worked and what did not (reward terms, split training, recurrent nets, chasers): [learnings.md](learnings.md),
 [vision-bot.md](vision-bot.md).
@@ -266,11 +266,11 @@ What worked and what did not (reward terms, split training, recurrent nets, chas
 
 ```bash
 uv sync                                                            # torch comes from the CUDA 12.8 index (pyproject.toml)
-uv run maturin develop --uv --release -m rust/ogar_py/Cargo.toml   # builds ogar_py into .venv
-uv run python -m pytest rl/vision/test_env.py -q                   # VecEnv smoke tests
+uv run maturin develop --uv --release -m training/env/Cargo.toml   # builds oxidish_env into .venv
+uv run python -m pytest training/rl/test_env.py -q                   # VecEnv smoke tests
 ```
 
 Then run the commands above with `uv run python ...`, or activate `.venv`. For the server-side tools only
-(`arena.endless`, `arena.join`, `StepConn`, `endless_search`) a light venv with `websockets numpy cma` is enough; torch
+(`training.eval.endless`, `training.eval.join`, `StepConn`, `endless_search`) a light venv with `websockets numpy cma` is enough; torch
 is needed for training and export. On NixOS, pip wheels such as numpy need `libstdc++` and `zlib` on `LD_LIBRARY_PATH`
 (for example from `nixpkgs#stdenv.cc.cc.lib` and `nixpkgs#zlib`).

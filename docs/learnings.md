@@ -1,7 +1,7 @@
 # Learnings
 
 What we learned building agar.io bots, distilled from the experiments; details live in the linked docs. Goal throughout:
-be #1 on the leaderboard ~80% of the time in endless worlds on the Rust server (`arena.endless`, leader share).
+be #1 on the leaderboard ~80% of the time in endless worlds on the Rust server (`training.eval.endless`, leader share).
 
 ## Measuring
 
@@ -13,8 +13,8 @@ be #1 on the leaderboard ~80% of the time in endless worlds on the Rust server (
 - **Evaluate on a held-out field.** PPO trained against the evaluation field scored 78.8% there and 43% on a disjoint
   field (and 3% live against a human). Any opponent set used in training must not be the evaluation set.
 - **Live play is the final test.** The user led 81% of the time on 9600 against all bots; human sessions are recorded
-  (`--record`) and are the best regression set (`arena.human_report`, `arena.scene_replay`).
-- **Use the fast evaluator** (`arena.endless --engine inproc`): bit-identical for rule bots, ~1.3-1.5x faster for vision.
+  (`--record`) and are the best regression set (`training.eval.human_report`, `training.eval.scene_replay`).
+- **Use the fast evaluator** (`training.eval.endless --engine inproc`): bit-identical for rule bots, ~1.3-1.5x faster for vision.
 
 ## Rule bots and genes
 

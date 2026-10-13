@@ -1,8 +1,8 @@
-# ogar: the Rust MultiOgar server (rust/ogar)
+# ogar: the Rust MultiOgar server (server)
 
 A port of vendor/MultiOgar (FFA mode) plus our arena.js launcher. Two uses: a headless match runner for
 evaluation throughput (`ogar match`) and a real-time websocket server (`ogar serve`, see docs/showcase.md).
-It reuses the rule-bot policy code of `rust/arena_client` (now also a library crate), so in-process agents make
+It reuses the rule-bot policy code of `bots/brain` (now also a library crate), so in-process agents make
 the same decisions as the network client; they see the same Snapshot (integer positions/sizes, cells in the
 server's view box for that player).
 
@@ -12,7 +12,7 @@ min 59.66, virus 100.5 / 141.9, eject 36.56 / loss 41.73, eject spawn chance .5,
 (map 7000 → food 367 x `--food-mult`, 12 viruses min, scrambleLevel 0).
 
 ## Validation (15 game-min, food x2, 8 server bots, 5 rule bots in each match)
-Node = `arena.tournament --rust` (real server + Rust client), 48 matches, seeds 1-48. ogar = 144 matches
+Node = `training.eval.tournament --rust` (real server + Rust client), 48 matches, seeds 1-48. ogar = 144 matches
 (seeds 1-48 and 1000-1095). Cells show Node | ogar (relative difference). 95% CIs over matches are about
 ±0.2 on log-mass, ±20% on avg/peak mass, ±0.5-0.8 on deaths.
 
@@ -39,7 +39,7 @@ unthrottled at ~100x real time with 8 in-process agents.
 ## Known differences / gaps
 - Only FFA (no Teams/Experimental/mother cells), no chat (disabled like arena.js), no user roles / OP keys, no
   minions (removed), no bad-word filter, IP limits, stats HTTP server, scrambling. Protocol 6 is what is sent
-  (the web client and game_client use it); other protocol numbers are accepted but get protocol-6 packets.
+  (the web client and oxidish use it); other protocol numbers are accepted but get protocol-6 packets.
 - Policies: rule bots only (route / field / name=genome.json); NN / Jev policies still need the Node path.
 - Loss records of in-process agents use the killer's whole cell count/mass rather than the visible part.
 - Eject cells stay "moving" with an exponentially vanishing boost forever, as in the Node build (ported on purpose).
@@ -47,9 +47,9 @@ unthrottled at ~100x real time with 8 in-process agents.
 
 ## Run
 ```bash
-cargo build --release -j 2 --manifest-path rust/ogar/Cargo.toml
-rust/ogar/target/release/ogar match --agents <lineup> --ticks 22500 --food-mult 2 --seed 1 --matches 48 --threads 2 --out rows.json
-uv run python -m arena.tournament --engine ogar --agents <lineup> --matches 48 --workers 2 --ticks 22500 --food-mult 2
-uv run python -m arena.verdict ... --engine ogar        # and arena.long_search ... --engine ogar
+cargo build --release -j 2 --manifest-path server/Cargo.toml
+target/release/ogar match --agents <lineup> --ticks 22500 --food-mult 2 --seed 1 --matches 48 --threads 2 --out rows.json
+uv run python -m training.eval.tournament --engine ogar --agents <lineup> --matches 48 --workers 2 --ticks 22500 --food-mult 2
+uv run python -m training.eval.verdict ... --engine ogar        # and training.eval.long_search ... --engine ogar
 ```
-Lineup syntax as in arena.tournament (`name=genome.json:N`, `route:N`, `field:N`). `OGAR_BIN` overrides the binary path.
+Lineup syntax as in training.eval.tournament (`name=genome.json:N`, `route:N`, `field:N`). `OGAR_BIN` overrides the binary path.

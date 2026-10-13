@@ -1,6 +1,6 @@
 # Vision bot: plan (2026-10-07)
 
-A bot that decides from **rendered frames**: the Rust server (`rust/ogar`) draws each controlled player's camera
+A bot that decides from **rendered frames**: the Rust server (`server`) draws each controlled player's camera
 view as a small image, and a CNN policy picks the move from the pixels. Actions still go through the normal agent
 interface (heading, split, eject). There is no screen capture: frames are rendered headless inside the engine,
 so training scales to many worlds.
@@ -18,19 +18,19 @@ project stops at the first gate it misses.
 ## Architecture
 
 ```
-rust/ogar (world, rule-bot agents)
+server (world, rule-bot agents)
   └─ render.rs   Snapshot -> uint8 frame [C,H,W]      (same data the client gets; no privileged info)
-rust/ogar_py (new, PyO3 + maturin)   VecEnv: N worlds in-process, threads over worlds
+training/env (new, PyO3 + maturin)   VecEnv: N worlds in-process, threads over worlds
   reset() / step(actions) -> frames [N,C,H,W] uint8 (numpy, no copy), reward, done, info
   teacher actions: the planner's choice for the same step (for imitation / DAgger)
-Python (ML only, per rust-first)   rl/vision/: model, BC, PPO, export to ONNX
-rust/ogar agent kind "vision"   runs the ONNX net in-process (crate `ort` or `tract`)
-  -> arena.endless / verdict / live servers work unchanged
+Python (ML only, per rust-first)   training/rl/: model, BC, PPO, export to ONNX
+server agent kind "vision"   runs the ONNX net in-process (crate `ort` or `tract`)
+  -> training.eval.endless / verdict / live servers work unchanged
 ```
 
 **Why render from `agent::snapshot`.** It is the exact view the protocol sends a player, so a frame shows no
 more than a human sees. The renderer is a pure function of the Snapshot, which makes it unit-testable and lets it
-reuse the client's camera maths (`rust/game_client`: centre, zoom = server's `scale`).
+reuse the client's camera maths (`client`: centre, zoom = server's `scale`).
 
 ## Design choices (recommendations; easy to change later)
 
@@ -64,9 +64,9 @@ reuse the client's camera maths (`rust/game_client`: centre, zoom = server's `sc
 | # | stage | output | gate (stop if missed) |
 |---|---|---|---|
 | M0 | `render.rs` plus PNG dump (`ogar render --seed S --tick T`) and unit tests (circle sizes, camera, border) | frames that look like the client | a side-by-side PNG next to a client screenshot looks right to you |
-| M1 | `ogar_py` VecEnv (PyO3), threaded worlds, rule-bot opponents in-process, teacher actions | `pip install -e rust/ogar_py` | ≥ 20k frames/s on ≤ 10 cores, CPU ≤ 90% |
+| M1 | `oxidish_env` VecEnv (PyO3), threaded worlds, rule-bot opponents in-process, teacher actions | `pip install -e training/env` | ≥ 20k frames/s on ≤ 10 cores, CPU ≤ 90% |
 | M2 | **Imitation**: behaviour cloning on planner actions, then DAgger (the student drives, the teacher labels) | `runs/vision/bc_*.pt` | target-pixel agreement ≥ 80%, split agreement ≥ 70%; ≥ 45% vs c3_4 in 15-min matches |
-| M3 | ONNX export plus agent kind `"vision"` in ogar | `bot/vision_bc.json` | identical actions Python vs Rust on 1k frames; endless leader share ≥ c3_4's (~30%) |
+| M3 | ONNX export plus agent kind `"vision"` in ogar | `bots/specs/vision_bc.json` | identical actions Python vs Rust on 1k frames; endless leader share ≥ c3_4's (~30%) |
 | M4 | **PPO fine-tune** from the BC net, with a KL anchor to the teacher (decaying), against a league of rule bots, the planner and past selves | `runs/vision/ppo_*.pt` | endless leader share > planner (40%) on the mean of 5 seed sets and on ≥ 3 of 5 |
 | M5 | Scale and tune (resolution, frame stack, reward shaping toward leader share) | | each change kept only if it wins on ≥ 2 seed sets |
 
@@ -103,27 +103,27 @@ death penalty. The value head sees the leaderboard rank as a scalar.
 
 Each gate is a natural point to decide whether to continue.
 
-## M1 status: `ogar_py` VecEnv (2026-10-07, branch `worktree-agent-ad386154cc2767e6b`)
+## M1 status: `oxidish_env` VecEnv (2026-10-07, branch `worktree-agent-ad386154cc2767e6b`)
 
-**Code.** Engine-side env in `rust/ogar/src/vision.rs` (pure Rust, unit-tested); Python bindings in `rust/ogar_py`
-(PyO3 0.25 + rust-numpy, abi3-py310); renderer speed-up in `rust/ogar/src/render.rs`; tools in `rl/vision/`
+**Code.** Engine-side env in `server/src/vision.rs` (pure Rust, unit-tested); Python bindings in `training/env`
+(PyO3 0.25 + rust-numpy, abi3-py310); renderer speed-up in `server/src/render.rs`; tools in `training/rl/`
 (`test_env.py`, `bench.py`, `collect.py`).
 
 **Build** (maturin is a dev dependency in `pyproject.toml`; a light venv is enough, no torch needed):
 
 ```
 uv venv .venv --python 3.10 && uv pip install --python .venv/Scripts/python.exe maturin numpy pytest
-# from rust/ogar_py, venv active (VIRTUAL_ENV set); -j 2 keeps the build polite
+# from training/env, venv active (VIRTUAL_ENV set); -j 2 keeps the build polite
 maturin develop --release -j 2
-# from the repo root (specs like bot/c3_4.json are relative to the cwd)
-python -m pytest rl/vision -q          # Python smoke tests;  cargo test --release (in rust/ogar) for the Rust ones
+# from the repo root (specs like bots/specs/c3_4.json are relative to the cwd)
+python -m pytest training/rl -q          # Python smoke tests;  cargo test --release (in server) for the Rust ones
 ```
 
 **API**
 
 ```python
-env = ogar_py.VecEnv(n_worlds, learners_per_world, opponents=[("c34", "bot/c3_4.json", 4)],
-                     teacher="bot/plan_c34.json", px=256, sync=2, bots=8, food_mult=2, map=7000,
+env = oxidish_env.VecEnv(n_worlds, learners_per_world, opponents=[("c34", "bots/specs/c3_4.json", 4)],
+                     teacher="bots/specs/plan_c34.json", px=256, sync=2, bots=8, food_mult=2, map=7000,
                      seed=1, threads=8, warmup=0, label=True)
 obs = env.reset()                                   # {"view": u8[N,2,px,px], "wide": u8[N,2,px/2,px/2]}
 obs, reward, done, info = env.step(actions)         # actions f32[N,4] = (u, v, split, eject)
@@ -175,7 +175,7 @@ planner labels for DAgger / evaluation sets only and `c3_4` labels for bulk BC (
 (2 opponents: 42 us instead of 84), or accept ~15-17k/s for planner data (about 5.5e7 labelled frames per hour,
 which is still above the 1e7 per hour M2 needs). Pure student rollouts (M4) run at 54k decisions/s before the network.
 
-**Data collector** `rl/vision/collect.py`: time-major shards (`view`, `wide`, `teacher`, `action`, `reward`, `done`,
+**Data collector** `training/rl/collect.py`: time-major shards (`view`, `wide`, `teacher`, `action`, `reward`, `done`,
 `mass`, `rank`, `leader`, `first`; current frame only, the previous frame of the stack is the previous row unless
 `first`). Raw 82 KB per decision (about 3 TB/h at full speed); with `--compress` (deflate level 1) **2.3 KB per decision,
 about 50 GB/h at 6k decisions/s end to end**; zlib, not the engine, then limits collection (about 0.7 ms CPU per
@@ -191,7 +191,7 @@ planner's leader share** (0.215 vs 0.207, 33-game-minute runs, 2 seed sets) but 
 Splitting students are worse than not splitting. The "45% vs c3_4 in 15-min matches" part of the gate needs the M3
 in-server agent and was not measured.
 
-**Code** (`rl/vision/`, Python/PyTorch, no Rust change): `model.py` (VisionNet), `store.py` (GPU ring), `train_bc.py`
+**Code** (`training/rl/`, Python/PyTorch, no Rust change): `model.py` (VisionNet), `store.py` (GPU ring), `train_bc.py`
 (streaming BC + DAgger), `make_val.py` (fixed validation sets), `evalval.py` (held-out metrics), `eval_env.py` (in-env
 student/teacher runs), `export.py` (TorchScript + ONNX), `summ.py`, `bench_model.py`.
 
@@ -202,8 +202,8 @@ cell = 4 view px; target = argmax cell refined by a 3x3 soft-argmax. Split / eje
 pooled features plus an 8-channel 16x16 spatial summary. bf16 autocast, channels_last; training 5.6k samples/s alone,
 3.5-4.5k/s with the env and student inference running. Value head is built but untrained in M2.
 
-**Training** (`python rl/vision/train_bc.py --name bc2 --hours 2 --d0 0.05 --d1 0.4 --pmax 0.9 --ring 320 --pos-weight 3`;
-the validation sets first: `python rl/vision/make_val.py` and `make_val.py --events 600 --out runs/vision/val_events
+**Training** (`python training/rl/train_bc.py --name bc2 --hours 2 --d0 0.05 --d1 0.4 --pmax 0.9 --ring 320 --pos-weight 3`;
+the validation sets first: `python training/rl/make_val.py` and `make_val.py --events 600 --out runs/vision/val_events
 --seed 888000 --worlds 32`). 64 worlds x 4 learners, opponent field = champ, r2g9, safe, ramp_r2, ramp300 + 8 server
 bots, planner teacher, 10 env threads pinned to cores 0-10. Collector thread steps the env and pushes frames + teacher
 labels into a GPU ring (320 decisions x 256 learners = 82k frames, 6.7 GB); the trainer samples it uniformly
@@ -267,32 +267,32 @@ pixels reach planner-level leader share and mass, but die about 1.7x as often, a
 
 **Checkpoints and export** (`runs/vision/` is gitignored, nothing large is committed): `runs/vision/bc3/final.pt`
 (recommended, play with `--no-split` semantics), `runs/vision/bc2/final.pt`, `runs/vision/bc2/best.pt` (80.8% agreement),
-logs in `logs/vision/*.jsonl`. M3 export: `runs/vision/export/vision_bc3.{pt,onnx,json}` (TorchScript / ONNX,
+logs in `logs/vision/*.jsonl`. M3 export: `bots/models/vision_bc3.{pt,onnx,json}` (TorchScript / ONNX,
 inputs u8 view[B,2,256,256], wide[B,2,128,128]; outputs heat[B,64,64], split, eject, value; ONNX vs torch max
 abs diff 0.04 on random noise input, TorchScript exact). Decode as in `model.decode_target`; the planner-pixel frame is
-the view frame. Reproduce the export: `python rl/vision/export.py runs/vision/bc3/final.pt runs/vision/export/vision_bc3`.
+the view frame. Reproduce the export: `python training/rl/export.py runs/vision/bc3/final.pt bots/models/vision_bc3`.
 
 ## M3 status (2026-10-08): the vision bot in the Rust server
 
-**Spec:** `bot/vision_bc3.json` = `{"kind":"vision","model":"runs/vision/export/vision_bc3.onnx","split":false}`.
+**Spec:** `bots/specs/vision_bc3.json` = `{"kind":"vision","model":"bots/models/vision_bc3.onnx","split":false}`.
 Optional keys: `split`, `split_thr`, `ep` (`cuda` = CUDA graphs, default; `cuda_plain`; `cpu`), `eject`, `threads`.
-It works wherever a genome file does: `ogar match`, `ogar serve --agents`, `arena.endless --agents`,
-`arena.verdict --engine ogar`.
+It works wherever a genome file does: `ogar match`, `ogar serve --agents`, `training.eval.endless --agents`,
+`training.eval.verdict --engine ogar`.
 
 **Code and runtime**
-- `rust/ogar/src/visionbot.rs`, `nn.rs`. Frames come from `vision::FrameStack`; a test checks them as byte-identical to the VecEnv
+- `server/src/visionbot.rs`, `nn.rs`. Frames come from `vision::FrameStack`; a test checks them as byte-identical to the VecEnv
   over 6000 stacks, including deaths and respawns.
 - `AgentDriver::step_all` batches all vision agents of a world into one forward pass.
 - Runtime is onnxruntime-gpu 1.23.2 through `ort` (`load-dynamic`). The DLLs live in `runs/vision/ort/` (gitignored);
   cuDNN and cuBLAS come from `.venv/Lib/site-packages/torch/lib` or `OGAR_DLL_DIRS`.
 
-**Parity with torch** (1000 frames, `ogar vdump` + `rl/vision/parity.py`): all headings within 1° (max 0.01° on
+**Parity with torch** (1000 frames, `ogar vdump` + `training/rl/parity.py`): all headings within 1° (max 0.01° on
 CUDA), and no split-decision mismatches.
 
 **Cost:** about 0.9 ms per batched call alone and 4.9 ms with 8 processes sharing the GPU (CPU: about 37 ms). An endless run
 (8 worlds × 240 game-min) takes 1331 s, against about 320 s for the planner.
 
-**Leader share** (arena.endless, 8 worlds × 240 game-min, the usual field; splitting off)
+**Leader share** (training.eval.endless, 8 worlds × 240 game-min, the usual field; splitting off)
 
 | spec | 3000 | 11000 | 21000 | 31000 | 41000 | mean |
 |---|---|---|---|---|---|---|
@@ -307,15 +307,15 @@ is small (+1.8), but it was consistent across all five sets. It still dies about
 ## Fast endless evaluator (`ogar endless`)
 
 `ogar endless --agents name=spec:N ... --worlds 8 --game-min 240 --seed-base S [--threads T] [--out samples.json]` runs all
-worlds in ONE process (rust/ogar/src/endless.rs), headless and unthrottled. Each world is built exactly like
+worlds in ONE process (server/src/endless.rs), headless and unthrottled. Each world is built exactly like
 `ogar serve --seed S+i --agents ...` (same `World::new`, agent order and names; tick, then a decision step every
-2nd tick, then the 15 s `[players]` sample), so a rule-bot lineup gives the same samples as `arena.endless`
+2nd tick, then the 15 s `[players]` sample), so a rule-bot lineup gives the same samples as `training.eval.endless`
 (**verified bit-identical**: 2 worlds x 15 min and 30 min, c3_4:2 + champ_safe:2, every sample equal). Rule bots
 step on worker threads; for vision lineups the workers render frames, a coordinator runs ONE batched net call for the
 vision agents of all worlds (16 frames for 8 worlds x 2; graph sizes are padded to powers of two inside `infer_batch`)
 and the workers apply the actions (two barriers per decision).
 
-Python: `uv run python -m arena.endless ... --engine inproc [--shards K] [--threads T]`; same output lines and `--out`
+Python: `uv run python -m training.eval.endless ... --engine inproc [--shards K] [--threads T]`; same output lines and `--out`
 json as the default `--engine serve` (the engine's own timing goes to stderr). `--shards K` splits the worlds over K
 `ogar endless` processes: on a GPU shared with other jobs every process gets its own time slice, which helps when
 the card is busy.
@@ -409,15 +409,15 @@ p6 is ahead of them on both seeds' family tables. The differences between p2, p3
 opponents); the 5-set rule was not met for it.
 
 ### League PPO (`--league`, `train_ppo2.py`) and the Rust options
-- `ogar_py.VecEnv(..., pool=[(name, spec, count)], pool_pick=k, giant_p=p, giant_min, giant_max)`: every world draws k
+- `oxidish_env.VecEnv(..., pool=[(name, spec, count)], pool_pick=k, giant_p=p, giant_min, giant_max)`: every world draws k
   entries of the pool (deterministic in the world seed); with probability p one opponent is a giant, fed (largest cell,
   up to 500 per 125 ticks) up to a target mass in [3000, 10000] whenever it falls below 70% of it. With a giant the
   learner is leader almost never (0.3% vs 12% in a test), so the leader bonus does not apply there.
-  `rust/ogar/src/vision.rs`.
+  `server/src/vision.rs`.
 - Pool: the five endless-field bots, c3_4, shoot, hunter_hunt, hunter_reckless, five `runs/ab` c34 variants.
 - Frozen self-play: 2 of 5 learner slots per world are driven by frozen nets (bc3, a2, plus 3-4 snapshots of the
   policy taken every 40-60 iterations, greedy decode). Vision opponents inside the env's in-process agents are not
-  available (`ogar_py` is built without the `vision-net` feature), so this runs in the trainer on the GPU.
+  available (`oxidish_env` is built without the `vision-net` feature), so this runs in the trainer on the GPU.
 - Throughput of `train_ppo2.py` alone: rollout 5.7k decisions/s over all 320 slots (planner labels off), training
   3.0k samples/s (incl. the ref forward), 8.8 s per 9.2k-sample iteration; about 17 s while an endless eval ran at the
   same time. `train_ppo.py` (planner labels on) took 6 s per 12.3k samples. torch.compile was not tried.
@@ -433,9 +433,9 @@ opponents); the 5-set rule was not met for it.
 4. Time: about 14 h of training wall time in total (budget 12 h); p4 and p7 showed plateaus.
 
 ### Files
-`bot/vision_{a1,a2,p1,p2,p3,p6,p7}.json` (specs, `split` false), models in `runs/vision/export/vision_*.onnx`
+`bots/specs/vision_{a1,a2,p1,p2,p3,p6,p7}.json` (specs, `split` false), models in `bots/models/vision_*.onnx`
 (gitignored), checkpoints `runs/vision/{a1,a2,p1..p7}/` (gitignored), logs `logs/vision/*.jsonl`, eval JSONs
-`runs/vision/evals/`. Scripts: `rl/vision/train_bc.py` (danger store), `train_ppo.py`, `train_ppo2.py`, `ppo_sum.py`,
+`runs/vision/evals/`. Scripts: `training/rl/train_bc.py` (danger store), `train_ppo.py`, `train_ppo2.py`, `ppo_sum.py`,
 `inenv_sum.py`, `endless5.sh` (training field), `endlessH.sh` (held-out), `queueH*.sh`.
 Recommended: `vision_p3` (best on the training field, equal on the held-out field) or `vision_p6` for the
 league-trained net.
@@ -448,8 +448,8 @@ share by 11-31 points when bolted on to p6, safer gates and a recombine guard di
 No skill met the keep rule (mean better and wins on >= 3 of 5 sets).
 
 ### What was built
-- `rust/arena_client/src/reflex.rs`: the hybrid reflex layer. Spec keys on a vision agent (all off by default):
-  `reflex_split`, `reflex_harvest`, `reflex_virus`, `reflex_guard`, plus `reflex_genes` (genome file, default `bot/c3_4.json`),
+- `bots/brain/src/reflex.rs`: the hybrid reflex layer. Spec keys on a vision agent (all off by default):
+  `reflex_split`, `reflex_harvest`, `reflex_virus`, `reflex_guard`, plus `reflex_genes` (genome file, default `bots/specs/c3_4.json`),
   `reflex_params` (genes merged over it), `reflex_harvest_range`, `reflex_split_clear`. It runs inside `VisionBot::decide` on the
   agent's Snapshot; the net keeps the movement otherwise. The commander override still applies after it.
   - split-kill reuses `heuristic_plan` (target and the Flee veto) and the extracted `steer::split_kill_ok` (the very check of
@@ -460,26 +460,26 @@ No skill met the keep rule (mean better and wins on >= 3 of 5 sets).
     400 of the group, run straight away from it.
   - 11 unit tests in `reflex.rs` (constructed snapshots, per skill: fires, refuses when far / too big / threat near, flag off,
     spec default off, split_clear, guard). `cargo test`: arena_client 23 pass, ogar 8 pass.
-- Counters (every `ogar endless` run, `--out` json `stats.agents`; `arena.endless --stats-out`; `rl/vision/skillstats.py`,
-  `rl/vision/lossdiag.py`): per agent deaths, kills, splits, split kills (a kill within 3 s of the agent's own split decision, victim mass),
+- Counters (every `ogar endless` run, `--out` json `stats.agents`; `training.eval.endless --stats-out`; `training/rl/skillstats.py`,
+  `training/rl/lossdiag.py`): per agent deaths, kills, splits, split kills (a kill within 3 s of the agent's own split decision, victim mass),
   virus shots / pops caused on others (+ mass popped), "harvest" cells = cells eaten from a player that had >= 3 cells at that moment
   (popped or split apart, whoever did it) and their mass, `reflex_*` counters, and the loss list.
 - Recurrent net: `VisionNet(gru=256)` (`model.py`: GRUCell after the MLP; its output enters the split/eject/value head and, as a channel
   bias at the 16x16 decoder input, the heat map, both through zero-initialised projections, so a fresh GRU net plays exactly like its source;
-  verified 0.0 difference). `rl/vision/mkgru.py` makes the init, `export.py` writes ONNX with input `h` and output `h_out`
+  verified 0.0 difference). `training/rl/mkgru.py` makes the init, `export.py` writes ONNX with input `h` and output `h_out`
   (torch vs onnxruntime max diff 1e-2 on heat logits, 4e-5 on h over 4 chained steps). Rust: `nn.rs` takes/returns the hidden states
   (CUDA-graph path binds `h`/`h_out`), `VisionBot.hidden` per agent, zeroed in `reset()` (death), batching unchanged
   (`infer_batch` stacks the hidden states). `cuda` (graph) and `cuda_plain` runs of a recurrent model agree on the final sample of a 4 min world.
   Not done: a torch-vs-Rust parity dump of hidden states over a real game (`parity.py` is not extended).
-- PPO: `rl/vision/train_ppo3.py` (split action, kill/pop shaping, BCE of the split head to the reflex flag, `info["events"]` from
-  `ogar_py`: kills, kill mass, pops, flag, mass taken from players at least as big, own mass lost) and `train_ppo4.py` (adds the GRU with BPTT
+- PPO: `training/rl/train_ppo3.py` (split action, kill/pop shaping, BCE of the split head to the reflex flag, `info["events"]` from
+  `oxidish_env`: kills, kill mass, pops, flag, mass taken from players at least as big, own mass lost) and `train_ppo4.py` (adds the GRU with BPTT
   chunks and stored hidden states, self-play with snapshots of the current policy weighted to the strongest, #1 term 0.05,
-  big-victim bonus, lost-mass penalty, anchor decayed to 0.003, `--split-detach`). `ogar_py` was built separately (the main venv has none):
+  big-victim bonus, lost-mass penalty, anchor decayed to 0.003, `--split-detach`). `oxidish_env` was built separately (the main venv has none):
   `PYTHONPATH=logs/pymod`. Scripts `trainS*.sh`, `trainG*.sh`.
 
 ### Baseline: why p6 is 58 here and 42 in M4
 Same lineup (vis x2, plan x2, plan2, bc3 x2, apos, hvirus + 8 server bots), same spec file and model, same seeds, same 240 min x 8 worlds.
-The difference is the evaluator: M4 used `arena.endless` with the default `--engine serve` (one `ogar serve` per world); M5 uses
+The difference is the evaluator: M4 used `training.eval.endless` with the default `--engine serve` (one `ogar serve` per world); M5 uses
 `--engine inproc` as asked. To check, I re-ran seed 3000 with the serve engine and the current binary: **vis 48%** (inproc 55%, M4 45%);
 bc3 26% (inproc 14%, M4 38%). Vision worlds diverge chaotically between engines (batch composition changes GPU rounding), so one seed differs
 by +-7 or more; M4's seed 11000 (39) against 59 here is a 20 point gap, so there may also be a real systematic engine effect, but I ran only one serve
@@ -524,7 +524,7 @@ Verdict: **drop all three skills** (and their safer variants). Guard alone is wi
 Other families in the p6 runs, deaths/h: bc3 23.8, plan 14.1, plan2 12.0, apos 12.9 (108 splits/h), hvirus 30.2 (6.3 shots/h, 5.4 pops/h).
 "Split kills" can exceed splits because one split eats several cells. "Harvest" counts every cell eaten from a player that had >= 3 cells.
 
-### Diagnosis of the reflex cost (`rl/vision/lossdiag.py`, recorded losses of `vis`)
+### Diagnosis of the reflex cost (`training/rl/lossdiag.py`, recorded losses of `vis`)
 - Split-kill: deaths/h 6.2 -> 9.1, mass lost to other players per hour 16.3k -> 23.5k (+44%), cells lost +52%. The gain is 8.6k mass/h of split kills against 7.1k more mass lost.
   The killer-to-own mass ratio of what eats us falls from 6.6 to 4.0: after a split our halves are eaten by mid-sized players that would never touch the whole cell.
   A stricter gate (`rs2`) and a recombine guard (run from anything above 1.3x our biggest piece while split) did not repair it (40; 28/33; 42); the guard alone changes
@@ -549,25 +549,25 @@ Other families in the p6 runs, deaths/h: bc3 23.8, plan 14.1, plan2 12.0, apos 1
   a torch-vs-Rust parity check of recurrent states over a game; an ablation separating the PPO changes.
 
 ### Files
-`rust/arena_client/src/reflex.rs`, `steer.rs` (`split_kill_ok`), `policy.rs` (`Tactics` pub), `client.rs` (`AgentStats` fields), `rust/ogar/src/{agent,endless,nn,visionbot,vision,world,main}.rs`,
-`rust/ogar_py/src/lib.rs` (`info["events"]`), `arena/endless.py` (`--stats-out`), `rl/vision/{model,export,mkgru,train_ppo3,train_ppo4,skillstats,lossdiag,m5_table}.py`,
-`bot/vision_p6_r*.json`, `bot/vision_{g1c,g2c,g3c}.json`, `endlessM5*.sh`, `queueM5*.sh`, `train{S,G}*.sh`. Eval jsons / stats: `runs/vision/evals/M5_*` (gitignored), logs `logs/m5/`.
-Command: `./endlessM5.sh vision_p6_rs 3000` (needs `logs/bin/ogar.exe` = the release build, `runs/vision/export/vision_p6.onnx`, `runs/vision/ort/`).
+`bots/brain/src/reflex.rs`, `steer.rs` (`split_kill_ok`), `policy.rs` (`Tactics` pub), `client.rs` (`AgentStats` fields), `server/src/{agent,endless,nn,visionbot,vision,world,main}.rs`,
+`training/env/src/lib.rs` (`info["events"]`), `training/eval/endless.py` (`--stats-out`), `training/rl/{model,export,mkgru,train_ppo3,train_ppo4,skillstats,lossdiag,m5_table}.py`,
+`bots/specs/vision_p6_r*.json`, `bots/specs/vision_{g1c,g2c,g3c}.json`, `endlessM5*.sh`, `queueM5*.sh`, `train{S,G}*.sh`. Eval jsons / stats: `runs/vision/evals/M5_*` (gitignored), logs `logs/m5/`.
+Command: `./endlessM5.sh vision_p6_rs 3000` (needs `logs/bin/ogar.exe` = the release build, `bots/models/vision_p6.onnx`, `runs/vision/ort/`).
 
 ## M6 status (2026-10-10): the hunter skill as a vision reflex (branch `worktree-agent-aebbfbeedfe65da94`)
 
 **Result in one line.** `reflex_hunter` is the first vision reflex that beats `vision_p6` on the held-out field: **61.2 vs 57.6 mean leader share, strictly better on 4 of 5 seed sets (one tie), deaths/h unchanged**. The keep rule (mean improves, wins >= 3 of 5) is met. Adding M5's `reflex_guard` does not help (60.6, 4 of 5, worse on one set by 6).
 
 ### What was built
-- `rust/arena_client/src/reflex.rs`: spec key `reflex_hunter` (bool, default off) with `reflex_hunter_genes` (genome file, default `bot/drill/hv_commit_only.json`) and
+- `bots/brain/src/reflex.rs`: spec key `reflex_hunter` (bool, default off) with `reflex_hunter_genes` (genome file, default `bots/specs/best/rules.json`) and
   `reflex_hunter_params` (genes merged over its `params`). `Reflex` keeps one `Hunter` per agent (piece memory, velocities, cooldowns), reset on respawn with the rest of the reflex state.
   Each decision calls `Hunter::step(&snapshot, genes)` first (it must see every snapshot to keep its velocities and memory); **only while `hunter.phase == Phase::Commit`
   does its aim / split / eject replace the net's**, otherwise the net drives (and the other reflexes, guard, run as before). Gene tiers (`caution_mass`, giant) go through `HeuristicPolicy::params_for` as in the rule bot.
   Counter `reflex_hunter` = committed steps. `visionbot.rs` needed no change (it already builds the reflex from the spec). 4 new unit tests (commit overrides the net on the drill's burst, no burst /
   flag off leaves the net, flees a core that can lunge instead of walking in, reset / default off); `cargo test`: reflex 15 pass.
-- Specs: `bot/vision_p6_hunt.json` (p6 + hunter), `bot/vision_p6_hunt_g.json` (+ `reflex_guard`). Script `endlessM6.sh spec seed [threads]` (= `endlessM5.sh`, files `runs/vision/evals/M6_*`, logs `logs/m6/`).
+- Specs: `bots/specs/best/vision-old.json` (p6 + hunter), `bots/specs/vision_p6_hunt_g.json` (+ `reflex_guard`). Script `endlessM6.sh spec seed [threads]` (= `endlessM5.sh`, files `runs/vision/evals/M6_*`, logs `logs/m6/`).
 
-### Held-out leader share (`arena.endless --engine inproc`, M5 lineup: vis x2, plan x2, plan2, bc3 x2, apos, hvirus + 8 server bots; 8 worlds x 240 min)
+### Held-out leader share (`training.eval.endless --engine inproc`, M5 lineup: vis x2, plan x2, plan2, bc3 x2, apos, hvirus + 8 server bots; 8 worlds x 240 min)
 p6 base: seed 3000 re-run here gave **55**, identical to M5's number (same binary behaviour, deterministic), so the other four base values are M5's (59, 66, 53, 55), not re-run.
 
 | spec | 3000 | 11000 | 21000 | 31000 | 41000 | mean | wins | mean diff |
@@ -579,7 +579,7 @@ p6 base: seed 3000 re-run here gave **55**, identical to M5's number (same binar
 Per-seed differences hunter: +2, +3, 0, +11, +2; with guard: +7, +4, -6, +9, +1. Both pass the keep rule; the plain hunter has the higher mean and no losing set, so it is the one to keep (guard adds nothing measurable; the seed spread is about 5, so +2/+3 on single sets is
 not significant by itself, the consistent sign over five sets is the evidence). No variant was stopped early.
 
-### Counters (`--stats-out`, `rl/vision/skillstats.py`, `vis` family, 320 agent-hours each = 5 sets)
+### Counters (`--stats-out`, `training/rl/skillstats.py`, `vis` family, 320 agent-hours each = 5 sets)
 | spec | deaths/h | splits/h | split kills/h (mass/h) | harvest cells/h (mass/h) | hunter-committed steps |
 |---|---|---|---|---|---|
 | p6 (M5 table) | 6.2 | 0 | 0 | 163 (17.7k) | - |
@@ -617,15 +617,15 @@ strictly better on **4 of 5** seed sets (+7, +6, +3, -6, +6). The keep rule is m
 The chaser continuation (`m7b`) was worse on the one set run (53).
 
 ### What was built
-- `ogar::vision::VecEnv`: the hunter reflex inside the env (`VisionOpts.hunter`, `ogar_py.VecEnv(hunter="bot/drill/hv_commit_only.json")`, `env.set_hunter(mask)` per learner slot). Each observation the env feeds the learner's snapshot to a hunter-only
+- `ogar::vision::VecEnv`: the hunter reflex inside the env (`VisionOpts.hunter`, `oxidish_env.VecEnv(hunter="bots/specs/best/rules.json")`, `env.set_hunter(mask)` per learner slot). Each observation the env feeds the learner's snapshot to a hunter-only
   `Reflex` (it must see every snapshot); while its Commit phase is active the env replaces the action (aim / split / eject) and flags it in `info["hunter"]`. Hunter state resets on death and when the slot is switched on.
   Rust test `hunter_mask_is_off_by_default_and_deterministic`.
-- `rl/vision/train_ppo5.py` (= `train_ppo2.py` plus): policy-gradient and entropy terms are masked on flagged decisions (advantage normalised over the unmasked ones; the value head still trains on them; KL-to-ref anchor on all);
+- `training/rl/train_ppo5.py` (= `train_ppo2.py` plus): policy-gradient and entropy terms are masked on flagged decisions (advantage normalised over the unmasked ones; the value head still trains on them; KL-to-ref anchor on all);
   reward = M5 terms (d log mass, +0.05 while #1, + 0.5 x big-victim mass / own mass, - 1.0 x own mass eaten / own mass, - 3 death); league pool = old pool + `plan_hv_commit_only` x2 entries + `hv_commit_only` x2 entries (5 drawn per world, giant opponent in 25% of worlds);
   frozen slots (2 of 5 per world; the other 3 learn) = bc3, p6 (anchor), p6, p6 + hunter (listed twice) and snapshots of the policy + hunter (twice) every 40 its; KL anchor to p6 decaying 0.2 -> 0.01; KL early stop 0.05 and only after >= 4 minibatches
   (the M5 stall: it fired after 1-3 minibatches; here `nmb` stayed 18-22 of 22); no split head (hunter does the safe splits); value pre-training 20 its with the policy fixed.
 - Scripts (now `scripts/train.sh`, `scripts/eval.sh field spec seed` with field 1 = held-out and field 2 = champions, `scripts/export.sh run ckpt`) (ONNX export needs `onnx`+`onnxscript`, installed with `uv pip install --target logs/pyextra`; ONNX-vs-torch parity was not checked, onnxruntime python is not installed).
-- Scripted human-like chaser (coordinator request, `escape.rs::Chaser`) as a league opponent: `VisionOpts.chaser_p/chaser_min/chaser_max`, `ogar_py.VecEnv(chaser_p=..)`, `train_ppo5.py --chaser-p`. In that fraction of worlds a player driven by the Chaser hunts learner 0 (mass tracks 1.5-3 x the learner, +500 per 125 ticks, floor 100, cap 20000, respawns when eaten). Smoke-tested only (random learners die 119 vs 85 times).
+- Scripted human-like chaser (coordinator request, `escape.rs::Chaser`) as a league opponent: `VisionOpts.chaser_p/chaser_min/chaser_max`, `oxidish_env.VecEnv(chaser_p=..)`, `train_ppo5.py --chaser-p`. In that fraction of worlds a player driven by the Chaser hunts learner 0 (mass tracks 1.5-3 x the learner, +500 per 125 ticks, floor 100, cap 20000, respawns when eaten). Smoke-tested only (random learners die 119 vs 85 times).
 
 ### Training run `m7a`
 `runs/vision/m7a`, init and anchor p6, 40 worlds x 5 learners, 4 env threads, 898 iterations in 3.0 h (~9-12 s each while evals ran), lr 4e-5 cosine, rollout 48. Hunter overrode 3-6% of the learners' decisions. Learner leader share inside its own league rose 0.06 (it 70) -> 0.15-0.18 (it 480-890),
@@ -663,8 +663,8 @@ planhv 10-12, c34h 5-9, plan 2-5 in all runs. The new net takes mass from its p6
 - Next step for the chaser idea: evaluate m7b with `ogar escape` and on the other held-out sets before drawing conclusions, try a smaller `--chaser-p` (0.1) from the start of training rather than as a continuation.
 
 ### Files
-`rust/ogar/src/vision.rs`, `rust/ogar_py/src/lib.rs`, `rl/vision/train_ppo5.py`, `trainM7.sh`, `trainM7b.sh`, `endlessM7.sh`, `exportM7.sh`, `bot/vision_m7a_final.json`, `bot/vision_m7a_ck_*.json`, `bot/vision_m7b_final.json`.
-Models (gitignored): `runs/vision/export/vision_m7a_final.onnx`, checkpoints `runs/vision/m7a`, `m7b`; evals `runs/vision/evals/M7_*`, logs `logs/m7/`.
+`server/src/vision.rs`, `training/env/src/lib.rs`, `training/rl/train_ppo5.py`, `trainM7.sh`, `trainM7b.sh`, `endlessM7.sh`, `exportM7.sh`, `bots/specs/best/vision.json`, `bots/specs/vision_m7a_ck_*.json`, `bots/specs/vision_m7b_final.json`.
+Models (gitignored): `bots/models/vision_m7a_final.onnx`, checkpoints `runs/vision/m7a`, `m7b`; evals `runs/vision/evals/M7_*`, logs `logs/m7/`.
 
 ## M8 status (2026-10-10): m7a continued for 9 h (m8a), stopped early by the user (branch `worktree-agent-aa7a0565d655ef1b1`)
 
@@ -696,4 +696,4 @@ Only the baseline: m7a final on seed 21000 = **48%** (p6_hunt 31, planhv 10, c34
 Final checkpoint on all 5 held-out sets, field 2 for m8a, the `ogar escape` drill (m7a vs m8a), the m8b control, a repro of m7a on this binary. Single training seed. No checkpoint was promoted (picking the best of the 3000/11000 numbers would be selection bias).
 
 ### Files
-`trainM8.sh`, `endlessM8.sh`, `exportM8.sh`, `queueM8.sh`, `streamM8.sh`, `rl/vision/train_ppo5.py` (`--hunt-frozen`), specs `bot/vision_m8a_*.json`. Models (gitignored): `runs/vision/m8a`, `runs/vision/export/vision_m8a_*.onnx`; evals `runs/vision/evals/M8_*`, logs `logs/m8/`.
+`trainM8.sh`, `endlessM8.sh`, `exportM8.sh`, `queueM8.sh`, `streamM8.sh`, `training/rl/train_ppo5.py` (`--hunt-frozen`), specs `bots/specs/vision_m8a_*.json`. Models (gitignored): `runs/vision/m8a`, `bots/models/vision_m8a_*.onnx`; evals `runs/vision/evals/M8_*`, logs `logs/m8/`.

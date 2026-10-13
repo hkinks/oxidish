@@ -4,8 +4,8 @@ A commander (a human, a Claude session over MCP, Jev, or a heuristic) gives a ru
 hunt, where to go, when to hide, whether splitting is allowed, when to shoot viruses at a big player or eat the pieces of
 a popped one. The bot keeps its reflexes: **an order never walks a bot into a bigger cell's danger radius.**
 
-Everything lives in the Rust server (`rust/ogar`, control port) and works for rule bots, the planner
-(`bot/plan_c34.json`) and vision agents (`"kind":"vision"`). The Python side (`arena/commander*.py`) is only glue:
+Everything lives in the Rust server (`server`, control port) and works for rule bots, the planner
+(`bots/specs/plan_c34.json`) and vision agents (`"kind":"vision"`). The Python side (`training/eval/commander*.py`) is only glue:
 the autonomous loop, the LLM backends and the MCP server.
 
 ## Orders
@@ -77,7 +77,7 @@ path the reply is `png-base64:...`).
 
 ## MCP server
 
-`arena/commander_mcp.py` (Python, official `mcp` SDK, FastMCP; pinned `mcp<2`). Python rather than Rust `rmcp` because the
+`training/eval/commander_mcp.py` (Python, official `mcp` SDK, FastMCP; pinned `mcp<2`). Python rather than Rust `rmcp` because the
 server is a thin stdio-to-TCP adapter (about 100 lines), `uv run --with` needs no build step or repo dependency, and the
 SDK's `Image` type returns frames properly.
 
@@ -87,7 +87,7 @@ Tools: `list_agents()`, `scene(agent)`, `leaderboard()`, `order(agent, verb, arg
 Register it yourself (nothing in this repo touches your config):
 
 ```
-claude mcp add agar-commander -- uv run --no-project --with "mcp<2" python arena/commander_mcp.py --port 9601
+claude mcp add agar-commander -- uv run --no-project --with "mcp<2" python training/eval/commander_mcp.py --port 9601
 ```
 
 Run it from the repo root (or give the absolute script path). Host/port/token: `--host --port --token` or
@@ -97,12 +97,12 @@ planner's scene, and have it hunt the leader for 15 s". Tested end to end with a
 
 ## Autonomous loop
 
-`arena/commander.py`: every 1.5 game seconds per commanded agent it reads `scene`, asks a backend for one order, applies it
+`training/eval/commander.py`: every 1.5 game seconds per commanded agent it reads `scene`, asks a backend for one order, applies it
 (verb with a 4 s ttl, plus a split on/off), and logs to `logs/commander-*.jsonl` (time, latency, mass, decision, replies).
 A failing backend leaves the last order running until it expires.
 
 ```
-uv run python -m arena.commander --port 9601 --agents plan --backend heuristic
+uv run python -m training.eval.commander --port 9601 --agents plan --backend heuristic
 ```
 
 Backends (credentials are only read from the environment, never from or into files):
@@ -110,11 +110,11 @@ Backends (credentials are only read from the environment, never from or into fil
 | backend | needs | what it does |
 |---|---|---|
 | `heuristic` | nothing | rules over the scene: hide/flee when an eater is close, otherwise hunt (or harvest) the best prey, split only when safe, virus-split a big player when nothing else is on |
-| `jev` | `JEV_API_KEY` (optional `JEV_BASE_URL`, `JEV_MODEL`) | `bot/systemone.py` `/v1/systemone`: a `choice` question over the options (farm, flee, hide, hunt pN, harvest, virus-split) plus a `noul` split question, like `bot/strategist.py` |
+| `jev` | `JEV_API_KEY` (optional `JEV_BASE_URL`, `JEV_MODEL`) | `bots/specs/systemone.py` `/v1/systemone`: a `choice` question over the options (farm, flee, hide, hunt pN, harvest, virus-split) plus a `noul` split question, like `bots/specs/strategist.py` |
 | `anthropic` | `ANTHROPIC_API_KEY` (optional `COMMANDER_MODEL`, default `claude-haiku-4-5-20251001`) | one Messages API call per decision, the model answers one JSON order line; replies are validated before they are sent |
 
 On the machine where this was built neither `JEV_API_KEY` nor `ANTHROPIC_API_KEY` was set, so only the heuristic backend
-was run live; the Jev and Anthropic paths are unit-tested with fakes (`arena/test_commander.py`) but have not talked to the
+was run live; the Jev and Anthropic paths are unit-tested with fakes (`training/eval/test_commander.py`) but have not talked to the
 real APIs.
 
 ## Running it on a live server
@@ -122,7 +122,7 @@ real APIs.
 The live servers' control ports are 9601 (for 9600) and, if started with one, 9701. Start the commander against it:
 
 ```
-uv run python -m arena.commander --port 9601 --agents c3_4 plan --backend heuristic
+uv run python -m training.eval.commander --port 9601 --agents c3_4 plan --backend heuristic
 ```
 
 (commands go to every agent whose name starts with a given prefix; agent names are `<spec name>-<i>`, see `agents`). Orders
@@ -132,12 +132,12 @@ proportionally more.
 
 ## Measurement
 
-`arena/commander_eval.py`: per world an `ogar serve` (own ports) with the candidate, the usual rule-bot field (champ, r2g9,
+`training/eval/commander_eval.py`: per world an `ogar serve` (own ports) with the candidate, the usual rule-bot field (champ, r2g9,
 safe, ramp_r2, ramp300) and 8 server bots; leader share = share of 5 s samples (after a 2 game-minute warm-up) where the heaviest
 player of the whole world is the candidate; mean mass counts death as 0.
 
 Heuristic backend, 20 game-min per world, server at speed 4 (the heuristic has no latency; LLM backends must use
-`--speed 1`), same seeds on and off, `plan` = `bot/plan_c34.json`, `vis` = `bot/vision_bc3.json`
+`--speed 1`), same seeds on and off, `plan` = `bots/specs/plan_c34.json`, `vis` = `bots/specs/vision_bc3.json`
 (`runs/cmd_{plan,plan12,vis}_{off,heuristic}.json`):
 
 | base bot | worlds (seeds) | commander | leader share % | mean mass | orders |
@@ -160,7 +160,7 @@ layer adds little unless it knows something the bot does not.
 
 ## Tests
 
-- `rust/arena_client/src/order.rs`: hunt retargets the policy, the Flee reflex vetoes orders, a bigger target is refused,
+- `bots/brain/src/order.rs`: hunt retargets the policy, the Flee reflex vetoes orders, a bigger target is refused,
   `split off` vetoes the split, harvest prefers the cloud, goto, virus-split shoots a virus (and does not without the order).
-- `rust/ogar/src/commander.rs`: order parsing (accepted and rejected forms), base64.
-- `arena/test_commander.py`: heuristic choices, option building, reply validation, Jev mapping with a fake client, loop step.
+- `server/src/commander.rs`: order parsing (accepted and rejected forms), base64.
+- `training/eval/test_commander.py`: heuristic choices, option building, reply validation, Jev mapping with a fake client, loop step.

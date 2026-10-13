@@ -29,4 +29,4 @@ export = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["arena", "rl/vision"]
+testpaths = ["arena", "training/rl"]

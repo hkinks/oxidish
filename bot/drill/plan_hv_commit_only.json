@@ -1,5 +1,0 @@
-{
- "kind": "plan",
- "base": "bot/drill/hv_commit_only.json",
- "need_loss": 0.1
-}

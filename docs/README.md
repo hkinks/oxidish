@@ -9,7 +9,7 @@
 | [code-map.md](code-map.md) | module roles and how the pieces fit |
 | [showcase.md](showcase.md) | the real-server showcase for playing against the bots |
 | [sparring.md](sparring.md) | sparring opponents: hunters (virus play), strength and endless results |
-| [training.md](training.md) | **start here to build a bot**: connecting bots (specs, websocket protocol, `ogar_py`), testing, fast training |
+| [training.md](training.md) | **start here to build a bot**: connecting bots (specs, websocket protocol, `oxidish_env`), testing, fast training |
 | [status.md](status.md) | **summary**: where the project stands, best bots, results, how to run, next steps |
 | [learnings.md](learnings.md) | **what we learned**: metrics, genes, vision bot, RL pitfalls, commander |
 | [harvest-drill.md](harvest-drill.md) | `ogar drill`: how well agents eat a giant that just popped on a virus; oracle, mass-chain bound, results |
@@ -17,11 +17,11 @@
 Layout:
 
 ```
-bot/     rule-based bot: game state, steering, food routing, tactics, params (genes)
-arena/   real-server harness: MultiOgar wrapper (server/arena.js), clients, tournaments, evolution, QD, showcase
+bots/specs/     rule-based bot: game state, steering, food routing, tactics, params (genes)
+training/eval/   real-server harness: MultiOgar wrapper (server/arena.js), clients, tournaments, evolution, QD, showcase
 rl/      networks and trainers: real-server PPO (ppo.py), sim PPO (ppo_sim.py), evolution (evo.py)
 sim/     GPU simulator, encoder, tournaments, viewer
-rust/    Rust crates: arena_client (bot policies), ogar (server, engine, vision bot), ogar_py, game_client
+rust/    Rust crates: arena_client (bot policies), ogar (server, engine, vision bot), oxidish_env, oxidish
 runs/    checkpoints and genomes (not in git)
 logs/    logs and TensorBoard (not in git)
 vendor/  MultiOgar server and web client (not in git; see plan.md and client-hook.patch)

@@ -1,19 +1,19 @@
 # Lookahead planner (`"kind": "plan"`)
 
-Rust-only policy (`rust/arena_client/src/plan.rs`) that wraps a rule bot and, when it predicts a loss for the
+Rust-only policy (`bots/brain/src/plan.rs`) that wraps a rule bot and, when it predicts a loss for the
 rule bot's action, simulates a ~2 game-second horizon and may replace the action. Runs in `ogar match|serve`,
-`arena_client run`, `arena.endless`, `arena.tournament --engine ogar`.
+`arena_client run`, `training.eval.endless`, `training.eval.tournament --engine ogar`.
 
 ```json
-{"kind": "plan", "base": "bot/c3_4.json", "need_loss": 0.1}
+{"kind": "plan", "base": "bots/specs/c3_4.json", "need_loss": 0.1}
 ```
-`base` is a rule-bot spec path (or an inline spec object). Example: `bot/plan_c34.json`.
+`base` is a rule-bot spec path (or an inline spec object). Example: `bots/specs/plan_c34.json`.
 
 ## How it decides
 1. The base rule bot always decides first (its state - food router, tactics, velocity tracking - stays coherent).
 2. Gate: if no rival player cell is within `gate` (900) of one of our cells, the base action stands.
 3. A light sim is built from the Snapshot only: our cells, the nearest `max_rivals` rival players (grouped by colour),
-   viruses and the nearest `max_food` pellets (static). Physics follow rust/ogar: speed by size, eat rule
+   viruses and the nearest `max_food` pellets (static). Physics follow server: speed by size, eat rule
    (size ratio 1.15, overlap rule), split boost, virus pop, border. No merging or decay inside the horizon.
 4. Rivals move greedily; the opening is priced under three rival scenarios (0 adversarial: what can eat us chases us,
    what we can eat runs; 1 inertial: keeps its observed heading; 2 greedy: food / prey / flee) and the score is
@@ -40,13 +40,13 @@ opening), `AGAR_PLAN_VAL=1` (prediction vs reality of rival positions and our ma
 Counters (in the per-agent stats): `plan_steps`, `plan_gated`, `plan_deep`, `plan_override`, `plan_split`, `plan_us`.
 
 ## Rival model v2 (rule-bot rivals) - 2026-10-07 experiment, result: no gain
-`"rival_bots": ["runs/final_champion.json"]` + scenario 3 (4, 5, ... = further genomes): each of the `rule_rivals` (4)
+`"rival_bots": ["bots/specs/final_champion.json"]` + scenario 3 (4, 5, ... = further genomes): each of the `rule_rivals` (4)
 nearest rivals decides with `heuristic_plan` + `steer` of that genome from its own view (`rule_view` 1100 px around it,
 built from the sim world), heading blended with its old one (`rule_inert` 0.3); a farming rival that knows < `rule_food`
 pellets keeps its heading. Extra scenarios for diagnosis: 5 stationary, 6 inertial at observed speed, 7 inertial + turn
-rate (`turn_damp`). Spec: `bot/plan2_c34.json` (scenarios [3, 0, 1]).
+rate (`turn_damp`). Spec: `bots/specs/plan2_c34.json` (scenarios [3, 0, 1]).
 
-Rival position error (px, `uv run python -m arena.plan_val --scen 0 1 2 3`, 15 game-min, planner among 10 rule bots +
+Rival position error (px, `uv run python -m training.eval.plan_val --scen 0 1 2 3`, 15 game-min, planner among 10 rule bots +
 8 MultiOgar bots; "near" = rivals within 600 px gap of us at decision time; 0.4 / 1 / 2 s):
 | model | all rivals | near rivals |
 |---|---|---|
@@ -74,7 +74,7 @@ v1 with horizon 75 35 / 26 (longer horizons hurt: the model is not good enough),
 When no loss is predicted but a valuable edible rival (mass >= `opp_min_frac` x ours, gap < `opp_range`) is near, the
 planner also prices interception openings (aim at the rival's position `opp_lead` ticks ahead) plus the usual headings /
 splits over a short horizon (`opp_horizon` 30 ticks, scenarios `opp_scenarios` [1, 0]) and overrides the base action if
-the best beats it by `opp_margin` x mass. Off by default; specs `bot/plan3_c34.json` (margin 0.08), `bot/plan3b_c34.json` (0.2).
+the best beats it by `opp_margin` x mass. Off by default; specs `bots/specs/plan3_c34.json` (margin 0.08), `bots/specs/plan3b_c34.json` (0.2).
 Leader share, seed bases 3000 / 11000 / 21000 / 31000 / 41000: plan3 22 / 32 / 24 / 23 / 19 (mean 24) vs v1 46 / 35 / 38 /
 38 / 44 (mean 40.2); plan3b 35 on 3000 (stopped). Wall time +60 %. The sim over-rates chases (winner's curse again) and
 every override breaks the base bot's farming routes.

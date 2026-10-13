@@ -5,18 +5,18 @@ How do our bots die when a bigger player chases them, and does a better flee fix
 at a wall, 101 in a corner), 29% while split into pieces, 10% without fleeing at all; against all players 50% / 33%. The typical
 scene: a 6.5-7k bot flees a 10k human in a straight line with the gap near 1000 for 3 s, is herded into the wall and killed.
 
-The drill is a seeded, repeatable version of that scene: `ogar escape` (`rust/ogar/src/escape.rs`), tables from
-`arena/escape_report.py`. It is separate from `ogar drill` (own subcommand and file) to keep the merge with the harvest/hunter work easy.
+The drill is a seeded, repeatable version of that scene: `ogar escape` (`server/src/escape.rs`), tables from
+`training/eval/escape_report.py`. It is separate from `ogar drill` (own subcommand and file) to keep the merge with the harvest/hunter work easy.
 
 ## Running it
 
-    # models are gitignored: copy runs/vision/export/*.onnx and runs/vision/ort from the main checkout; nets need
+    # models are gitignored: copy bots/models/*.onnx and runs/vision/ort from the main checkout; nets need
     # OGAR_DLL_DIRS (torch wheel lib) and OGAR_VISION_EP=cuda_plain, --threads 2 (the faster "cuda" backend died in cuDNN with several threads)
-    cargo build --release -j 2 --manifest-path rust/ogar/Cargo.toml        # your own CARGO_TARGET_DIR
-    ogar escape --agents c3_4=bot/c3_4.json evade=bot/escape/evade.json oracle=oracle \
+    cargo build --release -j 2 --manifest-path server/Cargo.toml        # your own CARGO_TARGET_DIR
+    ogar escape --agents c3_4=bots/specs/c3_4.json evade=bots/specs/escape/evade.json oracle=oracle \
                 --our-mass 1000,3000,7000 --ratio 1.4,2,4 --gap 1200,2000 --place open,wall,corner [--virus 0,1] [--pieces 1,2,4] \
                 --reps 30 --seed 1 --threads 3 --horizon 60 --out runs/esc/x.json
-    python -m arena.escape_report runs/esc/x.json [--base c3_4] [--what pooled|cells|methods]
+    python -m training.eval.escape_report runs/esc/x.json [--base c3_4] [--what pooled|cells|methods]
 
 Every list option is a grid (one cell per combination); rep `i` of every agent and cell uses seed `seed + i` (paired). `OGAR_ESC_TRACE=1`
 prints a line per second. Tests: `cargo test --release escape` (ogar) and `cargo test --release evade` (arena_client).
@@ -51,9 +51,9 @@ where it died (`wall`/`corner`/`open`; `pieces` if it had several cells in the l
 
 ## Agents measured
 
-c3_4 (`bot/c3_4.json`), `plan` (`bot/plan_c34.json`), the wall genes (`nowall` = c3_4 with `wall_danger = wall_wary = 0`; c3_4 itself has 370 / 428),
-other existing flee genes on c3_4 (`flee_plan`, `flee_pp` = + `flee_pieces`, `esc_split`; specs in `bot/escape/`), the new `evade*` genes, the scripted `oracle` of the
-harvest drill (flees along the clearest of 16 directions, walls counted as threats), and the vision nets `p6`, `p3` (`bot/vision_p6.json`, `vision_p3.json`).
+c3_4 (`bots/specs/c3_4.json`), `plan` (`bots/specs/plan_c34.json`), the wall genes (`nowall` = c3_4 with `wall_danger = wall_wary = 0`; c3_4 itself has 370 / 428),
+other existing flee genes on c3_4 (`flee_plan`, `flee_pp` = + `flee_pieces`, `esc_split`; specs in `bots/specs/escape/`), the new `evade*` genes, the scripted `oracle` of the
+harvest drill (flees along the clearest of 16 directions, walls counted as threats), and the vision nets `p6`, `p3` (`bots/specs/vision_p6.json`, `vision_p3.json`).
 The variants `runs/ab/c34_*` of the earlier wall-gene searches were not run separately (c3_4 already carries the wall genes of that search; `nowall` is the ablation).
 
 ## Results
@@ -168,8 +168,8 @@ Of the mass the bots lost to the human: pieces 35% (22 scenes), no_flee 31% (17 
   phase (it is not in the scene steps), so whether the p6h losses were commits into the human is **not known**. What the code does say (`reflex.rs`): the hunter's commit override was ahead of every other reflex and nothing vetoed it for a near giant except `Hunter::step`'s own checks.
 * The rule-based check "would a flee fire here?" (lethal reach + 600, as `evade_trigger`) is true in the first half of the scene (about 1.5 s before the loss) in **all 17** `no_flee`, 25 of 25 `fled`, 18 of 22 `pieces` scenes.
 
-Fix built (`rust/arena_client/src/reflex.rs`, spec key `reflex_flee`, off by default): when the rule bots' flee check says Flee (genes `bot/c3_4.json` with `flee_margin` = `reflex_flee_margin`, default 1.0, and the evade trigger
-`reflex_flee_trigger`, default 600), the net's aim is replaced by the look-ahead flee (`evade.rs`; in pieces the rule bots' own flee steering) and **nothing overrides it, not even the hunter's commit**. Specs: `bot/escape/vision_p6f.json`,
+Fix built (`bots/brain/src/reflex.rs`, spec key `reflex_flee`, off by default): when the rule bots' flee check says Flee (genes `bots/specs/c3_4.json` with `flee_margin` = `reflex_flee_margin`, default 1.0, and the evade trigger
+`reflex_flee_trigger`, default 600), the net's aim is replaced by the look-ahead flee (`evade.rs`; in pieces the rule bots' own flee steering) and **nothing overrides it, not even the hunter's commit**. Specs: `bots/specs/escape/vision_p6f.json`,
 `vision_p3f.json`, `vision_p6hf.json` (= p6 / p3 / p6h + `"reflex_flee": true`). Unit test `flee_reflex_takes_the_aim_from_a_net_that_does_not_run`.
 
 Drill (M 3000 / 7000 x ratio 1.4 / 2 / 4 x gap 1200 x open / wall, 12 reps per cell, 144 per agent, CUDA `cuda_plain`):
@@ -192,7 +192,7 @@ What the evasion would fix of the human losses, as far as I can say: the `no_fle
 the replay of a recorded scene needs the Python policy, not the Rust reflex. `pieces` (35%): no flee-in-pieces rule helped in the drill (four variants), so the evasion fixes none of it; the guard (`reflex_guard`, M5) is the remaining tool. `fled` (27%): the `evade` search
 is as good as the best rule bots in the drill and not better in endless: not a fix.
 
-## The `evade` genes (`rust/arena_client/src/evade.rs`, all off by default)
+## The `evade` genes (`bots/brain/src/evade.rs`, all off by default)
 
 When the rule bot decides to flee and `evade = 1`, the aim is the first move of the best path of a search tree: 4 moves (1 + 1 + 2 + 3 s) over 8 headings (4096 paths, 7 s), cell speed `88 * size^-0.439`, walls clamp the cell (a
 heading into a wall becomes a slide, a corner a dead end), poppable viruses on the way score minus infinity, every chaser (the nearest four) follows a lead pursuit at its own speed (optionally round viruses).
@@ -219,10 +219,10 @@ Parameter sweep on M 3000 x 1.4 / 2 / 4 x gap 1200 x open + wall (N = 40 per cel
 
 ## Endless gate
 
-`arena.endless --engine inproc`, 8 worlds x 240 game-min, candidate x2 against the field of `endless5.sh` (champ, r2g9, safe, ramp_r2, ramp300, each x2), leader share of the candidate per seed base, rule: a gene is kept only if
+`training.eval.endless --engine inproc`, 8 worlds x 240 game-min, candidate x2 against the field of `endless5.sh` (champ, r2g9, safe, ramp_r2, ramp300, each x2), leader share of the candidate per seed base, rule: a gene is kept only if
 the mean improves **and** it wins >= 3 of the 5 sets.
 
-Leader share (dominance in brackets), binary of this branch, `OGAR_BIN` copy, 8 worlds x 240 min per cell, field of `endless5.sh`. `c3_4` lineup (candidate = `bot/c3_4.json` + genes):
+Leader share (dominance in brackets), binary of this branch, `OGAR_BIN` copy, 8 worlds x 240 min per cell, field of `endless5.sh`. `c3_4` lineup (candidate = `bots/specs/c3_4.json` + genes):
 
 | set | c3_4 | + `nowall` (wall genes off) | + `evade` | + `evade` at total mass >= 1500 (`evade_big`) |
 |---|---|---|---|---|

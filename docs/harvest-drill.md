@@ -2,8 +2,8 @@
 
 How well does an agent eat a giant that has just burst on a virus? The user's claim: "a good 500 mass hunter can
 completely overtake a 5k mass giant" after it pops. Until now we had only a coarse counter (`harvest_mass` per hour in
-`ogar endless`). The drill is a direct, repeatable, seeded measurement: `ogar drill` (`rust/ogar/src/drill.rs`), tables
-from `arena/drill_report.py`.
+`ogar endless`). The drill is a direct, repeatable, seeded measurement: `ogar drill` (`server/src/drill.rs`), tables
+from `training/eval/drill_report.py`.
 
 Short answer (numbers below, N = 100 reps per cell for the headline, 50 for the sweeps, 95% intervals):
 
@@ -20,15 +20,15 @@ Short answer (numbers below, N = 100 reps per cell for the headline, 50 for the 
 
 ## Running it
 
-    # from the repo root (models are gitignored: copy runs/vision/export/*.onnx and runs/vision/ort from the main checkout)
-    cargo build --release -j 2 --manifest-path rust/ogar/Cargo.toml        # use your own CARGO_TARGET_DIR
-    ogar drill --agents c3_4=bot/c3_4.json harv=bot/drill/c34_harvest_r25.json p3=bot/vision_p3.json oracle=oracle \
+    # from the repo root (models are gitignored: copy bots/models/*.onnx and runs/vision/ort from the main checkout)
+    cargo build --release -j 2 --manifest-path server/Cargo.toml        # use your own CARGO_TARGET_DIR
+    ogar drill --agents c3_4=bots/specs/c3_4.json harv=bots/specs/drill/c34_harvest_r25.json p3=bots/specs/vision_p3.json oracle=oracle \
                --scenario giant_pop,giant_popped --our-mass 500 --giant-mass 5000 --dist 600 --giant-mode bot \
                --reps 100 --seed 1 --threads 4 --out runs/drill/x.json
-    python -m arena.drill_report runs/drill/x.json [--what main|diag|compact]
+    python -m training.eval.drill_report runs/drill/x.json [--what main|diag|compact]
 
 `--our-mass`, `--giant-mass`, `--dist`, `--scenario` and `--giant-mode` take comma lists (a cell per combination).
-Other options: `--competitor spec.json --comp-mass 800`, `--giant-bot spec.json` (default `bot/c3_4.json`), `--horizon 30`
+Other options: `--competitor spec.json --comp-mass 800`, `--giant-bot spec.json` (default `bots/specs/c3_4.json`), `--horizon 30`
 (seconds after the pop; windows 10/20/30 and the horizon if longer), `--map`, `--food-mult` (default 2, as the endless evaluator).
 Agent specs: any rule bot / planner / vision json (`name=file.json`), or `oracle`, `oracle_near`, `oracle_nosplit`, `oracle_view`, `oracle_brave`.
 Rep `i` of every agent and cell uses seed `seed + i` (paired comparison). Vision nets need a CUDA setup
@@ -68,9 +68,9 @@ Intervals: 95%; Wilson for rates, mean +- 1.96 se for means. N = 100 gives +-8pp
 
 ## Agents
 
-* Rule bots: `c3_4` (`bot/c3_4.json`), `plan` (`bot/plan_c34.json`, the lookahead planner on c3_4), `harv` (c3_4 + `harvest = 1`), `harv_r25` / `harv_r4` (+ `harvest_range` 2.5 / 4), `plan_harv` / `plan_harv_r25`
-  (planner on those). Variants are in `bot/drill/`.
-* Vision nets `p6` (`bot/vision_p6.json`) and `p3` (`bot/vision_p3.json`), split off, CUDA.
+* Rule bots: `c3_4` (`bots/specs/c3_4.json`), `plan` (`bots/specs/plan_c34.json`, the lookahead planner on c3_4), `harv` (c3_4 + `harvest = 1`), `harv_r25` / `harv_r4` (+ `harvest_range` 2.5 / 4), `plan_harv` / `plan_harv_r25`
+  (planner on those). Variants are in `bots/specs/drill/`.
+* Vision nets `p6` (`bots/specs/vision_p6.json`) and `p3` (`bots/specs/vision_p3.json`), split off, CUDA.
 * **Scripted harvesters** (not an upper bound, see below): `oracle` sees every piece on the map, scores a piece by mass / (edge distance + 100) like the rule bots do, flees along the clearest of 16 directions when a piece that can eat it is within 200 (500 if its half could eat us too), only approaches pieces with no such threat within size + 100 and not on its path, splits onto a piece when its half cell would still eat it and no threat is near (almost never), eats food otherwise.
   `oracle_view` only sees its view box; `oracle_near` takes the nearest piece (the user's rule); `oracle_nosplit`; `oracle_brave` ignores all danger (to see what fear costs).
 * The vision-reflex variants of the other agent (vision-m5) are **not on master yet**, so they are not measured. Drop their specs into `--agents` when they land.
@@ -342,10 +342,10 @@ What would raise the numbers (not tried): approach pieces from the pop point as 
 
 ## Lurk-and-harvest hunter (results, 2026-10-09)
 
-Code: `rust/arena_client/src/hunter.rs` (module + 21 unit tests on constructed snapshots), genes in `params.rs`, hooked into `HeuristicPolicy::act`
+Code: `bots/brain/src/hunter.rs` (module + 21 unit tests on constructed snapshots), genes in `params.rs`, hooked into `HeuristicPolicy::act`
 (policy.rs; the planner defers to it while it acts), scripted drill agent `hunter[:gene=v,...]`. All genes default to 0 (off).
-Specs: `bot/drill/hv_commit_only.json` (the recommended set: c3_4 + `commit commit_kite split_harvest race hv_memory=3 hv_still=100`),
-`bot/drill/hv_full.json` (+ `lurk`), `plan_*` wrappers. `OGAR_HUNTER_TRACE=1` prints the decisions.
+Specs: `bots/specs/best/rules.json` (the recommended set: c3_4 + `commit commit_kite split_harvest race hv_memory=3 hv_still=100`),
+`bots/specs/drill/hv_full.json` (+ `lurk`), `plan_*` wrappers. `OGAR_HUNTER_TRACE=1` prints the decisions.
 
 Behaviours: **lurk** (giant >= `lurk_ratio` x our mass within `lurk_virus_range` of a virus: stand at lunge reach + `lurk_margin` from it, on the far side of the
 virus; abort to the normal bot when it closes on us or another threat appears; `lurk_shoot` feeds the virus into it via the existing shoot tactic with
@@ -381,7 +381,7 @@ so 637/1275 pieces are only caught when they drift to us; a random search over t
 Deaths at t = 1 s (a thrown 1275/2521 piece landing on us) are the biggest single cause of deaths; `landing_of` dodges it only after the first step's velocity is seen.
 Rule bots only see their view box: at D >= 1000 in `giant_popped` the pieces are never seen, which is why the scripted hunter (oracle fallback walks to unseen pieces) beats the rule-bot variants there.
 
-### Endless leader share (`arena.endless --engine inproc`, usual rule-bot field: champ, r2g9, safe, ramp_r2, ramp300 x2 each + 8 server bots; candidate x2; 8 worlds x 240 min)
+### Endless leader share (`training.eval.endless --engine inproc`, usual rule-bot field: champ, r2g9, safe, ramp_r2, ramp300 x2 each + 8 server bots; candidate x2; 8 worlds x 240 min)
 
 | candidate | 3000 | 11000 | 21000 | 31000 | 41000 | mean | deaths/h | harvest_mass/h |
 |---|---|---|---|---|---|---|---|---|
@@ -389,7 +389,7 @@ Rule bots only see their view box: at D >= 1000 in `giant_popped` the pieces are
 | c3_4 + hv_commit_only | **43** | **44** | **38** | **37** | **37** | **39.8** | 14.6 | 18.6k |
 | c3_4 + hv_full (lurk) | 42 | 40 | 32 | 32 | 31 | 35.4 | 15.7 | 19.8k |
 
-Counters from `--stats-out` (candidate rows, 320 player-hours each; the sum of the 5 sets; `rl/vision/skillstats.py` keys). Gate (mean improves, >= 3 of 5): **hv_commit_only passes (5/5, +8.2)**;
+Counters from `--stats-out` (candidate rows, 320 player-hours each; the sum of the 5 sets; `training/rl/skillstats.py` keys). Gate (mean improves, >= 3 of 5): **hv_commit_only passes (5/5, +8.2)**;
 hv_full wins 3 of 5 strictly (one tie at 32, one loss) with a smaller mean gain: **lurk does not pay on endless, keep it off** (it helps `giant_pop` in the drill only).
 The coordinator's M5 warning (a harvest reflex that chases pieces into the crowd that popped the target raised deaths 57%) does not show up here: deaths/h fell 9% (16.0 -> 14.6) because
 every step re-plays the pursuers (all cells that outweigh us, whatever their owner), thrown pieces and lunge circles, and `race` drops pieces a rival reaches first. "Mass lost per hour" is not in the counters, so it was not compared.
@@ -413,7 +413,7 @@ pieces that it did not pick.
 
 | candidate | 3000 | 11000 | 21000 | 31000 | 41000 | mean |
 |---|---|---|---|---|---|---|
-| `bot/plan_c34.json` | 46 | 35 | 38 | 38 | 44 | 40.2 |
-| `bot/drill/plan_hv_commit_only.json` | 49 | 46 | 49 | 47 | 57 | **49.6** |
+| `bots/specs/plan_c34.json` | 46 | 35 | 38 | 38 | 44 | 40.2 |
+| `bots/specs/best/planner.json` | 49 | 46 | 49 | 47 | 57 | **49.6** |
 
 Wins all 5 sets (+3 to +13). Best rule bot so far; on the live server as `planhv`.

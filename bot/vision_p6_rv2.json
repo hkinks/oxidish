@@ -1,1 +1,0 @@
-{"kind":"vision","model":"runs/vision/export/vision_p6.onnx","split":false,"reflex_virus":true,"reflex_params":{"danger_margin":250,"shoot_safety":1.0}}

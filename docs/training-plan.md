@@ -13,9 +13,9 @@ Goal: train agar.io bots fully locally by running many bots against each other f
 
 What exists:
 - `arena/server/arena.js` launches the vendored server and patches it at runtime (vendor files untouched). It adds CLI config, a seeded `Math.random`, and lockstep stepping: agents send 0xC8 to register, the server sends 0xC9 <tick> after every `--sync` ticks, and agents ack with the same 0xC9 packet once they've acted. It also turns off the IP limit, coordinate scrambling, wall-clock timeouts and the "minion" check, which flags non-browser clients.
-- `arena/client.py` is a headless protocol-6 client. It keeps a cell table from UpdateNodes deltas and tracks per-agent stats: avg mass (mass-time integral / ticks), peak mass, deaths, kills.
-- `arena/policies.py` holds the policies (`route`, `field`). They reuse `bot/steer.py` + `bot/farm.py`, with `bot/modes.py` standing in for Jev (rule-based flee/hunt/farm).
-- `arena/match.py` runs one match (`--watch` opens a spectator window, `--max-tps 50` = 2x realtime). `arena/tournament.py` runs N seeded matches in parallel, one server per match on a free port, and reports a 95% CI over matches.
+- `training/eval/client.py` is a headless protocol-6 client. It keeps a cell table from UpdateNodes deltas and tracks per-agent stats: avg mass (mass-time integral / ticks), peak mass, deaths, kills.
+- `training/eval/policies.py` holds the policies (`route`, `field`). They reuse `bots/specs/steer.py` + `bots/specs/farm.py`, with `bots/specs/modes.py` standing in for Jev (rule-based flee/hunt/farm).
+- `training/eval/match.py` runs one match (`--watch` opens a spectator window, `--max-tps 50` = 2x realtime). `training/eval/tournament.py` runs N seeded matches in parallel, one server per match on a free port, and reports a 95% CI over matches.
 
 Measured:
 - **Deterministic**: the same seed gives identical results, so variants can be compared on identical matches.
@@ -24,7 +24,7 @@ Measured:
 
 Original plan for this phase:
 
-- `arena/` Python client that speaks the MultiOgar WebSocket protocol directly, with no browser. Packets are the ones the client uses: 0x00 play, 0x10 mouse, 0x11 split, plus parsing of 0x10 node updates and 0x11/0x12/0x14.
+- `training/eval/` Python client that speaks the MultiOgar WebSocket protocol directly, with no browser. Packets are the ones the client uses: 0x00 play, 0x10 mouse, 0x11 split, plus parsing of 0x10 node updates and 0x11/0x12/0x14.
 - Server patch `--fast`: no sleep in `timerLoop`, configurable map size, food and bot counts, plus a seed for reproducibility.
 - Run N servers (one per CPU core; the 5800X has 8 cores, so about 6–7 arenas) × M bots each.
 - Spectate: one browser window on any arena with the client's spectate mode, so you can watch matches live.
@@ -96,12 +96,12 @@ the evolved champions. Split/W are explored only above mass 200 (cheap explorati
 champ and r2g9 are statistically tied (45/55) and clearly beat all other bots (and the
 baselines ~90%). No method improved on them: r4 (8 generations incl. virus skills) and
 PPO p4 (~120 iterations past its best checkpoint) both plateaued. **Final champion:
-runs/final_champion.json** (r3 champion_008). PPO state kept at runs/rl/p4_final.pt
+bots/specs/final_champion.json** (r3 champion_008). PPO state kept at runs/rl/p4_final.pt
 (resume: `python -m rl.ppo --run p5 --init runs/rl/p4_final.pt --anchor runs/rl/bc.pt ...`).
 
 ## 2026-10-04: QD search and guided NN g6-g8 (plateau)
 
-- **QD (arena/qd.py, run q1):** MAP-Elites over playstyles. It found 14/27 niches, among them virus shooters, self-feeders and double-splitters. None of 8 champion duels (12 matches each, fresh seeds) beat runs/final_champion.json. It saturated at round 29.
+- **QD (training/eval/qd.py, run q1):** MAP-Elites over playstyles. It found 14/27 niches, among them virus shooters, self-feeders and double-splitters. None of 8 champion duels (12 matches each, fresh seeds) beat bots/specs/final_champion.json. It saturated at round 29.
 - **Guided NN:**
   - g6: lr 3e-4. It peaked around iteration 54, then drifted down.
   - g7: lr 1e-4, anchored to g6 ckpt54.
@@ -124,8 +124,8 @@ runs/final_champion.json** (r3 champion_008). PPO state kept at runs/rl/p4_final
 
 ## 2026-10-04 (later): real-server fixes, then the switch to the simulator
 
-- **Virus steering (bot/steer.py, gene `virus_detour`):**
-  - The champion used to freeze when food pulled it toward a virus it would pop on. It was stuck 25% of the time, 24% of it at a virus (`arena/stuck.py`).
+- **Virus steering (bots/specs/steer.py, gene `virus_detour`):**
+  - The champion used to freeze when food pulled it toward a virus it would pop on. It was stuck 25% of the time, 24% of it at a virus (`training/eval/stuck.py`).
   - It now steers around the nearest blocking virus, on the near side. That cut stuck time to 2.6%.
   - In 36 matches the new champion beat the old one 69% and nnbest 69% (avg mass 306 vs 231 vs 264). It is the default now.
 - **Big-cell hunting (gene `big_hunt`):** grow hunt range and freeze the prey floor above 1500 mass. It **lost** to plain farming 33-67 in 24 long 2x-food matches, so it is off by default.
@@ -150,7 +150,7 @@ runs/final_champion.json** (r3 champion_008). PPO state kept at runs/rl/p4_final
 
 ### The cautious champion beats every other bot in long games
 
-`runs/champ_safe.json` (copy: `bot/champ_safe.json`) is the final champion with three changes: `flee_margin` 0.2 -> 1.0 (flee at the full danger radius), `split_safety` 0.5 -> 2.0, and `half_split_safety` on. In 15-game-min real-server matches (2x food, 8 MultiOgar bots), two independent fresh-seed runs of 14 matches:
+`runs/champ_safe.json` (copy: `bots/specs/champ_safe.json`) is the final champion with three changes: `flee_margin` 0.2 -> 1.0 (flee at the full danger radius), `split_safety` 0.5 -> 2.0, and `half_split_safety` on. In 15-game-min real-server matches (2x food, 8 MultiOgar bots), two independent fresh-seed runs of 14 matches:
 
 | run | safe | champ | r2g9 | nnbest | g4net | safe's deaths vs others' |
 |---|---|---|---|---|---|---|
@@ -167,7 +167,7 @@ In long games, dying is what costs: each death throws away accumulated mass, and
 - `r2g9_safe` (r2g9's genome with the same caution changes, 28 matches): 6.48, a tie (field 6.40-6.71).
 - Long games are very noisy (+-0.3 per 14 matches), and all champion-family bots tie within it. A consistent winner needs a qualitatively different player, not gene tweaks.
 
-**Pooled over 70 long matches** (4 standard-field runs; `uv run python -m arena.pooled runs/bench/safe_long_*.json`):
+**Pooled over 70 long matches** (4 standard-field runs; `uv run python -m training.eval.pooled runs/bench/safe_long_*.json`):
 
 | bot | log-mass |
 |---|---|
@@ -188,7 +188,7 @@ safe consistently beats champ, r2g9 and nnbest in long games, but not yet g4net.
 
 Its remaining leaks: ~1.5 own virus pops per 15 min, and 36% of its big losses are whole-on-whole (caught by a bigger cell).
 
-**Searching around safe** (`arena.long_search`: CMA-ES over 15 genes; long games vs champ x3 + r2g9 x3; 10 generations of 6 candidates x 6 matches):
+**Searching around safe** (`training.eval.long_search`: CMA-ES over 15 genes; long games vs champ x3 + r2g9 x3; 10 generations of 6 candidates x 6 matches):
 - Per-candidate scores are too noisy for CMA to make headway.
 - Re-checking the top 6, the mean genome and safe on 14 fresh seeds, nobody beat safe clearly: best cand +0.52, safe +0.39, mean genome +0.10 (margin over the field).
 - `long1` (the best, `runs/champ_long1.json`) in the full field (28 matches): 6.65, the top score with the fewest deaths, but only 46% vs r2g9 in that run.
@@ -197,7 +197,7 @@ Its remaining leaks: ~1.5 own virus pops per 15 min, and 36% of its big losses a
 
 The full field mixes interactions: cautious bots profit from reckless ones feeding each other. So each candidate x2 now plays one opponent x2, plus the 8 MultiOgar bots, for 28 fresh-seed 15-min matches.
 
-**safe** (`bot/champ_safe.json`):
+**safe** (`bots/specs/champ_safe.json`):
 
 | vs | wins | 95% interval |
 |---|---|---|
@@ -213,7 +213,7 @@ r2g9 kills 67 per match to safe's 37: its hunting out-grows safe's survival.
 | variant | wins | 95% interval |
 |---|---|---|
 | `safe_r2` (always cautious) | 54% | 36-70% |
-| `ramp_r2` (`bot/r2g9_ramp800.json`: r2g9's genes, cautious above 800 mass) | **75%** | 57-87% |
+| `ramp_r2` (`bots/specs/r2g9_ramp800.json`: r2g9's genes, cautious above 800 mass) | **75%** | 57-87% |
 
 ramp_r2 is now dueling champ, nnbest, g4net and safe.
 
@@ -227,19 +227,19 @@ ramp_r2 is now dueling champ, nnbest, g4net and safe.
 | nnbest | 54% | 36-70% |
 | safe | 43% | 27-61% |
 
-Neither new bot beats all four existing bots: safe fails against r2g9, ramp_r2 against nnbest. Next: r2g9's genes, cautious from 300 mass (`runs/r2g9_ramp300.json`).
+Neither new bot beats all four existing bots: safe fails against r2g9, ramp_r2 against nnbest. Next: r2g9's genes, cautious from 300 mass (`bots/specs/r2g9_ramp300.json`).
 
 
 ### c3_4: the first bot that consistently beats all the others (2026-10-07)
 
-`bot/c3_4.json` = ramp300 (r2g9's genes + caution ramp) + the wall genes (`wall_danger` ~370, `wall_wary` ~430: react earlier when pinned on a wall; keep off walls while a bigger player is near) + a CMA-ES search from there on the Rust engine (`arena.long_search --engine ogar`), which moved caution to ~790 mass, a smaller danger margin and more threat avoidance while farming.
+`bots/specs/c3_4.json` = ramp300 (r2g9's genes + caution ramp) + the wall genes (`wall_danger` ~370, `wall_wary` ~430: react earlier when pinned on a wall; keep off walls while a bigger player is near) + a CMA-ES search from there on the Rust engine (`training.eval.long_search --engine ogar`), which moved caution to ~790 mass, a smaller danger margin and more threat avoidance while farming.
 
 How it got there:
-- Loss mining (`arena.losses`): 82% of the rule bots' lost mass was lost at walls -> wall genes (ww400 beat 6 of 7 bots on Node, not ramp_r2).
+- Loss mining (`training.eval.losses`): 82% of the rule bots' lost mass was lost at walls -> wall genes (ww400 beat 6 of 7 bots on Node, not ramp_r2).
 - Fast evaluation: the Rust bot client (`--rust`) and the Rust MultiOgar port (`--engine ogar`, ~500 long matches/h/core) made gene search and A/Bs affordable; the Rust engine overrates candidates vs ramp_r2, so finalists are judged on Node.
 - Bug fixes found on the way: corner shaking while hunting, split pieces jamming (mouse 600 ahead of the main cell), wall-clock exploration memory, and split pieces popping on viruses (`piece_detour`, no gain on Node).
 
-**Verdict** (`arena.verdict`, real MultiOgar server, 15 game-min, 2x food, 8 server bots, the whole field incl. the nets in every match, 348 fresh seeds; runs/verdict_c3_4.json + runs/verdict_c3_4_b.json):
+**Verdict** (`training.eval.verdict`, real MultiOgar server, 15 game-min, 2x food, 8 server bots, the whole field incl. the nets in every match, 348 fresh seeds; runs/verdict_c3_4.json + runs/verdict_c3_4_b.json):
 
 | c3_4 vs | win rate | 95% Wilson |
 |---|---|---|

@@ -1,1 +1,0 @@
-{"kind": "vision", "model": "runs/vision/export/vision_p6.onnx", "split": false, "reflex_hunter": true, "reflex_hunter_genes": "bot/drill/hv_commit_only.json", "reflex_guard": true, "reflex_flee": true}

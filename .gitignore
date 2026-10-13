@@ -2,29 +2,16 @@
 logs/
 .venv/
 __pycache__/
-vendor/
-node_modules/
 *.pt
-# runs/: checkpoints and search state stay local; the genomes at the top level are kept
-runs/*
-!runs/*.json
-!runs/r2/
-runs/r2/*
-!runs/r2/champion_009.json
-# the two vision models the best bots use (6 MB each)
-!runs/vision/
-runs/vision/*
-!runs/vision/export/
-runs/vision/export/*
-!runs/vision/export/vision_m7a_final.onnx
-!runs/vision/export/vision_m7a_final.json
-!runs/vision/export/vision_p6.onnx
-!runs/vision/export/vision_p6.json
+# local working data: checkpoints, search state, match rows
+runs/
+# models: only the ones the shipped specs need are tracked (6 MB each)
+bots/models/*
+!bots/models/vision_m7a_final.onnx
+!bots/models/vision_m7a_final.json
+!bots/models/vision_p6.onnx
+!bots/models/vision_p6.json
+!bots/models/vision_bc3.onnx
+!bots/models/vision_bc3.json
 target/
 target-*/
-
-# raw match rows (large, regenerable)
-runs/ab_*.json
-runs/verdict_*.json
-runs/losses_*.json
-runs/bench_*.json
