@@ -389,7 +389,7 @@ sets), and a live server with a human and other strong bots did not show the gai
 Each step beats the previous one on at least 4 of 5 sets (a2 vs a1 is a tie: 51.4 vs 50.8).
 
 ### Held-out field (not seen in training)
-Lineup: `vis` x2, `plan` (plan_c34) x2, `plan2` (plan2_c34) x1, `bc3` (vision_bc3) x2, `apos` x1, `hvirus`
+Lineup: `vis` x2, `plan` (plan_c34) x2, `plan2` (plan2_c34) x1, `bc3` (vision_bc3) x2, `apos` x1 (a heuristic bot since removed from the repo), `hvirus`
 (hunter_virus) x1 + 8 server bots (`endlessH.sh`). The league pool in the p6/p7 runs is disjoint from it, except for the
 frozen bc3 slots in `train_ppo2.py` (requested by the coordinator; bc3 stays in the held-out field, so p6/p7 are not
 fully held out against it).
@@ -624,7 +624,7 @@ The chaser continuation (`m7b`) was worse on the one set run (53).
   reward = M5 terms (d log mass, +0.05 while #1, + 0.5 x big-victim mass / own mass, - 1.0 x own mass eaten / own mass, - 3 death); league pool = old pool + `plan_hv_commit_only` x2 entries + `hv_commit_only` x2 entries (5 drawn per world, giant opponent in 25% of worlds);
   frozen slots (2 of 5 per world; the other 3 learn) = bc3, p6 (anchor), p6, p6 + hunter (listed twice) and snapshots of the policy + hunter (twice) every 40 its; KL anchor to p6 decaying 0.2 -> 0.01; KL early stop 0.05 and only after >= 4 minibatches
   (the M5 stall: it fired after 1-3 minibatches; here `nmb` stayed 18-22 of 22); no split head (hunter does the safe splits); value pre-training 20 its with the policy fixed.
-- Scripts: `trainM7.sh`, `endlessM7.sh field spec seed` (field 1 = held-out, field 2 = champions), `exportM7.sh run ckpt` (ONNX export needs `onnx`+`onnxscript`, installed with `uv pip install --target logs/pyextra`; ONNX-vs-torch parity was not checked, onnxruntime python is not installed).
+- Scripts (now `scripts/train.sh`, `scripts/eval.sh field spec seed` with field 1 = held-out and field 2 = champions, `scripts/export.sh run ckpt`) (ONNX export needs `onnx`+`onnxscript`, installed with `uv pip install --target logs/pyextra`; ONNX-vs-torch parity was not checked, onnxruntime python is not installed).
 - Scripted human-like chaser (coordinator request, `escape.rs::Chaser`) as a league opponent: `VisionOpts.chaser_p/chaser_min/chaser_max`, `ogar_py.VecEnv(chaser_p=..)`, `train_ppo5.py --chaser-p`. In that fraction of worlds a player driven by the Chaser hunts learner 0 (mass tracks 1.5-3 x the learner, +500 per 125 ticks, floor 100, cap 20000, respawns when eaten). Smoke-tested only (random learners die 119 vs 85 times).
 
 ### Training run `m7a`
