@@ -48,7 +48,7 @@ import ogar_py
 
 DT = 0.08
 
-# League pool (disjoint from the held-out field plan_c34, plan2_c34, vision_bc3, apos, hunter_virus).
+# League pool (disjoint from the held-out field plan_c34, plan2_c34, vision_bc3, hunter_virus).
 LEAGUE = FIELD + [
     ("c3_4", "bot/c3_4.json", 1),
     ("shoot", "runs/ab/c34_shootthr.json", 1),

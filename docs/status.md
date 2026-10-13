@@ -11,7 +11,7 @@ seed set, seed sets 3000/11000/21000/31000/41000, `arena.endless --engine inproc
 only if the mean improves and it wins ≥ 3 of 5 sets.
 
 **Vision bot** (grayscale frames rendered in the engine, ONNX net in `ogar`), held-out field (opponents never trained
-against: plan ×2, plan2, bc3 ×2, apos, hunter_virus + 8 server bots):
+against: plan ×2, plan2, bc3 ×2, apos, hunter_virus + 8 server bots; `apos` was a heuristic bot since removed from the repo):
 
 | spec | what | 3000 | 11000 | 21000 | 31000 | 41000 | mean |
 |---|---|---|---|---|---|---|---|
@@ -63,7 +63,7 @@ all vision nets) and after fleeing into walls (27%) ([human/2026-10-09-hunters.m
 - **Commander**: control-port orders (`hunt`, `harvest`, `virus-split`, `goto`, `flee`, ...), `scene`/`frame`, an MCP
   server (`arena/commander_mcp.py`) and an LLM/heuristic loop; the heuristic did not help, LLM backends untested (no
   keys). [commander.md](commander.md)
-- Cleanup: dead code removed, `apos` split, `parse_lineup` deduplicated, `.gitignore` for raw match rows.
+- Cleanup: dead code removed, `parse_lineup` deduplicated, `.gitignore` for raw match rows.
 
 ## How to run
 

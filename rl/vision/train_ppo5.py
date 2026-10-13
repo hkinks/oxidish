@@ -39,7 +39,7 @@ import ogar_py
 
 DT = 0.08
 
-# League pool (disjoint from the held-out field plan_c34, plan2_c34, vision_bc3, apos, hunter_virus).
+# League pool (disjoint from the held-out field plan_c34, plan2_c34, vision_bc3, hunter_virus).
 HUNT_GENES = "bot/drill/hv_commit_only.json"
 LEAGUE = FIELD + [
     ("planhv", "bot/drill/plan_hv_commit_only.json", 1),

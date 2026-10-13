@@ -117,7 +117,7 @@ class Params:
     giant_target_bonus: float = 6.0
     giant_food_pull: float = 3.0
     # virus staging (bot/tactics.py): >0.5: with the shoot skill on and no shot lined up, walk round a virus
-    # (within shoot_walk) to its far side from a big player (the way AposBot stages a feed), shoot_standoff
+    # (within shoot_walk) to its far side from a big player, shoot_standoff
     # from its edge, so the next tick's shot goes through the virus at them. Off by default; not evolved.
     shoot_stage: float = 0.0
     shoot_walk: float = 1200.0

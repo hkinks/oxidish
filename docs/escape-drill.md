@@ -184,7 +184,7 @@ Drill (M 3000 / 7000 x ratio 1.4 / 2 / 4 x gap 1200 x open / wall, 12 reps per c
 The gain is at the walls and for the 2x chaser (p6: 0-25% at 60 s there, p6f: 25-58%); in the open at M 3000 x 1.4 and in `our7000/x4/wall` (0% -> 0%) there is none.
 This is the same pattern as the rule bots (the nets had no flee at all; the look-ahead flee is as good as the rule bots' best on this scene).
 
-Endless, vision candidate p6 (held-out field of `endlessH.sh`: plan x2, plan2, bc3 x2, apos, hunter_virus), `--engine inproc`, 8 worlds x 240 min:
+Endless, vision candidate p6 (held-out field of `endlessH.sh`: plan x2, plan2, bc3 x2, apos (a heuristic bot since removed), hunter_virus), `--engine inproc`, 8 worlds x 240 min:
 
 ' + vp6f + '
 

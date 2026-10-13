@@ -70,7 +70,7 @@ def orders() -> str:
 
 @mcp.tool()
 def add_agent(spec: str, count: int = 1) -> str:
-    """Add rule/plan/vision agents. spec = `name=path/to/genome.json` (server-side path) or `route`/`field`/`apos`."""
+    """Add rule/plan/vision agents. spec = `name=path/to/genome.json` (server-side path) or `route`/`field`."""
     return ctl.cmd(f"add {spec}:{count}")
 
 

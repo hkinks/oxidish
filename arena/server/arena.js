@@ -297,8 +297,8 @@ if (args.record) {
             const pt = ws.playerTracker;
             if (ws.isAgent || !pt || pt.isRemoved || !pt.cells.length) continue;
             const name = pt._name || "";
-            // not MultiOgar's own bots, nor our AposBots (they connect like a browser)
-            if (pt.isBot || /^apos-/.test(name)) continue;
+            // not MultiOgar's own bots
+            if (pt.isBot) continue;
             const mine = pt.cells.map(c => [c.nodeID, r(c.position.x), r(c.position.y), r(c._size)]);
             const o = [];
             for (const c of pt.viewNodes) {

@@ -527,17 +527,15 @@ impl HeuristicPolicy {
     }
 }
 
-/// Any policy kind a spec can select: the rule bot (default) or the AposBot port ({"kind": "apos"}).
+/// Any policy kind a spec can select: the rule bot (default) or the lookahead planner ({"kind": "plan"}).
 pub enum Policy {
     Heuristic(HeuristicPolicy),
-    Apos(crate::apos::AposPolicy),
     Plan(crate::plan::PlanPolicy),
 }
 
 impl Policy {
     pub fn from_spec(spec: &serde_json::Value) -> Policy {
         match spec.get("kind").and_then(|k| k.as_str()) {
-            Some("apos") => Policy::Apos(crate::apos::AposPolicy::from_spec(spec)),
             Some("plan") => Policy::Plan(crate::plan::PlanPolicy::from_spec(spec)),
             _ => Policy::Heuristic(HeuristicPolicy::from_spec(spec)),
         }
@@ -546,24 +544,21 @@ impl Policy {
     pub fn act(&mut self, s: &mut Snapshot) -> Out {
         match self {
             Policy::Heuristic(p) => p.act(s),
-            Policy::Apos(p) => p.act(s),
             Policy::Plan(p) => p.act(s),
         }
     }
 
-    /// Set or clear the commander's order (rule bots with modes only; AposBot ignores it).
+    /// Set or clear the commander's order (rule bots with modes only).
     pub fn set_order(&mut self, o: Option<Order>) {
         match self {
             Policy::Heuristic(p) => p.order = o,
             Policy::Plan(p) => p.base.order = o,
-            Policy::Apos(_) => {}
         }
     }
 
     pub fn reset(&mut self) {
         match self {
             Policy::Heuristic(p) => p.reset(),
-            Policy::Apos(p) => p.reset(),
             Policy::Plan(p) => p.reset(),
         }
     }
@@ -572,7 +567,6 @@ impl Policy {
     pub fn last_plan(&self) -> Option<(Plan, &'static str)> {
         match self {
             Policy::Heuristic(p) => p.last_plan,
-            Policy::Apos(_) => None,
             Policy::Plan(p) => p.base.last_plan, // the planner's base rule bot decides first (its plan and stage)
         }
     }
@@ -580,7 +574,6 @@ impl Policy {
     pub fn counters(&self) -> &Counters {
         match self {
             Policy::Heuristic(p) => &p.counters,
-            Policy::Apos(p) => &p.counters,
             Policy::Plan(p) => &p.base.counters,
         }
     }

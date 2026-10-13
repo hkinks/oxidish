@@ -8,7 +8,7 @@
 | [sim-training.md](sim-training.md) | PPO self-play in the simulator, the evolution loop, viewer, evaluation |
 | [code-map.md](code-map.md) | module roles and how the pieces fit |
 | [showcase.md](showcase.md) | the real-server showcase for playing against the bots |
-| [sparring.md](sparring.md) | sparring opponents: AposBot port, hunters (virus play), strength and endless results |
+| [sparring.md](sparring.md) | sparring opponents: hunters (virus play), strength and endless results |
 | [status.md](status.md) | **summary**: where the project stands, best bots, results, how to run, next steps |
 | [learnings.md](learnings.md) | **what we learned**: metrics, genes, vision bot, RL pitfalls, commander |
 | [harvest-drill.md](harvest-drill.md) | `ogar drill`: how well agents eat a giant that just popped on a virus; oracle, mass-chain bound, results |

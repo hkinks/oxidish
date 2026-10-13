@@ -8,7 +8,6 @@ uv run python -m arena.showcase --port 9500 --follow nn --food-mult 2 --log-play
 cd vendor/agarian-client && python -m http.server 8090 --bind 127.0.0.1          # game client: http://127.0.0.1:8090
 uv run python -m arena.join --port 9500 --agents champ=runs/final_champion.json:2 r2g9=runs/r2/champion_009.json:2 \
     nn36=runs/rl/nn36.pt:1 g4net=runs/rl/g4_show.pt:2 route:1 field:1 nnbest=runs/rl/final_nn.pt:2
-PYTHONIOENCODING=utf-8 uv run python -m arena.apos --port 9500 --count 2       # AposBots
 uv run python -m arena.autojoin --port 9500 --interval 1200 >> logs/autojoin.txt 2>&1
 ```
 

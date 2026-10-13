@@ -26,7 +26,7 @@ import ogar_py
 DT = 0.08
 
 # League pool: the endless field (champ, r2g9, safe, ramp_r2, ramp300) + c3_4, shoot, two hunters and other rule-bot
-# variants. DISJOINT from the held-out field (plan_c34, plan2_c34, vision_bc3, apos, hunter_virus, see endlessH.sh).
+# variants. DISJOINT from the held-out field (plan_c34, plan2_c34, vision_bc3, hunter_virus, see endlessH.sh).
 # Each world draws `--pick` of them. (Vision-net opponents are not available inside ogar_py.)
 LEAGUE = FIELD + [
     ("c3_4", "bot/c3_4.json", 1),

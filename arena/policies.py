@@ -138,7 +138,6 @@ class JevPolicy(HeuristicPolicy):
 POLICIES = {
     "route": {"farm": "route"},
     "field": {"farm": "field"},
-    "apos": {"kind": "apos"},
 }
 
 
@@ -191,9 +190,6 @@ class HybridPolicy:
 def build(spec: dict):
     if spec.get("kind") == "hybrid":   # {"kind": "hybrid", "ckpt": net, "params": champion Params}
         return HybridPolicy(spec["ckpt"], spec.get("params"), spec.get("near", 1000.0), mode=spec.get("mode", "any"))
-    if spec.get("kind") == "apos":  # {"kind": "apos", "aggressive": true, "step_ms": 80}: native AposBot port
-        from bot.apos import AposPolicy
-        return AposPolicy(spec.get("aggressive", True), spec.get("step_ms", 80.0), spec.get("memory_ms", 3000.0))
     if spec.get("kind") == "jev":  # {"kind": "jev", "params": {...champion Params...}}
         return JevPolicy(spec.get("params"), spec.get("farm", "route"))
     if spec.get("kind") == "nn":  # {"kind": "nn", "ckpt": "runs/rl/p1/latest.pt"}
