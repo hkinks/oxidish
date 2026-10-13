@@ -35,10 +35,11 @@ struct Args {
     selftest: bool,
     screenshot: Option<String>,
     shot_at: f64,
+    font: Option<String>,
 }
 
 fn parse_args() -> Args {
-    let mut a = Args { server: None, name: None, spectate: false, whole_map: false, settings_open: false, control_open: false, zoom: None, selftest: false, screenshot: None, shot_at: 9.0 };
+    let mut a = Args { server: None, name: None, spectate: false, whole_map: false, settings_open: false, control_open: false, zoom: None, selftest: false, screenshot: None, shot_at: 9.0, font: None };
     let mut it = std::env::args().skip(1);
     while let Some(k) = it.next() {
         match k.as_str() {
@@ -58,9 +59,10 @@ fn parse_args() -> Args {
             "--control-open" => a.control_open = true,
             "--zoom" => a.zoom = it.next().and_then(|v| v.parse().ok()),
             "--screenshot" => a.screenshot = it.next(),
+            "--font" => a.font = it.next(),
             "--shot-at" => a.shot_at = it.next().and_then(|v| v.parse().ok()).unwrap_or(9.0),
             "-h" | "--help" => {
-                println!("game_client [--server ws://127.0.0.1:9600 (Rust server; Node showcase: 9500)] [--name NICK] [--selftest] [--screenshot out.png [--shot-at SECS]]");
+                println!("game_client [--server ws://127.0.0.1:9600 (Rust server; Node showcase: 9500)] [--name NICK] [--selftest] [--screenshot out.png [--shot-at SECS]] [--font ubuntu|nunito|inter|quicksand|FILE.ttf]");
                 std::process::exit(0);
             }
             other => eprintln!("ignoring unknown argument {other}"),
@@ -109,13 +111,21 @@ struct Fonts {
     font: Option<Font>,
 }
 
+/// Bundled fonts (assets/fonts, licences alongside); the first is the default.
+const FONTS: [(&str, &[u8]); 4] = [
+    ("ubuntu", include_bytes!("../assets/fonts/Ubuntu-Bold.ttf")),
+    ("nunito", include_bytes!("../assets/fonts/Nunito-ExtraBold.ttf")),
+    ("inter", include_bytes!("../assets/fonts/Inter-Bold.ttf")),
+    ("quicksand", include_bytes!("../assets/fonts/Quicksand-Bold.ttf")),
+];
+
 impl Fonts {
-    fn load() -> Fonts {
-        for p in ["C:/Windows/Fonts/arialbd.ttf", "C:/Windows/Fonts/arial.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"] {
-            if let Ok(bytes) = std::fs::read(p) {
-                if let Ok(f) = load_ttf_font_from_bytes(&bytes) {
-                    return Fonts { font: Some(f) };
-                }
+    /// A bundled font by name, else a .ttf path, else the default; macroquad's built-in font if all fail.
+    fn load(name: &str) -> Fonts {
+        let bytes = FONTS.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, b)| b.to_vec()).or_else(|| std::fs::read(name).ok());
+        for b in [bytes, Some(FONTS[0].1.to_vec())].into_iter().flatten() {
+            if let Ok(f) = load_ttf_font_from_bytes(&b) {
+                return Fonts { font: Some(f) };
             }
         }
         Fonts { font: None }
@@ -655,6 +665,9 @@ async fn main() {
     if let Some(n) = &args.name {
         set.nick = n.clone();
     }
+    if let Some(f) = &args.font {
+        set.font = f.clone();
+    }
     let mut game = Game {
         world: {
             let mut w = World::new();
@@ -673,7 +686,7 @@ async fn main() {
         last_mouse: 0.0,
         last_repeat: 0.0,
         last_score: 0,
-        fonts: Fonts::load(),
+        fonts: Fonts::load(&set.font),
         whole_map: false,
         following: None,
         saved: set.clone(),

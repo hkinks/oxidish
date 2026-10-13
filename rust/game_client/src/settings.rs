@@ -27,6 +27,8 @@ pub struct Settings {
     pub control_token: String,
     /// spectating starts in whole-map mode (Q toggles to following the largest player)
     pub spectate_whole_map: bool,
+    /// bundled font name (ubuntu, nunito, inter, quicksand) or a .ttf path
+    pub font: String,
 }
 
 impl Default for Settings {
@@ -47,6 +49,7 @@ impl Default for Settings {
             dark: false,
             control_addr: String::new(),
             control_token: String::new(),
+            font: "ubuntu".into(),
         }
     }
 }
@@ -89,6 +92,9 @@ impl Settings {
         if let Some(x) = v.get("control_token").and_then(Value::as_str) {
             s.control_token = x.to_string();
         }
+        if let Some(x) = v.get("font").and_then(Value::as_str) {
+            s.font = x.to_string();
+        }
         s.auto_zoom = b("auto_zoom", s.auto_zoom);
         s.spectate_whole_map = b("spectate_whole_map", s.spectate_whole_map);
         s.show_mass = b("show_mass", s.show_mass);
@@ -120,7 +126,7 @@ impl Settings {
             "show_mass": self.show_mass, "show_names": self.show_names, "show_grid": self.show_grid,
             "show_fps": self.show_fps, "vsync": self.vsync, "fps_cap": self.fps_cap,
             "smoothing": self.smoothing, "outline": self.outline, "dark": self.dark,
-            "control_addr": self.control_addr, "control_token": self.control_token,
+            "control_addr": self.control_addr, "control_token": self.control_token, "font": self.font,
         });
         let _ = std::fs::write(path, serde_json::to_string_pretty(&v).unwrap_or_default());
     }
