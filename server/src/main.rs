@@ -157,6 +157,12 @@ fn run_endless_cmd(a: &Args) -> Result<(), String> {
 }
 
 fn run_serve_cmd(a: &Args) -> Result<(), String> {
+    // a live server runs one world, so the vision nets may use a few inference threads (headless runs default to 1:
+    // they run many worlds in parallel)
+    if std::env::var_os("OGAR_VISION_THREADS").is_none() {
+        let n = std::thread::available_parallelism().map(|n| (n.get() / 4).clamp(1, 4)).unwrap_or(1);
+        std::env::set_var("OGAR_VISION_THREADS", n.to_string());
+    }
     let o = ogar::server::ServeOpts {
         full_view: a.kv.contains_key("full-view"),
         port: a.num("port", 9600u16)?,

@@ -7,8 +7,9 @@ Runs `--worlds` independent Rust-engine worlds (server `serve`, unthrottled, rul
 server bots) for `--game-min` game-minutes each, never resetting (dead players respawn, giants keep growing). Every
 world is cut into `--window-min` game-minute windows; in each window every bot family's mass is averaged over its
 copies and the window's samples. Dominance = share of windows in which the candidate family is the heaviest bot
-family (server bots excluded); also per opponent, the share of windows the candidate is ahead of it. The user's bar
-(2026-10-07): ~90% dominance.
+family (server bots excluded); also per opponent, the share of windows the candidate is ahead of it. It also reports
+leader share (share of 15-s samples where the candidate family is #1 on the leaderboard), the metric the README uses.
+The bar printed for dominance (~90%) was the early target; the later goal was 80% leader share.
 """
 
 import argparse

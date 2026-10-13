@@ -197,7 +197,9 @@ impl Reflex {
 
     /// The net's action `a` for this decision, possibly replaced by a reflex.
     pub fn apply(&mut self, s: &Snapshot, a: Out) -> Out {
-        let Some(me) = s.main().copied() else { return a };
+        if s.main().is_none() {
+            return a;
+        }
         let p = self.genes.params_for(s.total_mass()).clone();
         let flee = self.flee_aim(s);
         // the hunter must see every snapshot (velocities, piece memory), so it steps first, even when another reflex then wins

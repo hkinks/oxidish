@@ -6,8 +6,10 @@
 //! lineup yields the very same per-world samples. Vision agents of ALL worlds decide in one batched forward pass per
 //! decision tick (workers render frames, the coordinator runs the net, workers apply the actions).
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Barrier, Mutex};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
+#[cfg(feature = "vision-net")]
+use std::sync::{atomic::AtomicBool, Barrier};
 use std::time::Instant;
 
 use serde_json::{json, Value};

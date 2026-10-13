@@ -11,4 +11,4 @@ if [ "$F" = "1" ]; then
 else
   AG="vis=bots/specs/$name.json:2 vision-old=bots/specs/best/vision-old.json:2 planner=bots/specs/best/planner.json:2 rules=bots/specs/best/rules.json:2 plan=bots/specs/plan_c34.json:1"
 fi
-${PYTHON:-python} -m training.eval.endless --engine inproc --threads $T --cpus 12 --candidate vis --agents $AG --worlds 8 --game-min 240 --seed-base $S --out runs/vision/evals/f${F}_${name}_e$S.json --stats-out runs/vision/evals/f${F}_${name}_e$S.stats.json > logs/eval/f${F}_${name}_$S.txt 2>&1
+${PYTHON:-uv run python} -m training.eval.endless --engine inproc --threads $T --cpus 12 --candidate vis --agents $AG --worlds 8 --game-min 240 --seed-base $S --out runs/vision/evals/f${F}_${name}_e$S.json --stats-out runs/vision/evals/f${F}_${name}_e$S.stats.json > logs/eval/f${F}_${name}_$S.txt 2>&1

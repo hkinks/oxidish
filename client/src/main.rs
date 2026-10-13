@@ -61,17 +61,40 @@ fn parse_args() -> Args {
             "--screenshot" => a.screenshot = it.next(),
             "--font" => a.font = it.next(),
             "--shot-at" => a.shot_at = it.next().and_then(|v| v.parse().ok()).unwrap_or(9.0),
-            "-h" | "--help" => {
-                println!("oxidish [--server ws://127.0.0.1:9600] [--name NICK] [--selftest] [--screenshot out.png [--shot-at SECS]] [--font ubuntu|nunito|inter|quicksand|FILE.ttf]");
-                std::process::exit(0);
-            }
+            "-h" | "--help" => {}
             other => eprintln!("ignoring unknown argument {other}"),
         }
     }
     a
 }
 
+const HELP: &str = "oxidish: native agar.io client (MultiOgar protocol 6)
+
+usage: oxidish [options]
+  --server URL          server to join (default from settings, ws://127.0.0.1:9600)
+  --name NICK           nickname
+  --spectate            start spectating (follows the largest player)
+  --whole-map           start spectating the whole map
+  --zoom Z              fixed zoom instead of automatic
+  --font NAME|FILE      ubuntu (default), nunito, inter, quicksand, or a .ttf file
+  --config PATH         settings file (default: %APPDATA%\\agario-client\\settings.json or ~/.config/agario-client/settings.json)
+  --settings-open       open the settings panel (F1) at start
+  --control-open        open the server control panel (F2) at start
+  --selftest            scripted bot plays (steers, eats, splits, ejects) and logs [auto] lines
+  --screenshot FILE     save a screenshot after --shot-at seconds (default 9) and quit; the scripted bot
+                        plays meanwhile (or spectates with --spectate / --whole-map)
+  --shot-at SECS
+  -h, --help            this help
+
+keys: mouse steer, Space split, W eject, Tab spectate, Q follow / whole map, Z auto zoom, M +500 mass,
+      +/- server speed, Esc or F1 settings, F2 server control";
+
 fn window_conf() -> Conf {
+    // window_conf runs before the window opens, so --help never opens one
+    if std::env::args().skip(1).any(|a| a == "-h" || a == "--help") {
+        println!("{HELP}");
+        std::process::exit(0);
+    }
     Conf {
         window_title: "oxidish".to_owned(),
         window_width: 1280,
