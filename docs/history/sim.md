@@ -1,3 +1,5 @@
+> Historical: describes code removed from the repo; see [README.md](README.md).
+
 # GPU agar.io simulator (`sim/`)
 
 A batched PyTorch re-implementation of the MultiOgar arena we train against (`arena/server/arena.js`,

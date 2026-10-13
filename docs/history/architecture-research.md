@@ -1,3 +1,5 @@
+> Historical: describes code removed from the repo; see [README.md](README.md).
+
 # Network architectures for the agar.io bots: research shortlist (2026-10-05)
 
 Our current net: a 48x48 grid with 15 channels plus 16 scalars, then 3 convs (32 s1, 64 s2, 64 s2), then an MLP 256x2, with a separate critic and heads for 17 moves, split and eject. Its problems:

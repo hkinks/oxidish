@@ -13,7 +13,9 @@ be #1 on the leaderboard ~80% of the time in endless worlds on the Rust server (
 - **Evaluate on a held-out field.** PPO trained against the evaluation field scored 78.8% there and 43% on a disjoint
   field (and 3% live against a human). Any opponent set used in training must not be the evaluation set.
 - **Live play is the final test.** The user led 81% of the time on 9600 against all bots; human sessions are recorded
-  (`--record`) and are the best regression set (`training.eval.human_report`, `training.eval.scene_replay`).
+  (`--record`) and are the best regression set (`training.eval.human_report`).
+- **Compare leader shares only within the same opponent field and engine.** The same net scores 42% in one field and
+  58% in another (p6), and vision runs diverge between `--engine inproc` and `serve`.
 - **Use the fast evaluator** (`training.eval.endless --engine inproc`): bit-identical for rule bots, ~1.3-1.5x faster for vision.
 
 ## Rule bots and genes
@@ -64,12 +66,28 @@ be #1 on the leaderboard ~80% of the time in endless worlds on the Rust server (
   help the planner (28 → 25%, noise) and hurt the vision bot (22 → 2.5%): overriding the net's aim point throws away
   what it sees. LLM backends are untested (no keys). See [commander.md](commander.md).
 
-## Escape drill (docs/escape-drill.md)
+## Escape drill ([escape-drill.md](escape-drill.md))
 
 - `ogar escape`: a scripted human-like chaser (lead pursuit, herding to the wall, split-kill by the real reach) against our bot, 30/60 s survival. In it c3_4's wall genes (`wall_danger`, `wall_wary`) hurt
   (off: +3.6 s, 26% -> 40% alive at 60 s) and a look-ahead flee (`evade*` genes, off) helps big bots; **neither moves leader share in endless** (0 of 3 variants pass the 3-of-5 gate) and `evade` doubles small-bot deaths.
   A drill with one chaser and no field rewards what the field punishes. The `no_flee` human scenes of 2026-10-09 are all vision nets (the classifier sees no rule mode); a rule-flee reflex for the nets (`reflex_flee`) won the drill (+5 s) and lost endless (44-45% vs 55%).
 - No flee-in-pieces variant (guard every piece, close up the pieces, `flee_pieces`, `flee_plan`) beat the old flee in the pieces scenario.
+
+## Earlier phases (pre-Rust)
+
+Lessons from the browser bot, the Node harness and the GPU simulator ([history/](history/README.md)):
+
+- **Simulator-trained nets did not transfer.** PPO in the PyTorch simulator never matched the rule bots on the real
+  server; every sim result needed a real-server check, and fidelity checks against MultiOgar were the bottleneck
+  ([history/sim.md](history/sim.md), [history/sim-training.md](history/sim-training.md)).
+- **PPO on hand-made feature grids almost never split** and farmed worse than a simple routine; precise geometry was
+  learned poorly. That motivated rendering plain frames for a CNN ([history/architecture-research.md](history/architecture-research.md)).
+- **Genes saturate and caution wins long games.** Evolution and MAP-Elites over rule-bot genes plateaued (the QD
+  search found playstyles but no better champion); the cautious champion won long games
+  ([history/python-era.md](history/python-era.md)).
+- **Rule patches for learned behaviour are a dead end**: strategy has to come from learning or lookahead; rule bots are
+  most useful as teachers and sparring partners.
+- **A viewer or small GPU job next to training costs far more in waiting than in work.**
 
 ## Process
 
@@ -78,5 +96,5 @@ be #1 on the leaderboard ~80% of the time in endless worlds on the Rust server (
   ports; never touch the live servers' ports.
 - Stop processes by PID after checking the command line, never by image name (other projects share the machine).
 
-See also: [training-plan.md](training-plan.md), [vision-bot.md](vision-bot.md),
+See also: [history/python-era.md](history/python-era.md), [vision-bot.md](vision-bot.md),
 [lookahead-planner.md](lookahead-planner.md), [commander.md](commander.md), [ogar.md](ogar.md).

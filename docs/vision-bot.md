@@ -1,4 +1,10 @@
-# Vision bot: plan (2026-10-07)
+# Vision bot: plan (2026-10-07) and milestones M1-M8
+
+> **Current best:** `bots/specs/best/vision.json` (m7a, leaderboard name `vision`); `bots/specs/best/vision-old.json`
+> is p6 + hunter (`vision-old`). This page is the design and the milestone log. The per-milestone helper scripts it
+> names (`endlessM5.sh`, `trainM7.sh`, `exportM8.sh`, ...) were replaced by `scripts/train.sh`, `scripts/eval.sh` and
+> `scripts/export.sh`; see [training.md](training.md) for how to run things today. `apos` in the lineups below was a
+> heuristic bot (a port of AposBot) that has since been removed.
 
 A bot that decides from **rendered frames**: the Rust server (`server`) draws each controlled player's camera
 view as a small image, and a CNN policy picks the move from the pixels. Actions still go through the normal agent
@@ -9,8 +15,8 @@ so training scales to many worlds.
 80% goal. The frames carry only what the client shows: the visible cells, their colours and sizes, and the border.
 Hidden state and other players' internals are not included.
 
-**Honest prior.** Our earlier neural bots (grid CNN in `rl/model.py`, trained with PPO in `sim/`) never matched
-the rule bots, and never learned splitting (see [architecture-research.md](architecture-research.md); AgarCL hit
+**Honest prior.** Our earlier neural bots (a grid CNN trained with PPO in the GPU simulator, both since removed) never
+matched the rule bots, and never learned splitting (see [history/architecture-research.md](history/architecture-research.md); AgarCL hit
 the same wall). Pixels are a harder input than our hand-made grid. So this plan does not start from RL. It starts
 by **imitating the planner on frames**, and uses RL only to improve on that base. Every stage has a gate, and the
 project stops at the first gate it misses.
@@ -64,9 +70,9 @@ reuse the client's camera maths (`client`: centre, zoom = server's `scale`).
 | # | stage | output | gate (stop if missed) |
 |---|---|---|---|
 | M0 | `render.rs` plus PNG dump (`ogar render --seed S --tick T`) and unit tests (circle sizes, camera, border) | frames that look like the client | a side-by-side PNG next to a client screenshot looks right to you |
-| M1 | `oxidish_env` VecEnv (PyO3), threaded worlds, rule-bot opponents in-process, teacher actions | `pip install -e training/env` | ≥ 20k frames/s on ≤ 10 cores, CPU ≤ 90% |
+| M1 | `oxidish_env` VecEnv (PyO3), threaded worlds, rule-bot opponents in-process, teacher actions | `maturin develop --release --uv` in `training/env` | ≥ 20k frames/s on ≤ 10 cores, CPU ≤ 90% |
 | M2 | **Imitation**: behaviour cloning on planner actions, then DAgger (the student drives, the teacher labels) | `runs/vision/bc_*.pt` | target-pixel agreement ≥ 80%, split agreement ≥ 70%; ≥ 45% vs c3_4 in 15-min matches |
-| M3 | ONNX export plus agent kind `"vision"` in ogar | `bots/specs/vision_bc.json` | identical actions Python vs Rust on 1k frames; endless leader share ≥ c3_4's (~30%) |
+| M3 | ONNX export plus agent kind `"vision"` in ogar | `bots/specs/vision_bc3.json` | identical actions Python vs Rust on 1k frames; endless leader share ≥ c3_4's (~30%) |
 | M4 | **PPO fine-tune** from the BC net, with a KL anchor to the teacher (decaying), against a league of rule bots, the planner and past selves | `runs/vision/ppo_*.pt` | endless leader share > planner (40%) on the mean of 5 seed sets and on ≥ 3 of 5 |
 | M5 | Scale and tune (resolution, frame stack, reward shaping toward leader share) | | each change kept only if it wins on ≥ 2 seed sets |
 
@@ -103,20 +109,19 @@ death penalty. The value head sees the leaderboard rank as a scalar.
 
 Each gate is a natural point to decide whether to continue.
 
-## M1 status: `oxidish_env` VecEnv (2026-10-07, branch `worktree-agent-ad386154cc2767e6b`)
+## M1 status: `oxidish_env` VecEnv (2026-10-07)
 
 **Code.** Engine-side env in `server/src/vision.rs` (pure Rust, unit-tested); Python bindings in `training/env`
 (PyO3 0.25 + rust-numpy, abi3-py310); renderer speed-up in `server/src/render.rs`; tools in `training/rl/`
 (`test_env.py`, `bench.py`, `collect.py`).
 
-**Build** (maturin is a dev dependency in `pyproject.toml`; a light venv is enough, no torch needed):
+**Build** (maturin is a dev dependency in `pyproject.toml`; see [training.md](training.md) for the full setup):
 
 ```
-uv venv .venv --python 3.10 && uv pip install --python .venv/Scripts/python.exe maturin numpy pytest
-# from training/env, venv active (VIRTUAL_ENV set); -j 2 keeps the build polite
-maturin develop --release -j 2
-# from the repo root (specs like bots/specs/c3_4.json are relative to the cwd)
-python -m pytest training/rl -q          # Python smoke tests;  cargo test --release (in server) for the Rust ones
+uv sync                                                   # or a light venv with maturin, numpy, pytest (no torch)
+cd training/env && uv run maturin develop --release --uv && cd ../..
+uv run python -m pytest training/rl -q                   # from the repo root (spec paths are relative to the cwd)
+cargo test --release -p ogar                              # the Rust tests
 ```
 
 **API**
@@ -183,7 +188,7 @@ decision), so for M2 prefer streaming straight from the env into the trainer (la
 shards only for fixed validation sets. `--noise S` executes teacher + Gaussian pixel noise (DART-style) while the
 label stays the clean teacher action.
 
-## M2 status: imitation + DAgger (2026-10-07/08, branch `worktree-agent-a01a58030cb44bc32`)
+## M2 status: imitation + DAgger (2026-10-07/08)
 
 **Result in one line.** Target-pixel agreement gate met (80.8% on the teacher-driven held-out set, early BC/DAgger
 checkpoint); **split-agreement gate missed** (best F1 about 0.3); in-env, the student **without splitting matches the
@@ -332,7 +337,7 @@ barriers. A 30 min x 8 run took 141 s (5.7 ms/call), i.e. about 19 min for 240 m
 with this fp32 net and 16 frames per call on a shared GPU (180k sequential calls x >= 3 ms); it needs a cheaper net
 (fp16, smaller input) or an idle GPU. `--shards K` gives each process its own GPU time slice (helps only when the card is busy).
 
-## M4 status (2026-10-08/09): fixing deaths, then PPO (branch `worktree-agent-ae99736f13458a832`)
+## M4 status (2026-10-08/09): fixing deaths, then PPO
 
 **Result in one line.** Phase A (BC with a danger-state store) took the endless leader share from 42.0 to 51.4 and cut
 in-env deaths/h from 15.6 to 9.2. Phase B (PPO) took it to 78.8 on the training field, **but most of that is the
@@ -440,7 +445,7 @@ opponents); the 5-set rule was not met for it.
 Recommended: `vision_p3` (best on the training field, equal on the held-out field) or `vision_p6` for the
 league-trained net.
 
-## M5 status (2026-10-09): reflex layer, skill counters, recurrent net, split training (branch `worktree-agent-a1e64e46d058e79af`)
+## M5 status (2026-10-09): reflex layer, skill counters, recurrent net, split training
 
 **Result in one line.** Nothing in M5 beat `vision_p6`. Every reflex skill (split-kill, harvest, virus-split) lowers the held-out leader
 share by 11-31 points when bolted on to p6, safer gates and a recombine guard did not repair split-kill, and the PPO runs
@@ -552,9 +557,9 @@ Other families in the p6 runs, deaths/h: bc3 23.8, plan 14.1, plan2 12.0, apos 1
 `bots/brain/src/reflex.rs`, `steer.rs` (`split_kill_ok`), `policy.rs` (`Tactics` pub), `client.rs` (`AgentStats` fields), `server/src/{agent,endless,nn,visionbot,vision,world,main}.rs`,
 `training/env/src/lib.rs` (`info["events"]`), `training/eval/endless.py` (`--stats-out`), `training/rl/{model,export,mkgru,train_ppo3,train_ppo4,skillstats,lossdiag,m5_table}.py`,
 `bots/specs/vision_p6_r*.json`, `bots/specs/vision_{g1c,g2c,g3c}.json`, `endlessM5*.sh`, `queueM5*.sh`, `train{S,G}*.sh`. Eval jsons / stats: `runs/vision/evals/M5_*` (gitignored), logs `logs/m5/`.
-Command: `./endlessM5.sh vision_p6_rs 3000` (needs `logs/bin/ogar.exe` = the release build, `bots/models/vision_p6.onnx`, `runs/vision/ort/`).
+Command: `./endlessM5.sh vision_p6_rs 3000` (needs the release build of `ogar`, `bots/models/vision_p6.onnx`, `runs/vision/ort/`).
 
-## M6 status (2026-10-10): the hunter skill as a vision reflex (branch `worktree-agent-aebbfbeedfe65da94`)
+## M6 status (2026-10-10): the hunter skill as a vision reflex
 
 **Result in one line.** `reflex_hunter` is the first vision reflex that beats `vision_p6` on the held-out field: **61.2 vs 57.6 mean leader share, strictly better on 4 of 5 seed sets (one tie), deaths/h unchanged**. The keep rule (mean improves, wins >= 3 of 5) is met. Adding M5's `reflex_guard` does not help (60.6, 4 of 5, worse on one set by 6).
 
@@ -610,7 +615,7 @@ Plain p6 already captures 10% at 30 s in giant_popped, so the net's food-seeking
 - The drill for the guard variant is trivially identical to the hunter (no recombine danger in that scene); the guard's effect is only measured on endless.
 - CPU was at 100% from the other agents' loads during the runs; this does not change the (deterministic) results, only wall time (about 55 min per set).
 
-## M7 status (2026-10-10): PPO with the hunter reflex in the loop, stronger league (branch `worktree-agent-af25e36448856cf44`)
+## M7 status (2026-10-10): PPO with the hunter reflex in the loop, stronger league
 
 **Result in one line.** `vision_m7a_final` (p6 + 3 h of league PPO with the hunter overriding the net during Commit, masked out of the PG loss) scores **64.4 vs 61.2** for `vision_p6_hunt` on the held-out field,
 strictly better on **4 of 5** seed sets (+7, +6, +3, -6, +6). The keep rule is met, but the gain is small (+3.2 mean, one set -6) and nowhere near 80. On the new champions field it ties on seed 3000 (40 vs 40) and wins seed 11000 (44 vs 40); only 2 sets.
@@ -666,7 +671,7 @@ planhv 10-12, c34h 5-9, plan 2-5 in all runs. The new net takes mass from its p6
 `server/src/vision.rs`, `training/env/src/lib.rs`, `training/rl/train_ppo5.py`, `trainM7.sh`, `trainM7b.sh`, `endlessM7.sh`, `exportM7.sh`, `bots/specs/best/vision.json`, `bots/specs/vision_m7a_ck_*.json`, `bots/specs/vision_m7b_final.json`.
 Models (gitignored): `bots/models/vision_m7a_final.onnx`, checkpoints `runs/vision/m7a`, `m7b`; evals `runs/vision/evals/M7_*`, logs `logs/m7/`.
 
-## M8 status (2026-10-10): m7a continued for 9 h (m8a), stopped early by the user (branch `worktree-agent-aa7a0565d655ef1b1`)
+## M8 status (2026-10-10): m7a continued for 9 h (m8a), stopped early by the user
 
 **Result in one line.** 9 h of league PPO from m7a (2306 iterations, `--chaser-p 0.1`, m7a as a frozen league member with the hunter, learner snapshots every 60 its) gave **no measurable gain** on held-out sets 3000 / 11000. The keep rule vs m7a was **not evaluated** (the final checkpoint's 5-set, champions and `ogar escape` runs were cut off). **m7a remains the best model.**
 

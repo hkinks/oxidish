@@ -10,7 +10,7 @@ The drill is a seeded, repeatable version of that scene: `ogar escape` (`server/
 
 ## Running it
 
-    # models are gitignored: copy bots/models/*.onnx and runs/vision/ort from the main checkout; nets need
+    # vision specs load models from bots/models/ and need ONNX Runtime (ORT_DYLIB_PATH); on Windows with CUDA, nets need
     # OGAR_DLL_DIRS (torch wheel lib) and OGAR_VISION_EP=cuda_plain, --threads 2 (the faster "cuda" backend died in cuDNN with several threads)
     cargo build --release -j 2 --manifest-path server/Cargo.toml        # your own CARGO_TARGET_DIR
     ogar escape --agents c3_4=bots/specs/c3_4.json evade=bots/specs/escape/evade.json oracle=oracle \
@@ -184,7 +184,7 @@ Drill (M 3000 / 7000 x ratio 1.4 / 2 / 4 x gap 1200 x open / wall, 12 reps per c
 The gain is at the walls and for the 2x chaser (p6: 0-25% at 60 s there, p6f: 25-58%); in the open at M 3000 x 1.4 and in `our7000/x4/wall` (0% -> 0%) there is none.
 This is the same pattern as the rule bots (the nets had no flee at all; the look-ahead flee is as good as the rule bots' best on this scene).
 
-Endless, vision candidate p6 (held-out field of `endlessH.sh`: plan x2, plan2, bc3 x2, apos (a heuristic bot since removed), hunter_virus), `--engine inproc`, 8 worlds x 240 min:
+Endless, vision candidate p6 (held-out field: plan x2, plan2, bc3 x2, apos (a heuristic bot since removed), hunter_virus), `--engine inproc`, 8 worlds x 240 min:
 
 ' + vp6f + '
 
@@ -219,10 +219,10 @@ Parameter sweep on M 3000 x 1.4 / 2 / 4 x gap 1200 x open + wall (N = 40 per cel
 
 ## Endless gate
 
-`training.eval.endless --engine inproc`, 8 worlds x 240 game-min, candidate x2 against the field of `endless5.sh` (champ, r2g9, safe, ramp_r2, ramp300, each x2), leader share of the candidate per seed base, rule: a gene is kept only if
+`training.eval.endless --engine inproc`, 8 worlds x 240 game-min, candidate x2 against the training field (champ, r2g9, safe, ramp_r2, ramp300, each x2), leader share of the candidate per seed base, rule: a gene is kept only if
 the mean improves **and** it wins >= 3 of the 5 sets.
 
-Leader share (dominance in brackets), binary of this branch, `OGAR_BIN` copy, 8 worlds x 240 min per cell, field of `endless5.sh`. `c3_4` lineup (candidate = `bots/specs/c3_4.json` + genes):
+Leader share (dominance in brackets), binary of this branch, `OGAR_BIN` copy, 8 worlds x 240 min per cell, the training field. `c3_4` lineup (candidate = `bots/specs/c3_4.json` + genes):
 
 | set | c3_4 | + `nowall` (wall genes off) | + `evade` | + `evade` at total mass >= 1500 (`evade_big`) |
 |---|---|---|---|---|

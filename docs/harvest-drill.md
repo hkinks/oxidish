@@ -20,7 +20,7 @@ Short answer (numbers below, N = 100 reps per cell for the headline, 50 for the 
 
 ## Running it
 
-    # from the repo root (models are gitignored: copy bots/models/*.onnx and runs/vision/ort from the main checkout)
+    # from the repo root; vision specs load models from bots/models/ and need ONNX Runtime (ORT_DYLIB_PATH)
     cargo build --release -j 2 --manifest-path server/Cargo.toml        # use your own CARGO_TARGET_DIR
     ogar drill --agents c3_4=bots/specs/c3_4.json harv=bots/specs/drill/c34_harvest_r25.json p3=bots/specs/vision_p3.json oracle=oracle \
                --scenario giant_pop,giant_popped --our-mass 500 --giant-mass 5000 --dist 600 --giant-mode bot \
@@ -344,7 +344,7 @@ What would raise the numbers (not tried): approach pieces from the pop point as 
 
 Code: `bots/brain/src/hunter.rs` (module + 21 unit tests on constructed snapshots), genes in `params.rs`, hooked into `HeuristicPolicy::act`
 (policy.rs; the planner defers to it while it acts), scripted drill agent `hunter[:gene=v,...]`. All genes default to 0 (off).
-Specs: `bots/specs/best/rules.json` (the recommended set: c3_4 + `commit commit_kite split_harvest race hv_memory=3 hv_still=100`),
+Specs: `bots/specs/best/rules.json` (`hv_commit_only` in the tables below; the recommended set: c3_4 + `commit commit_kite split_harvest race hv_memory=3 hv_still=100`),
 `bots/specs/drill/hv_full.json` (+ `lurk`), `plan_*` wrappers. `OGAR_HUNTER_TRACE=1` prints the decisions.
 
 Behaviours: **lurk** (giant >= `lurk_ratio` x our mass within `lurk_virus_range` of a virus: stand at lunge reach + `lurk_margin` from it, on the far side of the
@@ -395,7 +395,7 @@ The coordinator's M5 warning (a harvest reflex that chases pieces into the crowd
 every step re-plays the pursuers (all cells that outweigh us, whatever their owner), thrown pieces and lunge circles, and `race` drops pieces a rival reaches first. "Mass lost per hour" is not in the counters, so it was not compared.
 Not run: the held-out field (it needs vision nets; for rule bots the usual field applies), `plan_c34` variants in endless (the planner defers to the hunter, drill identical), `lurk_shoot` end to end (only a unit test), more than one seed base per set.
 
-### Hook for the vision agents (do not edit visionbot.rs here; vision-m5 owns it)
+### Hook for the vision agents
 
     use arena_client::hunter::{Hunter, Phase};
     let genes = Params::from_json(&serde_json::json!({"commit":1,"commit_kite":1,"split_harvest":1,"race":1,"hv_memory":3,"hv_still":100}));

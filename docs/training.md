@@ -4,9 +4,32 @@ How a bot connects to the game, how to measure it, and how to train it faster th
 repo root. On Windows the binaries are `ogar.exe` / `arena_client.exe`.
 
 ```bash
-cargo build --release --features vision-net --manifest-path server/Cargo.toml   # server + evaluators (drop the feature without ONNX Runtime)
-cargo build --release --manifest-path bots/brain/Cargo.toml                 # external Rust bot client
+cargo build --release      # target/release/: ogar (server + evaluators, with vision bots), arena_client, oxidish
 ```
+
+Three words used throughout:
+
+- **spec**: a JSON file in `bots/specs/` that defines one bot: a rule bot with its genes, a planner, or a vision model
+  plus reflexes.
+- **genes**: the ~50 numeric parameters of a rule bot (`"params"` in its spec): distances, thresholds, weights.
+- **lineup**: the bots in a world, written `name=spec.json:N` (N copies, named `name-0` ... `name-N-1` on the
+  leaderboard); a bot **family** is all copies with the same name.
+
+## Try your own bot in 5 minutes
+
+Copy a rule bot, change one gene, and measure it against the original in endless worlds (about 20 s on 16 threads;
+needs Python with `numpy` and `cma`, no torch):
+
+```bash
+cargo build --release -p ogar
+python3 -c "import json; d=json.load(open('bots/specs/c3_4.json')); d['params']['food_pull']=9.0; json.dump(d, open('my.json','w'))"
+uv run --no-project --with numpy --with cma python -m training.eval.endless --candidate my \
+    --agents my=my.json:2 orig=bots/specs/c3_4.json:2 --engine inproc --worlds 8 --game-min 60
+```
+
+It prints the leader share of each family (`my 50%, orig 47%` for this change: no real difference) and how often
+each family is the heaviest. One short run is noisy; see [a) Testing a bot](#a-testing-a-bot) for the full
+protocol, and watch the bot with `ogar serve` and the client ([playing.md](playing.md)).
 
 ## Three ways to connect a bot
 
@@ -24,7 +47,7 @@ Every `ogar` command takes `--agents name=spec.json:N` (N copies, named `name-0`
 
 | kind | example | keys |
 |---|---|---|
-| rule bot | `bots/specs/c3_4.json` | `"farm": "route" \| "field"`, `"params": {...}` (the genes, see `bots/specs/params.py` / `bots/brain/src/params.rs`) |
+| rule bot | `bots/specs/c3_4.json` | `"farm": "route" \| "field"`, `"params": {...}` (the genes, see `bots/brain/src/params.rs`) |
 | planner | `bots/specs/plan_c34.json` | `"kind": "plan"`, `"base": <rule-bot spec used for the plan's rollouts>`, `"need_loss"` |
 | vision net | `bots/specs/best/vision.json` | `"kind": "vision"`, `"model": <.onnx>`, `"split"`, `"split_thr"`, `"eject"`, reflexes (below), `"ep"`, `"threads"` |
 
@@ -76,35 +99,61 @@ and waits until every agent has answered with `C9 u32 tick` (or 2 s have passed)
 Cell flags: 0x01 virus, 0x20 ejected mass, 0x80 food, otherwise a player cell. Mass = size² / 100. The view is the
 usual camera box around your cells (not the whole map).
 
-Ready-made clients:
+A complete bot in Python (only `websockets` needed) that walks to the nearest food, in lockstep:
 
-- **Python** `training.eval.client.StepConn`: the protocol above as `await next_step()`, `snapshot()`, `await act(x, y, split, eject)`.
-  A complete bot:
+```python
+import asyncio, struct, websockets
 
-  ```python
-  import asyncio
-  from training.eval.client import StepConn
+URL, NAME = "ws://127.0.0.1:9800", "mybot"
 
-  async def main():
-      bot = StepConn("ws://127.0.0.1:9800", "mybot", sync=2)    # sync must match the server's --sync
-      await bot.open()
-      while True:
-          await bot.next_step()
-          s = bot.snapshot()                                     # s.mine, s.others: Cell(id, x, y, size, kind, name)
-          if s.dead:
-              await bot.act(0, 0)                                # respawns
-              continue
-          me = max(s.mine, key=lambda c: c.size)
-          prey = [c for c in s.others if c.kind == "food" or (c.kind == "player" and c.size < me.size * 0.85)]
-          t = min(prey, key=lambda c: (c.x - me.x) ** 2 + (c.y - me.y) ** 2, default=me)
-          await bot.act(t.x, t.y)
+async def main():
+    ws = await websockets.connect(URL, max_size=None, compression=None, ping_interval=None)
+    for p in (bytes([0xFE, 6, 0, 0, 0]), bytes([0xFF, 1, 0, 0, 0]), bytes([0xC8])):  # protocol 6, key, lockstep agent
+        await ws.send(p)
+    cells, mine = {}, set()                                   # id -> (x, y, size, flags); ids of our cells
+    while True:
+        b = await ws.recv()
+        op = b[0]
+        if op == 0x20:                                        # AddNode: this cell is ours
+            mine.add(struct.unpack_from("<I", b, 1)[0])
+        elif op == 0x12:                                      # ClearAll
+            cells.clear(); mine.clear()
+        elif op == 0x10:                                      # UpdateNodes
+            (n,), i = struct.unpack_from("<H", b, 1), 3
+            for _ in range(n):                                # eaten: (killer, victim)
+                victim = struct.unpack_from("<II", b, i)[1]; i += 8
+                cells.pop(victim, None); mine.discard(victim)
+            while (cid := struct.unpack_from("<I", b, i)[0]) != 0:
+                x, y, size, flags = struct.unpack_from("<iiHB", b, i + 4); i += 15
+                i += 3 if flags & 0x02 else 0                 # colour
+                for bit in (0x04, 0x08):                      # skin, name: zero-terminated strings
+                    if flags & bit:
+                        i = b.index(0, i) + 1
+                cells[cid] = (x, y, size, flags)
+            (n,), i = struct.unpack_from("<H", b, i + 4), i + 6
+            for _ in range(n):                                # removed from view
+                cid = struct.unpack_from("<I", b, i)[0]; i += 4
+                cells.pop(cid, None); mine.discard(cid)
+        elif op == 0xC9:                                      # step: decide, then ack
+            tick = struct.unpack_from("<I", b, 1)[0]
+            own = [cells[c] for c in mine if c in cells]
+            if not own:
+                await ws.send(b"\x00" + NAME.encode() + b"\x00")                 # spawn / respawn
+            else:
+                x, y, size, _ = max(own, key=lambda c: c[2])
+                food = [c for cid, c in cells.items() if c[3] & 0x80 and cid not in mine]
+                tx, ty, *_ = min(food, key=lambda c: (c[0] - x) ** 2 + (c[1] - y) ** 2, default=(x, y))
+                await ws.send(struct.pack("<BiiI", 0x10, tx, ty, 0))                # mouse: go to the nearest food
+            await ws.send(struct.pack("<BI", 0xC9, tick))                            # ack the step
 
-  asyncio.run(main())
-  ```
+asyncio.run(main())
+```
 
-- **Rust** `arena_client run --port 9800 --agents planner=bots/specs/best/planner.json:2 route:1 --ticks 6000 --sync 2`:
-  plays rule-bot specs as external agents and prints avg / peak mass, deaths, kills.
-- **Python** `python -m training.eval.join --port 9800 --agents name=spec.json:N`: rule bots that stay until you stop it.
+Start a server with `ogar serve --port 9800 ...`, run the script, and it appears on the leaderboard as `mybot`. Add
+`speed 0` on the control port and it plays as fast as it answers.
+
+Ready-made client: **Rust** `arena_client run --port 9800 --agents planner=bots/specs/best/planner.json:2 route:1
+--ticks 6000 --sync 2` plays specs as external agents and prints avg / peak mass, deaths, kills.
 
 ### 3. `oxidish_env` VecEnv (Python RL)
 
@@ -169,13 +218,13 @@ target/release/ogar match --agents mine=bots/specs/my_bot.json:2 c34=bots/specs/
 ```
 
 prints log-mass, average and peak mass, deaths and kills per policy. Same seeds give the same matches, so variants can be
-compared on identical games (`training.eval.tournament --engine ogar` adds confidence intervals).
+compared on identical games (`training.eval.tournament` adds confidence intervals).
 
 **Leader share**, the project's main metric: the share of 15-s samples in which a bot family is #1 on the leaderboard,
 in endless worlds that never reset (giants keep growing, dead players respawn):
 
 ```bash
-python -m training.eval.endless --engine inproc --threads 8 --cpus 8 --candidate mine \
+uv run python -m training.eval.endless --engine inproc --threads 8 --cpus 8 --candidate mine \
     --agents mine=bots/specs/my_bot.json:2 vision-old=bots/specs/best/vision-old.json:2 planner=bots/specs/best/planner.json:2 \
              rules=bots/specs/best/rules.json:2 plan=bots/specs/plan_c34.json:1 \
     --worlds 8 --game-min 240 --seed-base 3000 --out ls.json --stats-out ls.stats.json
@@ -195,11 +244,11 @@ python -m training.eval.endless --engine inproc --threads 8 --cpus 8 --candidate
 # eat a giant that just popped on a virus
 target/release/ogar drill --agents mine=bots/specs/my_bot.json rules=bots/specs/best/rules.json oracle=oracle \
     --scenario giant_popped --our-mass 500 --giant-mass 5000 --dist 600 --giant-mode bot --reps 100 --seed 1 --threads 8 --out drill.json
-python -m training.eval.drill_report drill.json
+uv run python -m training.eval.drill_report drill.json
 # escape a human-like chaser
 target/release/ogar escape --agents mine=bots/specs/my_bot.json c3_4=bots/specs/c3_4.json --our-mass 1000,3000 --ratio 2,4 \
     --gap 1200 --place open,wall,corner --reps 30 --seed 1 --threads 8 --horizon 60 --out esc.json
-python -m training.eval.escape_report esc.json
+uv run python -m training.eval.escape_report esc.json
 ```
 
 Details: [harvest-drill.md](harvest-drill.md), [escape-drill.md](escape-drill.md).
@@ -222,30 +271,30 @@ Human clients get at most ~40 updates/s, so you can watch a sped-up game.
 `training.eval.endless_search` runs CMA-ES over a rule bot's genes, scored by leader share in endless Rust-engine worlds:
 
 ```bash
-python -m training.eval.endless_search --run es1 --init bots/specs/c3_4.json \
+uv run python -m training.eval.endless_search --run es1 --init bots/specs/c3_4.json \
     --field champ=bots/specs/final_champion.json:2 planner=bots/specs/best/planner.json:2 --popsize 8 --worlds 12 --game-min 120
 ```
 
 Each generation is written to `runs/es1/gen_###.json` and the best genome to `runs/es1/best.json`, which is a spec
-you can pass to `--agents`. `training.eval.evolve`, `training.eval.qd` and `training.eval.long_search` are the older searches on the Node
-MultiOgar server; they need `vendor/MultiOgar` (see [plan.md](plan.md)).
+you can pass to `--agents`. `training.eval.long_search` re-checks the best genomes of a search in longer matches.
+The earlier CMA-ES and MAP-Elites searches ran on the Node server and were removed ([history/](history/README.md)).
 
 ### Vision bots: imitation, then league PPO
 
 Training needs an NVIDIA GPU (the trainers keep their buffers on CUDA) and the Python setup below.
 
-1. **Held-out set** for imitation: `python training/rl/make_val.py --out runs/vision/val --windows 4 --worlds 64 --learners 4 --threads 10`
-2. **Imitation + DAgger** of the planner: `python training/rl/train_bc.py --name bc1 --hours 1.5`. The result is
+1. **Held-out set** for imitation: `uv run python training/rl/make_val.py --out runs/vision/val --windows 4 --worlds 64 --learners 4 --threads 10`
+2. **Imitation + DAgger** of the planner: `uv run python training/rl/train_bc.py --name bc1 --hours 1.5`. The result is
    `runs/vision/bc1/final.pt`.
 3. **League PPO with the hunter in the loop**, the recipe that made m7a:
 
    ```bash
-   PYTHON=python scripts/train.sh m7 --init runs/vision/bc1/final.pt --ref runs/vision/bc1/final.pt \
-       --extra-frozen runs/vision/bc1/final.pt --worlds 40 --hours 3 --vpre 20 --snap-every 40
+   INIT=runs/vision/bc1/final.pt scripts/train.sh m7 --extra-frozen runs/vision/bc1/final.pt \
+       --worlds 40 --hours 3 --vpre 20 --snap-every 40
    ```
 
-   - m7a itself started from the p6 checkpoint (`scripts/train.sh` defaults to `runs/vision/p6/final.pt`), which is
-     not in the repo. The arguments above start from your own imitation net instead.
+   - `INIT` is the checkpoint to start from and anchor to. m7a itself started from the p6 checkpoint (the default,
+     `runs/vision/p6/final.pt`), which is not in the repo; the command above starts from your own imitation net.
    - Each world has 5 learner slots. 3 learn and 2 are played by frozen nets: the anchor, `--extra-frozen`, and a
      snapshot of the policy every `--snap-every` iterations. The opponents are drawn from a league of rule bots and
      planners (5 per world, a fed giant in 25% of worlds).
@@ -253,9 +302,9 @@ Training needs an NVIDIA GPU (the trainers keep their buffers on CUDA) and the P
      and -3 per death. A KL anchor to `--ref` decays from 0.2 to 0.01.
    - While the hunter reflex is committed it drives the learner, and those decisions are masked out of the policy
      loss.
-   - Checkpoints go to `runs/vision/m7/`, the log to `logs/vision/m7.jsonl`. All flags: `python training/rl/train_ppo5.py -h`.
+   - Checkpoints go to `runs/vision/m7/`, the log to `logs/vision/m7.jsonl`. All flags: `uv run python training/rl/train_ppo5.py -h`.
 
-4. **Export and use** (needs `uv pip install onnx onnxscript`): `PYTHON=python scripts/export.sh m7 final` writes `bots/models/vision_m7_final.onnx` and
+4. **Export and use** (needs the export group: `uv sync --group export`): `scripts/export.sh m7 final` writes `bots/models/vision_m7_final.onnx` and
    the spec `bots/specs/vision_m7_final.json` (with the hunter reflex). That spec works in every command above (`--agents
    m7=bots/specs/vision_m7_final.json:2`). Then measure it with `scripts/eval.sh` against p6_hunt and m7a.
 
@@ -265,12 +314,17 @@ What worked and what did not (reward terms, split training, recurrent nets, chas
 ## Python setup
 
 ```bash
-uv sync                                                            # torch comes from the CUDA 12.8 index (pyproject.toml)
-uv run maturin develop --uv --release -m training/env/Cargo.toml   # builds oxidish_env into .venv
-uv run python -m pytest training/rl/test_env.py -q                   # VecEnv smoke tests
+uv sync                                                            # torch comes from the CUDA 12.8 index (pyproject.toml, several GB)
+cd training/env && uv run maturin develop --release --uv && cd ../..   # builds oxidish_env into .venv
+uv run python -m pytest training -q                                # VecEnv and eval smoke tests
 ```
 
-Then run the commands above with `uv run python ...`, or activate `.venv`. For the server-side tools only
-(`training.eval.endless`, `training.eval.join`, `StepConn`, `endless_search`) a light venv with `websockets numpy cma` is enough; torch
-is needed for training and export. On NixOS, pip wheels such as numpy need `libstdc++` and `zlib` on `LD_LIBRARY_PATH`
-(for example from `nixpkgs#stdenv.cc.cc.lib` and `nixpkgs#zlib`).
+Then run the commands above with `uv run python ...`, or activate `.venv`. The evaluation tools (`training.eval.*`)
+need only `numpy` and `cma`: `uv run --no-project --with numpy --with cma python -m training.eval.<tool>` skips torch.
+Torch is needed for training and export.
+
+On NixOS, pip wheels such as numpy need `libstdc++` and `zlib` on `LD_LIBRARY_PATH`:
+
+```bash
+export LD_LIBRARY_PATH=$(nix build --no-link --print-out-paths nixpkgs#stdenv.cc.cc.lib nixpkgs#zlib | sed 's|$|/lib|' | paste -sd:)
+```

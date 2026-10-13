@@ -16,7 +16,7 @@ Use them like any genome: `training.eval.tournament --engine ogar --agents
 hhunt=bots/specs/sparring/hunter_hunt.json:1 ...`, `training.eval.endless --agents ...`, `ogar match|serve --agents ...`.
 `training.eval.make_sparring` regenerates the hunter files.
 
-## Hunter genes (`bots/specs/tactics.py`, `bots/brain/src/policy.rs`, all default off, in Python and Rust)
+## Hunter genes (`bots/brain/src/policy.rs`, all default off)
 
 - `shoot_stage` > 0.5: with the shoot skill on and no shot lined up, walk round a virus (within `shoot_walk`) to the
   side away from a big player, `shoot_standoff` from its edge, and hold position while

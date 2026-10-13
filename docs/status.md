@@ -1,7 +1,7 @@
 # Status (2026-10-10)
 
 Where the project stands after the Rust-server push toward "one bot that is #1 on the leaderboard ~80% of the time,
-and can split-eat, pop others with viruses and eat exploded enemies efficiently". Paused here by the user; the 80%
+and can split-eat, pop others with viruses and eat exploded enemies efficiently". Work stopped here; the 80%
 goal was **not** reached. Lessons are in [learnings.md](learnings.md); this page is the summary and the how-to.
 
 ## Results
@@ -9,6 +9,9 @@ goal was **not** reached. Lessons are in [learnings.md](learnings.md); this page
 Metric: endless leader share (share of 15-s samples where the candidate family is #1), 8 worlds × 240 game-min per
 seed set, seed sets 3000/11000/21000/31000/41000, `training.eval.endless --engine inproc`. Noise ~±5 per set; a change is kept
 only if the mean improves and it wins ≥ 3 of 5 sets.
+
+Leaderboard names of the four reference bots in `bots/specs/best/`: **vision** (m7a), **vision-old** (p6_hunt),
+**planner** (planhv), **rules** (c34h); older results use the names in parentheses.
 
 **Vision bot** (grayscale frames rendered in the engine, ONNX net in `ogar`), held-out field (opponents never trained
 against: plan ×2, plan2, bc3 ×2, apos, hunter_virus + 8 server bots; `apos` was a heuristic bot since removed from the repo):
@@ -24,8 +27,8 @@ against: plan ×2, plan2, bc3 ×2, apos, hunter_virus + 8 server bots; `apos` wa
 M8 (9 h continuation of m7a, 10% human-like chaser, m7a as a frozen league member) plateaued after ~1 h: checkpoints scored
 57-67 on sets 3000/11000 vs m7a 64/68, no gain; no checkpoint promoted (see the M8 section of [vision-bot.md](vision-bot.md)).
 
-**Champions field** (candidate ×2 vs p6_hunt ×2, planhv ×2, c34h ×2, plan + 8 server bots): m7a 40/44 vs p6_hunt 40/40
-in the same slot. Among near-equal top bots every family sits near 40%.
+**Champions field** (candidate ×2 vs p6_hunt ×2, planhv ×2, c34h ×2, plan + 8 server bots): m7a 40/44/48 on seed sets
+3000/11000/21000; p6_hunt in the same slot 40/40 (3000/11000). Among near-equal top bots every family sits near 40%.
 
 **Rule bots** (usual field: champ, r2g9, safe, ramp_r2, ramp300 ×2 each + 8 server bots):
 
@@ -36,9 +39,9 @@ in the same slot. Among near-equal top bots every family sits near 40%.
 | `bots/specs/plan_c34.json` (lookahead planner) | 46 | 35 | 38 | 38 | 44 | 40.2 |
 | **`bots/specs/best/planner.json`** (planner + hunter) | 49 | 46 | 49 | 47 | 57 | **49.6** |
 
-**Live 9600, 2026-10-10 (11 h, 50 players, [report](human/2026-10-10-m7.md))**: #1 share over the whole session m7 30%, p6h 25%, planhv 11%, p6 10%, plan 8%, human 7%; the user (no boost this time) was #1 for 63% of their 77 min alive. m7a is the best bot overall.
+**Live server, 2026-10-10 (11 h, 50 players, [report](human/2026-10-10-m7.md))**: #1 share over the whole session m7 30%, p6h 25%, planhv 11%, p6 10%, plan 8%, human 7%; the user (no boost this time) was #1 for 63% of their 77 min alive. m7a is the best bot overall.
 
-**Against the human** (live 9600, recorded): the user was #1 for 66-70% of the session against the hunter bots
+**Against the human** (live server, recorded): the user was #1 for 66-70% of the session against the hunter bots
 (partly with the +500 boost). Bots lost mass to the human mostly while in pieces (35%), by not fleeing at all (31%,
 all vision nets) and after fleeing into walls (27%) ([human/2026-10-09-hunters.md](human/2026-10-09-hunters.md)).
 
@@ -63,26 +66,29 @@ all vision nets) and after fleeing into walls (27%) ([human/2026-10-09-hunters.m
 - **Commander**: control-port orders (`hunt`, `harvest`, `virus-split`, `goto`, `flee`, ...), `scene`/`frame`, an MCP
   server (`training/eval/commander_mcp.py`) and an LLM/heuristic loop; the heuristic did not help, LLM backends untested (no
   keys). [commander.md](commander.md)
-- Cleanup: dead code removed, `parse_lineup` deduplicated, `.gitignore` for raw match rows.
+- Cleanup: dead code removed, `parse_lineup` deduplicated, `.gitignore` for raw match rows; later the pre-Rust code
+  was removed ([history/](history/README.md)).
 
 ## How to run
 
 ```bash
-# live server (as running now on 9600, control port 9601), best bots, 50 players
-server/target-live4/release/ogar.exe serve --port 9600 --bots 12 --food-mult 2 --map 10000 --control-port 9601 \
+cargo build --release      # target/release/ogar (server), target/release/oxidish (client); .exe on Windows
+
+# live server with the best bots and recording; vision bots need ONNX Runtime (see training.md)
+target/release/ogar serve --port 9600 --bots 12 --food-mult 2 --map 10000 --control-port 9601 \
   --record logs/human --record-all --agents vision=bots/specs/best/vision.json:6 planner=bots/specs/best/planner.json:6 \
-  rules=bots/specs/best/rules.json:4 vision-old=bots/specs/best/vision-old.json:4 ...
-target/release/oxidish.exe          # client, server from %APPDATA%\agario-client\settings.json
+  rules=bots/specs/best/rules.json:4 vision-old=bots/specs/best/vision-old.json:4
+target/release/oxidish --name you    # or scripts/client.sh; server address is saved in the client settings
 uv run python -m training.eval.human_report logs/human --session <stamp> --out docs/human/<date>.md   # after playing
 
-# leader share of a candidate (see docs/vision-bot.md for the held-out lineup)
-uv run python -m training.eval.endless --candidate vis --agents vis=<spec>:2 ... --worlds 8 --game-min 240 \
+# leader share of a candidate: scripts/eval.sh, or directly (held-out lineup in vision-bot.md)
+uv run python -m training.eval.endless --candidate vis --agents vis=<spec>:2 <field> --worlds 8 --game-min 240 \
   --seed-base 3000 --engine inproc --stats-out out.json
-ogar drill --agents ... --scenario giant_popped      # harvest drill;  ogar escape ... for the escape drill
+target/release/ogar drill --agents me=<spec> --scenario giant_popped   # harvest drill; ogar escape for the escape drill
 ```
 
-Vision models are gitignored: `bots/models/vision_*.onnx` (+ `runs/vision/ort` DLLs; CUDA needs
-`OGAR_DLL_DIRS`, see harvest-drill.md).
+The vision models are in `bots/models/`. With CUDA 12 the nets run on the GPU (on Windows the CUDA DLL folders go in
+`OGAR_DLL_DIRS`, see [harvest-drill.md](harvest-drill.md)); otherwise they fall back to the CPU.
 
 ## If work resumes
 

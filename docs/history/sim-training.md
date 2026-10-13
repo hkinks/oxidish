@@ -1,7 +1,9 @@
+> Historical: describes code removed from the repo; see [README.md](README.md).
+
 # Training in the GPU simulator: s1, evolution, viewer
 
 How the neural bots are trained now, all in the GPU simulator (`sim/`, see [sim.md](sim.md)).
-The real server (`training/eval/`) is used for the showcase and for a final round of fine-tuning, not
+The real server (`arena/`) is used for the showcase and for a final round of fine-tuning, not
 for bulk training. It is ~15-30x slower: CPU-bound, one arena per core, websocket plumbing.
 
 ```
@@ -316,7 +318,7 @@ TensorBoard shows each member as `e1/m<k>`.
 - The sim tournament agrees with the iteration order (240 > 180 > 100), so it is usable as fitness. Still, sim results need a real-server check before they're believed (see the winner's-curse note in training-plan.md).
 - The viewer at "max" speed halved training throughput. Small GPU jobs next to training cost far more in waiting than in work.
 - Rule changes as fixes for learned behaviour are a dead end:
-  - Big-cell hunting in the champion (`big_hunt`, bots/specs/params.py) **lost** 33-67 to plain farming in 24 long 2x-food matches. It is now off by default.
+  - Big-cell hunting in the champion (`big_hunt`, bot/params.py) **lost** 33-67 to plain farming in 24 long 2x-food matches. It is now off by default.
   - Strategy (hunt when big, split-kill, farm efficiently) has to come from learning. The rules are only useful as sparring partners.
 
 ## Ideas from other agar.io RL projects (2026-10-04)
@@ -334,7 +336,7 @@ Surveyed GoBigger (OpenDILab, ICLR 2023), AgarCL (arXiv 2505.18347), the RPG pap
 
 ## 2026-10-05 (evening): real-server baseline, MultiOgar bots in the sim, the ffa population
 
-**Real-server baseline** (`training.eval.tournament`, 24 fresh-seed matches, 4 game-min, 2x food, 8 MultiOgar bots;
+**Real-server baseline** (`arena.tournament`, 24 fresh-seed matches, 4 game-min, 2x food, 8 MultiOgar bots;
 `runs/bench/base_50000.json`, `logs/bench-base.txt`):
 
 | bot | avg mass | deaths/match | beats gen |
@@ -359,7 +361,7 @@ Surveyed GoBigger (OpenDILab, ICLR 2023), AgarCL (arXiv 2505.18347), the RPG pap
 - `rl.pbt --objective ffa`:
   - training: 40% free-for-all arenas (half learners, half MultiOgar bots), 25% league arenas, and farm/hunt/flee drills; no split bonus, no imitation; split exploration only from 150 mass; kickstarting from the specialists as in general.
   - **fitness: a real MultiOgar tournament each round** (`ffa_eval`: 24 fresh-seed matches, members x2 with champ and r2g9), as the log-mass margin over the rule-based champions in the same matches. It runs on the CPU while training continues.
-- `training.eval.tournament`: `play_many`, `--out`, and the loss report.
+- `arena.tournament`: `play_many`, `--out`, and the loss report.
 
 Run: see `ffa1` (pop 4, b 32, `--vram-gb 18`). Keep total GPU memory under ~26 GB: the 0x133 crash happened with VRAM nearly full.
 

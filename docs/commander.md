@@ -110,7 +110,7 @@ Backends (credentials are only read from the environment, never from or into fil
 | backend | needs | what it does |
 |---|---|---|
 | `heuristic` | nothing | rules over the scene: hide/flee when an eater is close, otherwise hunt (or harvest) the best prey, split only when safe, virus-split a big player when nothing else is on |
-| `jev` | `JEV_API_KEY` (optional `JEV_BASE_URL`, `JEV_MODEL`) | `bots/specs/systemone.py` `/v1/systemone`: a `choice` question over the options (farm, flee, hide, hunt pN, harvest, virus-split) plus a `noul` split question, like `bots/specs/strategist.py` |
+| `jev` | `JEV_API_KEY` (optional `JEV_BASE_URL`, `JEV_MODEL`) | `training/eval/systemone.py` `/v1/systemone`: a `choice` question over the options (farm, flee, hide, hunt pN, harvest, virus-split) plus a `noul` split question, like `bots/specs/strategist.py` |
 | `anthropic` | `ANTHROPIC_API_KEY` (optional `COMMANDER_MODEL`, default `claude-haiku-4-5-20251001`) | one Messages API call per decision, the model answers one JSON order line; replies are validated before they are sent |
 
 On the machine where this was built neither `JEV_API_KEY` nor `ANTHROPIC_API_KEY` was set, so only the heuristic backend
