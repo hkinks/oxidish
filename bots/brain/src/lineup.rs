@@ -1,4 +1,4 @@
-//! Lineup specs of the command lines (`route:4 champ=runs/x.json:4`), shared by `arena_client` and `ogar`.
+//! Lineup specs of the command lines (`route:4 champ=runs/x.json:4`), shared by `oxidish-bot` and `oxidish-server`.
 
 use serde_json::{json, Value};
 

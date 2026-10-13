@@ -612,7 +612,7 @@ impl Hunter {
 
 fn trace_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("OGAR_HUNTER_TRACE").is_ok())
+    *ON.get_or_init(|| std::env::var("OXIDISH_HUNTER_TRACE").is_ok())
 }
 
 fn centroid(cells: &[Cell]) -> (f64, f64) {

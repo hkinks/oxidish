@@ -1,11 +1,11 @@
 [package]
-name = "ogar"
+name = "oxidish-server"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
 
 [dependencies]
-arena_client = { path = "../bots/brain" }
+oxidish-bot = { path = "../bots/brain" }
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "net", "time", "sync", "io-util", "io-std"] }
 tokio-tungstenite = "0.26"

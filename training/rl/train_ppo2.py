@@ -24,7 +24,7 @@ from common import FIELD, ROOT, pin_cores
 from evalval import load_model
 from model import decode_target
 
-import oxidish_env
+import oxidish_gym
 
 DT = 0.08
 
@@ -124,7 +124,7 @@ def main():
         for q in m.parameters():
             q.requires_grad_(False)
 
-    env = oxidish_env.VecEnv(a.worlds, a.learners, opponents=[], pool=LEAGUE, pool_pick=a.pick, giant_p=a.giant_p,
+    env = oxidish_gym.VecEnv(a.worlds, a.learners, opponents=[], pool=LEAGUE, pool_pick=a.pick, giant_p=a.giant_p,
                          teacher="bots/specs/plan_c34.json", px=256, threads=a.threads, seed=a.seed, warmup=0, label=False)
     n = env.n
     L = a.learners

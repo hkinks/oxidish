@@ -1,10 +1,10 @@
 # Testing and training bots
 
 How a bot connects to the game, how to measure it, and how to train it faster than real time. Commands run from the
-repo root. On Windows the binaries are `ogar.exe` / `arena_client.exe`.
+repo root. On Windows the binaries are `oxidish-server.exe` / `oxidish-bot.exe`.
 
 ```bash
-cargo build --release      # target/release/: ogar (server + evaluators, with vision bots), arena_client, oxidish
+cargo build --release      # target/release/: oxidish-server (server + evaluators, with vision bots), oxidish-bot, oxidish-client
 ```
 
 Three words used throughout:
@@ -21,7 +21,7 @@ Copy a rule bot, change one gene, and measure it against the original in endless
 needs Python with `numpy` and `cma`, no torch):
 
 ```bash
-cargo build --release -p ogar
+cargo build --release -p oxidish-server
 python3 -c "import json; d=json.load(open('bots/specs/c3_4.json')); d['params']['food_pull']=9.0; json.dump(d, open('my.json','w'))"
 uv run --no-project --with numpy --with cma python -m training.eval.endless --candidate my \
     --agents my=my.json:2 orig=bots/specs/c3_4.json:2 --engine inproc --worlds 8 --game-min 60
@@ -29,20 +29,20 @@ uv run --no-project --with numpy --with cma python -m training.eval.endless --ca
 
 It prints the leader share of each family (`my 50%, orig 47%` for this change: no real difference) and how often
 each family is the heaviest. One short run is noisy; see [a) Testing a bot](#a-testing-a-bot) for the full
-protocol, and watch the bot with `ogar serve` and the client ([playing.md](playing.md)).
+protocol, and watch the bot with `oxidish-server serve` and the client ([playing.md](playing.md)).
 
 ## Three ways to connect a bot
 
-| | in-process agent | external websocket bot | `oxidish_env` VecEnv |
+| | in-process agent | external websocket bot | `oxidish_gym` VecEnv |
 |---|---|---|---|
-| what | a spec JSON run inside `ogar` | your own program speaking the game protocol | Python RL environment, N worlds in one process |
+| what | a spec JSON run inside `oxidish-server` | your own program speaking the game protocol | Python RL environment, N worlds in one process |
 | use for | rule bots, planner, exported vision nets; evaluation | bots in any language, quick experiments, Python policies | training nets (PPO, imitation) |
 | speed | as fast as the engine (hundreds x real time) | lockstep, limited by your bot's latency (~75x real time measured) | ~45k learner decisions/s |
 | real time needed | no | no (lockstep) | no |
 
 ### 1. In-process agents (spec files)
 
-Every `ogar` command takes `--agents name=spec.json:N` (N copies, named `name-0` ... `name-N-1`), plus the built-ins
+Every `oxidish-server` command takes `--agents name=spec.json:N` (N copies, named `name-0` ... `name-N-1`), plus the built-ins
 `route:N` and `field:N`. A spec is one of three kinds:
 
 | kind | example | keys |
@@ -56,13 +56,13 @@ Vision reflexes are rule-based overrides on top of the net: `"reflex_hunter": tr
 `reflex_virus`, `reflex_flee`, `reflex_guard` (each tested, each cost leader share; off in the best bots, see
 [learnings.md](learnings.md)).
 
-Vision nets need ONNX Runtime 1.24: `ORT_DYLIB_PATH=/path/libonnxruntime.so` (or `onnxruntime.dll` next to `ogar.exe`).
-They use CUDA 12 when it loads and the CPU otherwise; `OGAR_VISION_EP=cpu|cuda|cuda_plain` forces one and
-`OGAR_VISION_THREADS` sets the CPU threads per net (default 1; use 4-8).
+Vision nets need ONNX Runtime 1.24: `ORT_DYLIB_PATH=/path/libonnxruntime.so` (or `onnxruntime.dll` next to `oxidish-server.exe`).
+They use CUDA 12 when it loads and the CPU otherwise; `OXIDISH_VISION_EP=cpu|cuda|cuda_plain` forces one and
+`OXIDISH_VISION_THREADS` sets the CPU threads per net (default 1; use 4-8).
 
 ### 2. External bots over websocket (any language)
 
-`ogar serve` speaks MultiOgar protocol 6, the protocol agar.io-style web clients use, plus a lockstep extension so a
+`oxidish-server serve` speaks MultiOgar protocol 6, the protocol agar.io-style web clients use, plus a lockstep extension so a
 bot never misses a tick, however fast the server runs. All numbers are little-endian.
 
 **Handshake (client to server):** `FE 06 00 00 00` (protocol 6), `FF 01 00 00 00` (key), then `C8` to register as a
@@ -149,21 +149,21 @@ async def main():
 asyncio.run(main())
 ```
 
-Start a server with `ogar serve --port 9800 ...`, run the script, and it appears on the leaderboard as `mybot`. Add
+Start a server with `oxidish-server serve --port 9800 ...`, run the script, and it appears on the leaderboard as `mybot`. Add
 `speed 0` on the control port and it plays as fast as it answers.
 
-Ready-made client: **Rust** `arena_client run --port 9800 --agents planner=bots/specs/best/planner.json:2 route:1
+Ready-made client: **Rust** `oxidish-bot run --port 9800 --agents planner=bots/specs/best/planner.json:2 route:1
 --ticks 6000 --sync 2` plays specs as external agents and prints avg / peak mass, deaths, kills.
 
-### 3. `oxidish_env` VecEnv (Python RL)
+### 3. `oxidish_gym` VecEnv (Python RL)
 
 N worlds in one process, stepped in parallel on worker threads, with the GIL released. Frames are rendered in the
 engine, so no websocket and no real time are involved.
 
 ```python
-import numpy as np, oxidish_env
+import numpy as np, oxidish_gym
 
-env = oxidish_env.VecEnv(8, 4,                                   # 8 worlds x 4 learners = env.n = 32
+env = oxidish_gym.VecEnv(8, 4,                                   # 8 worlds x 4 learners = env.n = 32
                      opponents=[("c34", "bots/specs/c3_4.json", 2), ("planhv", "bots/specs/best/planner.json", 2)],
                      px=256, sync=2, bots=8, food_mult=2, map=7000, seed=1, threads=8, label=False)
 obs = env.reset()                    # {"view": u8[N,2,256,256], "wide": u8[N,2,128,128]}  (this frame + the previous one)
@@ -187,7 +187,7 @@ obs, reward, done, info = env.step(a)
 **Watch it.** Start a server with your bot and the best bots, then join with the client (or spectate with Tab):
 
 ```bash
-target/release/ogar serve --port 9800 --control-port 9801 --bots 8 --food-mult 2 --map 7000 \
+target/release/oxidish-server serve --port 9800 --control-port 9801 --bots 8 --food-mult 2 --map 7000 \
     --agents mine=bots/specs/my_bot.json:2 vision=bots/specs/best/vision.json:2 planner=bots/specs/best/planner.json:2
 scripts/client.sh --server ws://127.0.0.1:9800
 ```
@@ -213,7 +213,7 @@ python3 -c 'import socket,sys; s=socket.create_connection(("127.0.0.1",9801)); s
 **Head-to-head matches** (fresh worlds, fixed length, several matches in parallel):
 
 ```bash
-target/release/ogar match --agents mine=bots/specs/my_bot.json:2 c34=bots/specs/c3_4.json:2 route:1 \
+target/release/oxidish-server match --agents mine=bots/specs/my_bot.json:2 c34=bots/specs/c3_4.json:2 route:1 \
     --ticks 22500 --food-mult 2 --seed 1 --matches 48 --threads 8 --out rows.json
 ```
 
@@ -236,17 +236,17 @@ uv run python -m training.eval.endless --engine inproc --threads 8 --cpus 8 --ca
   vision results in [status.md](status.md) use.
 - Rule bots run this in seconds to minutes. Vision nets need a GPU for full-size runs: on a CPU each batched inference
   call takes ~50 ms, so a full seed set takes many hours. For a quick CPU check, use fewer worlds and minutes.
-- `ogar endless ...` (same options, `--out samples.json`) is the underlying evaluator without the Python summary.
+- `oxidish-server endless ...` (same options, `--out samples.json`) is the underlying evaluator without the Python summary.
 
 **Drills**, for single skills with many paired repetitions:
 
 ```bash
 # eat a giant that just popped on a virus
-target/release/ogar drill --agents mine=bots/specs/my_bot.json rules=bots/specs/best/rules.json oracle=oracle \
+target/release/oxidish-server drill --agents mine=bots/specs/my_bot.json rules=bots/specs/best/rules.json oracle=oracle \
     --scenario giant_popped --our-mass 500 --giant-mass 5000 --dist 600 --giant-mode bot --reps 100 --seed 1 --threads 8 --out drill.json
 uv run python -m training.eval.drill_report drill.json
 # escape a human-like chaser
-target/release/ogar escape --agents mine=bots/specs/my_bot.json c3_4=bots/specs/c3_4.json --our-mass 1000,3000 --ratio 2,4 \
+target/release/oxidish-server escape --agents mine=bots/specs/my_bot.json c3_4=bots/specs/c3_4.json --our-mass 1000,3000 --ratio 2,4 \
     --gap 1200 --place open,wall,corner --reps 30 --seed 1 --threads 8 --horizon 60 --out esc.json
 uv run python -m training.eval.escape_report esc.json
 ```
@@ -259,8 +259,8 @@ Details: [harvest-drill.md](harvest-drill.md), [escape-drill.md](escape-drill.md
 |---|---|---|
 | live server, in-process bots | `--max-tps 0` or `speed 0` | ~9,500 ticks/s (380x) with 2 rule bots + 8 server bots |
 | live server, external lockstep bots | `speed 0`; lockstep waits for every agent's ack | 75x real time with 3 external Rust bots |
-| `ogar match` / `ogar endless` | no clock at all, worlds on threads | 290x real time per thread (rule bots) |
-| `oxidish_env` VecEnv | no clock, no network, worlds on threads | 45k learner decisions/s = 114x real time per world (8 worlds, 32 learners, random actions) |
+| `oxidish-server match` / `oxidish-server endless` | no clock at all, worlds on threads | 290x real time per thread (rule bots) |
+| `oxidish_gym` VecEnv | no clock, no network, worlds on threads | 45k learner decisions/s = 114x real time per world (8 worlds, 32 learners, random actions) |
 
 The server's tick rate is `--max-tps` (25 = real time; 0 = unthrottled) at startup, and `speed X` (`max_tps = 25 x X`)
 while it runs. Lockstep agents keep working at any speed and while paused, because the server waits for their acks.
@@ -315,7 +315,7 @@ What worked and what did not (reward terms, split training, recurrent nets, chas
 
 ```bash
 uv sync                                                            # torch comes from the CUDA 12.8 index (pyproject.toml, several GB)
-cd training/env && uv run maturin develop --release --uv && cd ../..   # builds oxidish_env into .venv
+cd training/gym && uv run maturin develop --release --uv && cd ../..   # builds oxidish_gym into .venv
 uv run python -m pytest training -q                                # VecEnv and eval smoke tests
 ```
 

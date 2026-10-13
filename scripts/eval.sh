@@ -2,9 +2,9 @@
 # Leader share of a bot spec. usage: scripts/eval.sh field spec-name seed [threads]
 #   field 1 = held-out (plan x2, plan2, bc3 x2, hunter_virus), field 2 = "champions" (candidate x2, vision-old x2, planner x2, rules x2, plan x1)
 #   both + 8 server bots. Results runs/vision/evals/f<field>_<name>_e<seed>.json (+ .stats.json), log logs/eval/
-# needs the vision-net build of ogar (OGAR_BIN) and onnxruntime (ORT_DYLIB_PATH, see docs/vision-bot.md)
+# needs the vision-net build of oxidish-server (OXIDISH_BIN) and onnxruntime (ORT_DYLIB_PATH, see docs/vision-bot.md)
 F=$1; name=$2; S=$3; T=${4:-3}
-export OGAR_BIN=${OGAR_BIN:-$PWD/target/release/ogar}
+export OXIDISH_BIN=${OXIDISH_BIN:-$PWD/target/release/oxidish-server}
 mkdir -p logs/eval runs/vision/evals
 if [ "$F" = "1" ]; then
   AG="vis=bots/specs/$name.json:2 plan=bots/specs/plan_c34.json:2 plan2=bots/specs/plan2_c34.json:1 bc3=bots/specs/vision_bc3.json:2 hvirus=bots/specs/sparring/hunter_virus.json:1"

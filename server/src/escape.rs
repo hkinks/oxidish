@@ -1,4 +1,4 @@
-//! `ogar escape`: the escape drill (docs/escape-drill.md).
+//! `oxidish-server escape`: the escape drill (docs/escape-drill.md).
 //!
 //! How long does an agent of mass M survive a bigger, human-like chaser? The chaser is scripted to play like the user does
 //! in the recorded games (docs/human/2026-10-09-50bots.md): it pursues with a lead (intercept point), herds the target
@@ -17,7 +17,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
-use arena_client::steer::tick_speed;
+use oxidish_bot::steer::tick_speed;
 use serde_json::{json, Value};
 
 use crate::agent::{snapshot, AgentDriver};
@@ -444,7 +444,7 @@ pub fn run_escape_rep(agent: &AgentDef, cond: &EscCond, seed: u64) -> Value {
     let mut alive = true;
     let mut path_len = 0.0f64;
     let mut prev_c: Option<(f64, f64)> = None;
-    let trace = std::env::var("OGAR_ESC_TRACE").is_ok();
+    let trace = std::env::var("OXIDISH_ESC_TRACE").is_ok();
     let start = w.tick;
     for _ in 0..horizon {
         let t = (w.tick - start) as i64;

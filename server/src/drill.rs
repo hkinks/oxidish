@@ -1,4 +1,4 @@
-//! `ogar drill`: the giant-pop harvest drill (docs/harvest-drill.md).
+//! `oxidish-server drill`: the giant-pop harvest drill (docs/harvest-drill.md).
 //!
 //! A repeatable measurement of how well an agent eats a giant that has just burst on a virus. Each rep builds a small
 //! world straight from a seed (no server bots, no stray viruses): our agent (default 500 mass), a giant (default 5k
@@ -20,8 +20,8 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
-use arena_client::game::{Kind, Snapshot};
-use arena_client::policy::Out;
+use oxidish_bot::game::{Kind, Snapshot};
+use oxidish_bot::policy::Out;
 use serde_json::{json, Value};
 
 use crate::agent::{snapshot, AgentDriver};
@@ -124,8 +124,8 @@ impl Cond {
 pub enum AgentKind {
     /// scripted harvester; `full` = sees every piece on the map; `brave` = ignores every danger (no fleeing, no safety test)
     Oracle { full: bool, brave: bool, nearest: bool, no_split: bool },
-    /// the lurk-and-harvest hunter module (arena_client::hunter) with the scripted oracle as the fallback when it has nothing to do
-    Hunter(arena_client::params::Params),
+    /// the lurk-and-harvest hunter module (oxidish_bot::hunter) with the scripted oracle as the fallback when it has nothing to do
+    Hunter(oxidish_bot::params::Params),
     /// any `Policy` / vision spec
     Policy(Value),
 }
@@ -162,7 +162,7 @@ impl AgentDef {
                         }
                     }
                 }
-                AgentKind::Hunter(arena_client::params::Params::from_json(&Value::Object(obj)))
+                AgentKind::Hunter(oxidish_bot::params::Params::from_json(&Value::Object(obj)))
             }
             path => {
                 let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
@@ -429,7 +429,7 @@ impl Oracle {
 enum Ctl {
     Drv(Box<AgentDriver>),
     Orc(Oracle),
-    Hun(Box<arena_client::hunter::Hunter>, Oracle, arena_client::params::Params),
+    Hun(Box<oxidish_bot::hunter::Hunter>, Oracle, oxidish_bot::params::Params),
 }
 
 fn apply(w: &mut World, pi: usize, o: &Out) {
@@ -499,7 +499,7 @@ pub fn run_rep(agent: &AgentDef, cond: &Cond, seed: u64) -> Value {
     };
     let mut us_ctl = match (&agent.kind, us_drv) {
         (AgentKind::Oracle { full, brave, nearest, no_split }, _) => Ctl::Orc(Oracle::new(*full, *brave, *nearest, *no_split)),
-        (AgentKind::Hunter(p), _) => Ctl::Hun(Box::new(arena_client::hunter::Hunter::new()), Oracle::new(true, false, false, false), p.clone()),
+        (AgentKind::Hunter(p), _) => Ctl::Hun(Box::new(oxidish_bot::hunter::Hunter::new()), Oracle::new(true, false, false, false), p.clone()),
         (_, Some(d)) => Ctl::Drv(d),
         _ => unreachable!(),
     };
@@ -526,7 +526,7 @@ pub fn run_rep(agent: &AgentDef, cond: &Cond, seed: u64) -> Value {
     let (mut chain_cap, mut chain_over) = (0.0f64, false);
     let mut alive = true;
     let start_tick = w.tick;
-    let trace = std::env::var("OGAR_DRILL_TRACE").is_ok();
+    let trace = std::env::var("OXIDISH_DRILL_TRACE").is_ok();
 
     loop {
         if !(cond.giant_mode == GiantMode::Bot && popped_at.is_some()) {

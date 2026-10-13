@@ -1,7 +1,7 @@
-//! `ogar endless`: the fast endless evaluator (training/eval/endless.py without one `ogar serve` process per world).
+//! `oxidish-server endless`: the fast endless evaluator (training/eval/endless.py without one `oxidish-server serve` process per world).
 //!
 //! N independent endless worlds (seeds seed_base+i) live in ONE process and are stepped in lockstep on worker threads.
-//! Every world is built and driven exactly as `ogar serve --seed S --agents ...` does (same World::new, same agent
+//! Every world is built and driven exactly as `oxidish-server serve --seed S --agents ...` does (same World::new, same agent
 //! order and names, tick, then a decision step on every `sync`-th tick, then the `[players]` sample), so a rule-bot
 //! lineup yields the very same per-world samples. Vision agents of ALL worlds decide in one batched forward pass per
 //! decision tick (workers render frames, the coordinator runs the net, workers apply the actions).
@@ -47,7 +47,7 @@ impl WorldRun {
         let mut w = World::new(Config::new(o.map, o.bots, o.food_mult), seed);
         let mut drivers: Vec<AgentDriver> = Vec::new();
         for (name, spec) in lineup {
-            // same naming as `ogar serve` (server.rs add_agents)
+            // same naming as `oxidish-server serve` (server.rs add_agents)
             let key = name.rsplit_once('-').map_or(name.as_str(), |(k, _)| k).to_string();
             let mut idx = 0;
             while drivers.iter().any(|d| d.name == format!("{key}-{idx}")) {

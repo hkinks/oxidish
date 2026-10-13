@@ -19,14 +19,14 @@ from common import FIELD, ROOT, TEACHER, pin_cores
 from evalval import load_model
 from model import decode_target
 
-import oxidish_env
+import oxidish_gym
 
 DT = 0.08  # seconds of game time per decision
 
 
 def run(mode, ckpt, worlds, learners, steps, threads, seed, split_thr=None, no_split=False, warmup=0, log_every=0):
     label = mode == "teacher"
-    env = oxidish_env.VecEnv(worlds, learners, opponents=FIELD, teacher=TEACHER, px=256, threads=threads, seed=seed,
+    env = oxidish_gym.VecEnv(worlds, learners, opponents=FIELD, teacher=TEACHER, px=256, threads=threads, seed=seed,
                          warmup=warmup, label=label)
     n = env.n
     env.set_teacher(label)

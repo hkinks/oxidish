@@ -3,7 +3,7 @@
     uv run python -m training.eval.commander_eval --cand plan=bots/specs/plan_c34.json --backend heuristic --worlds 4 --game-min 20 --speed 4
     uv run python -m training.eval.commander_eval --cand plan=bots/specs/plan_c34.json --backend off      --worlds 4 --game-min 20
 
-Each world is an `ogar serve` (own ports, never the live ones) with the candidate, the usual rule-bot field (champ, r2g9,
+Each world is an `oxidish-server serve` (own ports, never the live ones) with the candidate, the usual rule-bot field (champ, r2g9,
 safe, ramp_r2, ramp300) and 8 server bots. With a backend, a Commander commands the candidate over the control port in
 real time at --speed (LLM latency counts in real time, so use --speed 1 for LLM backends). Reports the share of samples
 in which the candidate is the heaviest player of the whole world, and its mean mass (dead = 0).
@@ -32,7 +32,7 @@ def run_world(cand: str, backend: str, seed: int, game_min: float, speed: float,
     port, cport = free_port(), free_port()
     env = dict(os.environ)
     env.setdefault("ORT_DYLIB_PATH", str(MAIN / "runs/vision/ort/onnxruntime.dll"))
-    env.setdefault("OGAR_DLL_DIRS", os.pathsep.join([str(MAIN / ".venv/Lib/site-packages/torch/lib"), str(MAIN / "runs/vision/ort")]))
+    env.setdefault("OXIDISH_DLL_DIRS", os.pathsep.join([str(MAIN / ".venv/Lib/site-packages/torch/lib"), str(MAIN / "runs/vision/ort")]))
     cmd = [str(ogar_bin()), "serve", "--port", str(port), "--bind", "127.0.0.1", "--bots", "8", "--map", "7000",
            "--food-mult", str(food_mult), "--seed", str(seed), "--max-tps", str(25 * speed if backend != "off" else 0),
            "--log-players", str(log_s), "--control-port", str(cport), "--agents", f"{cand}:1", *[f"{f}:1" for f in FIELD]]

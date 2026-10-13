@@ -12,8 +12,8 @@ give little pressure. This adds opponents that hunt and use viruses.
 | `hunter_virus` | `bots/specs/sparring/hunter_virus.json` | + stages and feeds viruses at big players, hides behind viruses |
 | `hunter_reckless` | `bots/specs/sparring/hunter_reckless.json` | + chases everything (no prey floor), up to 4 pieces |
 
-Use them like any genome: `training.eval.tournament --engine ogar --agents
-hhunt=bots/specs/sparring/hunter_hunt.json:1 ...`, `training.eval.endless --agents ...`, `ogar match|serve --agents ...`.
+Use them like any genome: `training.eval.tournament --engine oxidish-server --agents
+hhunt=bots/specs/sparring/hunter_hunt.json:1 ...`, `training.eval.endless --agents ...`, `oxidish-server match|serve --agents ...`.
 `training.eval.make_sparring` regenerates the hunter files.
 
 ## Hunter genes (`bots/brain/src/policy.rs`, all default off)
@@ -27,11 +27,11 @@ Not in `BOUNDS`, so evolution is unchanged; existing genomes behave identically 
 
 ## Results
 
-**Parity (Python vs Rust, `training.eval.rust_tools dump` on real node-server matches + `arena_client parity`):**
+**Parity (Python vs Rust, `training.eval.rust_tools dump` on real node-server matches + `oxidish-bot parity`):**
 26996 decisions (hunter_virus, c3_4, champ and a heuristic bot since removed), 0 aim mismatches, 0 split/eject
 mismatches, max |aim diff| 5e-12; 16000 fuzz decisions (hunter genes with staging, c3_4, champ) also 0 mismatches.
 
-**15-min matches** (`training.eval.tournament --engine ogar --matches 24 --ticks 22500 --food-mult 2`, one copy each, 8 server bots, seeds 5000+):
+**15-min matches** (`training.eval.tournament --engine oxidish-server --matches 24 --ticks 22500 --food-mult 2`, one copy each, 8 server bots, seeds 5000+):
 
 | bot | log mass | avg mass | deaths | kills (cells) | virus shots | virus pops |
 |---|---|---|---|---|---|---|

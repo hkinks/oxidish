@@ -1,4 +1,4 @@
-ogar: a Rust port of the MultiOgar agar.io server (FFA mode).
+oxidish-server: a Rust port of the MultiOgar agar.io server (FFA mode).
 
 Ported from MultiOgar (https://github.com/agarian-2/MultiOgar, Barbosik and contributors),
 which is based on Ogar (https://github.com/OgarProject/Ogar), Copyright 2015 Devin Ryan.

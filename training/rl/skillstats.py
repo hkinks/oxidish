@@ -1,4 +1,4 @@
-"""Per-family skill counters from `ogar endless --out` / `training.eval.endless --out` json (key stats.agents), see docs/vision-bot.md M5.
+"""Per-family skill counters from `oxidish-server endless --out` / `training.eval.endless --out` json (key stats.agents), see docs/vision-bot.md M5.
 
     python training/rl/skillstats.py runs/vision/evals/M5_*_e*.json   (the sum over the files, one row per family)
 """

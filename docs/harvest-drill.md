@@ -2,7 +2,7 @@
 
 How well does an agent eat a giant that has just burst on a virus? The user's claim: "a good 500 mass hunter can
 completely overtake a 5k mass giant" after it pops. Until now we had only a coarse counter (`harvest_mass` per hour in
-`ogar endless`). The drill is a direct, repeatable, seeded measurement: `ogar drill` (`server/src/drill.rs`), tables
+`oxidish-server endless`). The drill is a direct, repeatable, seeded measurement: `oxidish-server drill` (`server/src/drill.rs`), tables
 from `training/eval/drill_report.py`.
 
 Short answer (numbers below, N = 100 reps per cell for the headline, 50 for the sweeps, 95% intervals):
@@ -22,7 +22,7 @@ Short answer (numbers below, N = 100 reps per cell for the headline, 50 for the 
 
     # from the repo root; vision specs load models from bots/models/ and need ONNX Runtime (ORT_DYLIB_PATH)
     cargo build --release -j 2 --manifest-path server/Cargo.toml        # use your own CARGO_TARGET_DIR
-    ogar drill --agents c3_4=bots/specs/c3_4.json harv=bots/specs/drill/c34_harvest_r25.json p3=bots/specs/vision_p3.json oracle=oracle \
+    oxidish-server drill --agents c3_4=bots/specs/c3_4.json harv=bots/specs/drill/c34_harvest_r25.json p3=bots/specs/vision_p3.json oracle=oracle \
                --scenario giant_pop,giant_popped --our-mass 500 --giant-mass 5000 --dist 600 --giant-mode bot \
                --reps 100 --seed 1 --threads 4 --out runs/drill/x.json
     python -m training.eval.drill_report runs/drill/x.json [--what main|diag|compact]
@@ -32,8 +32,8 @@ Other options: `--competitor spec.json --comp-mass 800`, `--giant-bot spec.json`
 (seconds after the pop; windows 10/20/30 and the horizon if longer), `--map`, `--food-mult` (default 2, as the endless evaluator).
 Agent specs: any rule bot / planner / vision json (`name=file.json`), or `oracle`, `oracle_near`, `oracle_nosplit`, `oracle_view`, `oracle_brave`.
 Rep `i` of every agent and cell uses seed `seed + i` (paired comparison). Vision nets need a CUDA setup
-(`OGAR_DLL_DIRS` = a dir with cuDNN 9, e.g. the torch wheel's `lib`) or `OGAR_VISION_EP=cpu` (~10x slower). The "cuda" graph backend died once under
-6 threads (cuDNN error, not reproduced); `cuda_plain` and `cpu` are slower but safe. `OGAR_DRILL_TRACE=1` prints a line per second per rep.
+(`OXIDISH_DLL_DIRS` = a dir with cuDNN 9, e.g. the torch wheel's `lib`) or `OXIDISH_VISION_EP=cpu` (~10x slower). The "cuda" graph backend died once under
+6 threads (cuDNN error, not reproduced); `cuda_plain` and `cpu` are slower but safe. `OXIDISH_DRILL_TRACE=1` prints a line per second per rep.
 Tests: `cargo test --release drill` (scene determinism per seed, geometry, oracle rep determinism, interval maths).
 
 ## The scene
@@ -337,7 +337,7 @@ What would raise the numbers (not tried): approach pieces from the pop point as 
 * **`giant_split_pop`** (the giant splits to attack and leaves halves) is not implemented: its halves (1250+) are not eatable by a 500 hunter, so it needs a different hunter mass and a decision on how the giant splits.
 * **Vision-reflex variants** of vision-m5 are not on master, not run. The nets ran on CUDA; one batch of a 6-thread run crashed in cuDNN and was rerun in chunks of 100 reps with 4 threads (each chunk is a separate file, rerun on failure).
 * Sweeps use N = 50 and only the `giant_popped` scenario; one seed base (1). The oracle's constants (200/300/100) were tuned for a few minutes on the 500/5k cell, not searched.
-* The scene differs from `ogar endless`: no server bots, no stray viruses, a map of 7000. Mass eaten from the giant by pieces merging into other food is not counted, and decay (0.2%/s) hits everyone.
+* The scene differs from `oxidish-server endless`: no server bots, no stray viruses, a map of 7000. Mass eaten from the giant by pieces merging into other food is not counted, and decay (0.2%/s) hits everyone.
 * `capture` counts mass of eaten cells at the moment of eating; our cells' own mass loss to the giant is `lost_giant` in the JSON rows.
 
 ## Lurk-and-harvest hunter (results, 2026-10-09)
@@ -345,7 +345,7 @@ What would raise the numbers (not tried): approach pieces from the pop point as 
 Code: `bots/brain/src/hunter.rs` (module + 21 unit tests on constructed snapshots), genes in `params.rs`, hooked into `HeuristicPolicy::act`
 (policy.rs; the planner defers to it while it acts), scripted drill agent `hunter[:gene=v,...]`. All genes default to 0 (off).
 Specs: `bots/specs/best/rules.json` (`hv_commit_only` in the tables below; the recommended set: c3_4 + `commit commit_kite split_harvest race hv_memory=3 hv_still=100`),
-`bots/specs/drill/hv_full.json` (+ `lurk`), `plan_*` wrappers. `OGAR_HUNTER_TRACE=1` prints the decisions.
+`bots/specs/drill/hv_full.json` (+ `lurk`), `plan_*` wrappers. `OXIDISH_HUNTER_TRACE=1` prints the decisions.
 
 Behaviours: **lurk** (giant >= `lurk_ratio` x our mass within `lurk_virus_range` of a virus: stand at lunge reach + `lurk_margin` from it, on the far side of the
 virus; abort to the normal bot when it closes on us or another threat appears; `lurk_shoot` feeds the virus into it via the existing shoot tactic with
@@ -397,10 +397,10 @@ Not run: the held-out field (it needs vision nets; for rule bots the usual field
 
 ### Hook for the vision agents
 
-    use arena_client::hunter::{Hunter, Phase};
+    use oxidish_bot::hunter::{Hunter, Phase};
     let genes = Params::from_json(&serde_json::json!({"commit":1,"commit_kite":1,"split_harvest":1,"race":1,"hv_memory":3,"hv_still":100}));
     let mut hunter = Hunter::new();                       // one per agent; hunter.reset() on respawn
-    // every decision step, with the Snapshot the rule-bot teacher already gets (ogar::agent::snapshot(&world, pi)):
+    // every decision step, with the Snapshot the rule-bot teacher already gets (oxidish-server::agent::snapshot(&world, pi)):
     if let Some(out) = hunter.step(&snap, &genes) {       // Out { x, y, split, eject }: the aim point and the split bit
         // teacher: label this step with out; reflex: override the net's aim/split while hunter.phase == Phase::Commit
     }

@@ -1,6 +1,6 @@
-"""Seeded rule-bot matches in the Rust engine (`ogar match`): the whole world and its agents in one process.
+"""Seeded rule-bot matches in the Rust engine (`oxidish-server match`): the whole world and its agents in one process.
 
-    cargo build --release -p ogar
+    cargo build --release -p oxidish-server
     uv run python -m training.eval.rust_runner --agents route:4 champ=bots/specs/final_champion.json:4 --ticks 3000 --seed 1
 
 Used by training.eval.tournament (one row per agent, `--out` JSON). Only rule bots (route / field / name=genome.json).
@@ -32,9 +32,9 @@ def supported(specs: list[str]) -> bool:
 
 
 def ogar_binary() -> Path:
-    path = Path(os.environ.get("OGAR_BIN", ROOT / "target" / "release" / ("ogar.exe" if os.name == "nt" else "ogar")))
+    path = Path(os.environ.get("OXIDISH_BIN", ROOT / "target" / "release" / ("oxidish-server.exe" if os.name == "nt" else "oxidish-server")))
     if not path.exists():
-        raise FileNotFoundError(f"{path} missing: cargo build --release -p ogar")
+        raise FileNotFoundError(f"{path} missing: cargo build --release -p oxidish-server")
     return path
 
 
@@ -48,7 +48,7 @@ def play_ogar(specs: list[str], ticks: int, sync: int, seed: int, bots: int = 8,
                "--out", str(out), "--agents", *specs]
         proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
         if proc.returncode:
-            raise RuntimeError(f"ogar failed: {proc.stderr.strip() or proc.stdout.strip()}")
+            raise RuntimeError(f"oxidish-server failed: {proc.stderr.strip() or proc.stdout.strip()}")
         return json.loads(out.read_text(encoding="utf-8"))
 
 

@@ -2,7 +2,7 @@
 
     uv run python -m training.eval.tournament --agents route:4 field:4 --matches 24 --workers 6
 
-Each match runs in the Rust engine (`ogar match`, rule bots only) with seed i+1. The same seeds
+Each match runs in the Rust engine (`oxidish-server match`, rule bots only) with seed i+1. The same seeds
 give the same results, so variants can be compared on identical matches.
 """
 

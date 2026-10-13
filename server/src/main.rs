@@ -1,16 +1,16 @@
-//! ogar CLI.
+//! oxidish-server CLI.
 //!
-//!   ogar match --agents ramp300=bots/specs/r2g9_ramp300.json:1 champ=bots/specs/final_champion.json:1 --ticks 22500 \
+//!   oxidish-server match --agents ramp300=bots/specs/r2g9_ramp300.json:1 champ=bots/specs/final_champion.json:1 --ticks 22500 \
 //!              --food-mult 2 --seed 1 --matches 8 --threads 2 --out rows.json
-//!   ogar endless --agents c3_4=bots/specs/c3_4.json:2 ... --worlds 8 --game-min 240 --seed-base 700 [--threads T] --out samples.json
+//!   oxidish-server endless --agents c3_4=bots/specs/c3_4.json:2 ... --worlds 8 --game-min 240 --seed-base 700 [--threads T] --out samples.json
 //!                (the fast endless evaluator: all worlds in one process, vision agents batched across worlds; endless.rs)
-//!   ogar drill --agents c3_4=bots/specs/c3_4.json oracle=oracle --scenario giant_pop,giant_popped --our-mass 500 --giant-mass 5000 --dist 600 //!              --reps 50 --seed 1 [--giant-mode hunt|passive] [--competitor bots/specs/c3_4.json --comp-mass 800] [--horizon 30] --out drill.json
+//!   oxidish-server drill --agents c3_4=bots/specs/c3_4.json oracle=oracle --scenario giant_pop,giant_popped --our-mass 500 --giant-mass 5000 --dist 600 //!              --reps 50 --seed 1 [--giant-mode hunt|passive] [--competitor bots/specs/c3_4.json --comp-mass 800] [--horizon 30] --out drill.json
 //!                (the giant-pop harvest drill: how well does an agent eat a giant that just burst on a virus; drill.rs)
-//!   ogar vdump --agents vis=bots/specs/vision_bc3.json:2 ... --count 1000 --out DIR   (vision parity frames, training/rl/parity.py)
-//!   ogar serve --port 9600 --bots 8 --food-mult 2 --map 7000 [--agents name=genome.json:N] [--full-view]
+//!   oxidish-server vdump --agents vis=bots/specs/vision_bc3.json:2 ... --count 1000 --out DIR   (vision parity frames, training/rl/parity.py)
+//!   oxidish-server serve --port 9600 --bots 8 --food-mult 2 --map 7000 [--agents name=genome.json:N] [--full-view]
 //!                [--record DIR [--record-all]]   (eat events, agent loss scenes, human frames: see record.rs)
 
-use ogar::matches::{parse_lineup, run_many, MatchOpts};
+use oxidish_server::matches::{parse_lineup, run_many, MatchOpts};
 use serde_json::Value;
 
 /// Escape non-ASCII like Python's json.dumps.
@@ -106,7 +106,7 @@ fn run_match_cmd(a: &Args) -> Result<(), String> {
              game_min * 60.0 / wall, matches as f64 / wall * 60.0 / threads as f64);
     #[cfg(feature = "vision-net")]
     {
-        let (calls, frames, ns) = ogar::nn::stats();
+        let (calls, frames, ns) = oxidish_server::nn::stats();
         if calls > 0 {
             println!("vision net: {calls} calls, {frames} frames, {:.2} ms/call, {:.2} ms/frame (inside the net call, all threads)",
                      ns as f64 / calls as f64 / 1e6, ns as f64 / frames as f64 / 1e6);
@@ -121,7 +121,7 @@ fn run_match_cmd(a: &Args) -> Result<(), String> {
 fn run_endless_cmd(a: &Args) -> Result<(), String> {
     let cpus = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
     let worlds: usize = a.num("worlds", 8usize)?;
-    let o = ogar::endless::EndlessOpts {
+    let o = oxidish_server::endless::EndlessOpts {
         agents: a.agents.clone(),
         worlds,
         game_min: a.num("game-min", 240.0f64)?,
@@ -133,7 +133,7 @@ fn run_endless_cmd(a: &Args) -> Result<(), String> {
         sync: a.num("sync", 2u64)?,
         log_s: a.num("log-s", 15.0f64)?,
     };
-    let (samples, st) = ogar::endless::run(&o)?;
+    let (samples, st) = oxidish_server::endless::run(&o)?;
     let n: usize = samples.iter().map(|s| s.len()).sum();
     println!("{} worlds x {:.0} game-min, {n} samples, {:.0}s wall", o.worlds, o.game_min, st.wall_s);
     if st.infer_calls > 0 {
@@ -142,7 +142,7 @@ fn run_endless_cmd(a: &Args) -> Result<(), String> {
     }
     #[cfg(feature = "vision-net")]
     {
-        let (c, r, d) = ogar::nn::phases();
+        let (c, r, d) = oxidish_server::nn::phases();
         if st.infer_calls > 0 {
             let k = st.infer_calls as f64 * 1e6;
             println!("per call: copy in {:.2} ms, graph run {:.2} ms, copy out {:.2} ms", c as f64 / k, r as f64 / k, d as f64 / k);
@@ -159,11 +159,11 @@ fn run_endless_cmd(a: &Args) -> Result<(), String> {
 fn run_serve_cmd(a: &Args) -> Result<(), String> {
     // a live server runs one world, so the vision nets may use a few inference threads (headless runs default to 1:
     // they run many worlds in parallel)
-    if std::env::var_os("OGAR_VISION_THREADS").is_none() {
+    if std::env::var_os("OXIDISH_VISION_THREADS").is_none() {
         let n = std::thread::available_parallelism().map(|n| (n.get() / 4).clamp(1, 4)).unwrap_or(1);
-        std::env::set_var("OGAR_VISION_THREADS", n.to_string());
+        std::env::set_var("OXIDISH_VISION_THREADS", n.to_string());
     }
-    let o = ogar::server::ServeOpts {
+    let o = oxidish_server::server::ServeOpts {
         full_view: a.kv.contains_key("full-view"),
         port: a.num("port", 9600u16)?,
         bind: a.kv.get("bind").cloned().unwrap_or_else(|| "0.0.0.0".into()),
@@ -182,21 +182,21 @@ fn run_serve_cmd(a: &Args) -> Result<(), String> {
         record: a.kv.get("record").cloned(),
         record_all: a.kv.contains_key("record-all"),
     };
-    ogar::server::serve(o)
+    oxidish_server::server::serve(o)
 }
 
-/// `ogar render --agents ... --ticks T --seed S --out DIR [--px 256]`: play T ticks, then write what each agent's
+/// `oxidish-server render --agents ... --ticks T --seed S --out DIR [--px 256]`: play T ticks, then write what each agent's
 /// vision would be (its camera view at px, and a 2x wider view at px/2) as grayscale PNGs.
 fn run_render_cmd(a: &Args) -> Result<(), String> {
-    use ogar::agent::{snapshot, step_all, AgentDriver};
-    use ogar::render::{png_gray, render};
+    use oxidish_server::agent::{snapshot, step_all, AgentDriver};
+    use oxidish_server::render::{png_gray, render};
     let lineup = parse_lineup(&a.agents)?;
     let ticks: u64 = a.num("ticks", 3000u64)?;
     let px: usize = a.num("px", 256usize)?;
     let out = a.kv.get("out").cloned().unwrap_or_else(|| "logs/vision".into());
     std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
-    let cfg = ogar::config::Config::new(a.num("map", 7000.0f64)?, a.num("bots", 8usize)?, a.num("food-mult", 1.0f64)?);
-    let mut w = ogar::world::World::new(cfg, a.num("seed", 1u64)?);
+    let cfg = oxidish_server::config::Config::new(a.num("map", 7000.0f64)?, a.num("bots", 8usize)?, a.num("food-mult", 1.0f64)?);
+    let mut w = oxidish_server::world::World::new(cfg, a.num("seed", 1u64)?);
     let mut agents: Vec<AgentDriver> = lineup.iter().map(|(n, s)| AgentDriver::new(&mut w, n, s, 2)).collect();
     for _ in 0..ticks {
         w.tick();
@@ -222,20 +222,20 @@ fn run_render_cmd(a: &Args) -> Result<(), String> {
     Ok(())
 }
 
-/// `ogar vdump --agents vis=bots/specs/vision_bc3.json:2 champ=...:2 --ticks T --seed S --every K --count N --out DIR`: play,
+/// `oxidish-server vdump --agents vis=bots/specs/vision_bc3.json:2 champ=...:2 --ticks T --seed S --every K --count N --out DIR`: play,
 /// and every K decisions record each vision agent's input frames and the Rust net output (parity check against torch,
 /// see training/rl/parity.py). Files: view.u8 [N,2,256,256], wide.u8 [N,2,128,128], rust.f32 [N,4] = (u, v, split, eject).
 #[cfg(feature = "vision-net")]
 fn run_vdump_cmd(a: &Args) -> Result<(), String> {
-    use ogar::agent::{step_all, AgentDriver};
+    use oxidish_server::agent::{step_all, AgentDriver};
     let lineup = parse_lineup(&a.agents)?;
     let ticks: u64 = a.num("ticks", 20000u64)?;
     let every: u64 = a.num("every", 10u64)?;
     let count: usize = a.num("count", 1000usize)?;
     let out = a.kv.get("out").cloned().unwrap_or_else(|| "logs/vision/parity".into());
     std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
-    let cfg = ogar::config::Config::new(a.num("map", 7000.0f64)?, a.num("bots", 8usize)?, a.num("food-mult", 2.0f64)?);
-    let mut w = ogar::world::World::new(cfg, a.num("seed", 1u64)?);
+    let cfg = oxidish_server::config::Config::new(a.num("map", 7000.0f64)?, a.num("bots", 8usize)?, a.num("food-mult", 2.0f64)?);
+    let mut w = oxidish_server::world::World::new(cfg, a.num("seed", 1u64)?);
     let mut agents: Vec<AgentDriver> = lineup.iter().map(|(n, s)| AgentDriver::new(&mut w, n, s, 2)).collect();
     let (mut view, mut wide, mut rust): (Vec<u8>, Vec<u8>, Vec<f32>) = (vec![], vec![], vec![]);
     let (mut n, mut step) = (0usize, 0u64);
@@ -278,7 +278,7 @@ fn num_list(a: &Args, k: &str, default: &str) -> Result<Vec<f64>, String> {
 }
 
 fn run_drill_cmd(a: &Args) -> Result<(), String> {
-    use ogar::drill::{print_table, run_all, summarize_all, AgentDef, Cond, DrillOpts, GiantMode, Scenario};
+    use oxidish_server::drill::{print_table, run_all, summarize_all, AgentDef, Cond, DrillOpts, GiantMode, Scenario};
     let agents: Vec<AgentDef> = a.agents.iter().map(|s| AgentDef::parse(s)).collect::<Result<_, _>>()?;
     if agents.is_empty() {
         return Err("need --agents name=spec.json|oracle|oracle_view ...".into());
@@ -326,10 +326,10 @@ fn run_drill_cmd(a: &Args) -> Result<(), String> {
     Ok(())
 }
 
-/// `ogar escape`: the escape drill (escape.rs, docs/escape-drill.md).
+/// `oxidish-server escape`: the escape drill (escape.rs, docs/escape-drill.md).
 fn run_escape_cmd(a: &Args) -> Result<(), String> {
-    use ogar::drill::AgentDef;
-    use ogar::escape::{print_table, run_all, summarize_all, EscCond, EscOpts, Place};
+    use oxidish_server::drill::AgentDef;
+    use oxidish_server::escape::{print_table, run_all, summarize_all, EscCond, EscOpts, Place};
     let agents: Vec<AgentDef> = a.agents.iter().map(|s| AgentDef::parse(s)).collect::<Result<_, _>>()?;
     if agents.is_empty() {
         return Err("need --agents name=spec.json|oracle ...".into());
@@ -382,7 +382,7 @@ fn main() {
         Some("render") => parse_args(&args[1..]).and_then(|a| run_render_cmd(&a)),
         #[cfg(feature = "vision-net")]
         Some("vdump") => parse_args(&args[1..]).and_then(|a| run_vdump_cmd(&a)),
-        _ => Err("usage: ogar match|endless|drill|serve|render ...".into()),
+        _ => Err("usage: oxidish-server match|endless|drill|serve|render ...".into()),
     };
     if let Err(e) = result {
         eprintln!("error: {e}");

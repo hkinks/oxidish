@@ -5,7 +5,7 @@
 //!   for "these pieces belong together") with a darker outline.
 //! Edges are anti-aliased by distance; pellets smaller than a pixel still show as faint dots.
 
-use arena_client::game::{Kind, Snapshot};
+use oxidish_bot::game::{Kind, Snapshot};
 
 const BG: f32 = 40.0;
 const OUTSIDE: f32 = 0.0;

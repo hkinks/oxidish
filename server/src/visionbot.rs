@@ -7,9 +7,9 @@
 
 use std::sync::Arc;
 
-use arena_client::game::Snapshot;
-use arena_client::policy::Out;
-use arena_client::reflex::Reflex;
+use oxidish_bot::game::Snapshot;
+use oxidish_bot::policy::Out;
+use oxidish_bot::reflex::Reflex;
 use serde_json::Value;
 
 use crate::nn::{Net, NetOut, PX, WPX};
@@ -39,11 +39,11 @@ pub struct VisionBot {
 impl VisionBot {
     pub fn from_spec(spec: &Value) -> Result<VisionBot, String> {
         let model = spec["model"].as_str().ok_or("vision spec needs \"model\"")?;
-        let ep = spec["ep"].as_str().map(String::from).or_else(|| std::env::var("OGAR_VISION_EP").ok()).unwrap_or_else(|| "auto".into());
+        let ep = spec["ep"].as_str().map(String::from).or_else(|| std::env::var("OXIDISH_VISION_EP").ok()).unwrap_or_else(|| "auto".into());
         let threads = spec["threads"]
             .as_u64()
             .map(|t| t as usize)
-            .or_else(|| std::env::var("OGAR_VISION_THREADS").ok().and_then(|t| t.parse().ok()))
+            .or_else(|| std::env::var("OXIDISH_VISION_THREADS").ok().and_then(|t| t.parse().ok()))
             .unwrap_or(1);
         let net = Net::load(model, &ep, threads)?;
         let split_thr = spec["split_thr"].as_f64().map(|v| v as f32).or(net.split_thr).unwrap_or(0.9);
@@ -111,7 +111,7 @@ impl VisionBot {
     }
 }
 
-/// One batched forward pass for every prepared bot, whatever world it lives in (`ogar endless` passes the bots of all
+/// One batched forward pass for every prepared bot, whatever world it lives in (`oxidish-server endless` passes the bots of all
 /// worlds). Bots are grouped by net (one pass per model). Returns the number of frames answered.
 pub fn infer_batch(bots: &mut [&mut VisionBot]) -> usize {
     let mut groups: Vec<Vec<usize>> = Vec::new();

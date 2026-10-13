@@ -1,11 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["server", "client", "bots/brain", "training/env"]
+members = ["server", "client", "bots/brain", "training/gym"]
 
 [profile.release]
 opt-level = 3
 lto = true
 codegen-units = 1
 
-[profile.release.package.oxidish]
+[profile.release.package.oxidish-client]
 codegen-units = 4

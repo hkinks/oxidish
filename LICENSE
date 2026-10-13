@@ -12,6 +12,6 @@
 
   0. You just DO WHAT THE FUCK YOU WANT TO.
 
-Exceptions: server/ (ogar) is a port of MultiOgar and stays under the Apache License 2.0
+Exceptions: server/ (oxidish-server) is a port of MultiOgar and stays under the Apache License 2.0
 (server/LICENSE, server/NOTICE); the fonts in client/assets/fonts keep their own
 licences (next to each font).

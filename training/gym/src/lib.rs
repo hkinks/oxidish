@@ -1,7 +1,7 @@
-//! Python bindings for `ogar::vision::VecEnv` (see docs/vision-bot.md, M1).
+//! Python bindings for `oxidish_server::vision::VecEnv` (see docs/vision-bot.md, M1).
 //!
 //! ```python
-//! env = oxidish_env.VecEnv(32, 4, opponents=[("c34", "bots/specs/c3_4.json", 4)], teacher="bots/specs/plan_c34.json")
+//! env = oxidish_gym.VecEnv(32, 4, opponents=[("c34", "bots/specs/c3_4.json", 4)], teacher="bots/specs/plan_c34.json")
 //! obs = env.reset()                       # {"view": u8[N,2,px,px], "wide": u8[N,2,px/2,px/2]}
 //! obs, reward, done, info = env.step(actions)   # actions f32[N,4] = (u, v, split, eject), u/v in view pixels
 //! info["teacher"]                         # f32[N,4]: the teacher's decision for the *current* obs (BC label)
@@ -11,7 +11,7 @@
 
 use numpy::ndarray::{ArrayView1, ArrayView2, ArrayView4};
 use numpy::{PyArray1, PyArray2, PyArray4, PyReadonlyArray2, PyUntypedArrayMethods};
-use ogar::vision::{VecEnv as Core, VisionOpts};
+use oxidish_server::vision::{VecEnv as Core, VisionOpts};
 use pyo3::exceptions::{PyIOError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -269,7 +269,7 @@ fn info_dict<'py>(slf: &Bound<'py, VecEnv>, py: Python<'py>, copy: bool) -> PyRe
 }
 
 #[pymodule]
-fn oxidish_env(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn oxidish_gym(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<VecEnv>()?;
     Ok(())
 }

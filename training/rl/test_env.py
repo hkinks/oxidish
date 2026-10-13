@@ -1,14 +1,14 @@
-"""Smoke tests for the oxidish_env VecEnv (build: see docs/vision-bot.md, M1). Run from the repo root."""
+"""Smoke tests for the oxidish_gym VecEnv (build: see docs/vision-bot.md, M1). Run from the repo root."""
 import numpy as np
 import pytest
 
-oxidish_env = pytest.importorskip("oxidish_env")
+oxidish_gym = pytest.importorskip("oxidish_gym")
 
 PX = 96
 
 
 def make(n_worlds=2, learners=2, threads=2, **kw):
-    return oxidish_env.VecEnv(
+    return oxidish_gym.VecEnv(
         n_worlds, learners, opponents=[("c34", "bots/specs/c3_4.json", 2)], teacher="bots/specs/c3_4.json",
         px=PX, threads=threads, seed=7, **kw)
 

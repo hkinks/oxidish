@@ -2,13 +2,13 @@
 //! and the `scene` observation a commander (a human, Claude over MCP, Jev) decides from.
 //!
 //! An order is a verb (+ target) with an expiry in game time, plus an independent split go/no-go flag. Rule bots
-//! apply it through `arena_client::order` (their reflexes still veto it); vision agents through `vision_override`.
+//! apply it through `oxidish_bot::order` (their reflexes still veto it); vision agents through `vision_override`.
 
-use arena_client::game::{Cell, Kind, Snapshot};
-use arena_client::order::{Order, Verb};
-use arena_client::params::Params;
-use arena_client::policy::Out;
-use arena_client::steer::{classify, danger_radius, EAT_RATIO, SPLIT_KILL_RATIO};
+use oxidish_bot::game::{Cell, Kind, Snapshot};
+use oxidish_bot::order::{Order, Verb};
+use oxidish_bot::params::Params;
+use oxidish_bot::policy::Out;
+use oxidish_bot::steer::{classify, danger_radius, EAT_RATIO, SPLIT_KILL_RATIO};
 use serde_json::{json, Value};
 
 use crate::agent::{snapshot, AgentDriver};
@@ -174,7 +174,7 @@ pub fn resolve_player(w: &World, target: &Target, not: usize) -> Option<usize> {
 }
 
 impl AgentDriver {
-    /// Drop expired parts of the order and return the order as `arena_client` applies it (None = no order).
+    /// Drop expired parts of the order and return the order as `oxidish-bot` applies it (None = no order).
     pub fn current_order(&mut self, w: &World) -> Option<Order> {
         let now = w.tick;
         let Some(mut d) = self.order.take() else { return None };

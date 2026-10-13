@@ -1,4 +1,4 @@
-"""Markdown tables from `ogar escape --out` files (docs/escape-drill.md).
+"""Markdown tables from `oxidish-server escape --out` files (docs/escape-drill.md).
 
     python -m training.eval.escape_report runs/esc/a.json runs/esc/b.json [--base c3_4] [--what pooled|cells|methods]
 

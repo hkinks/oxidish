@@ -33,14 +33,14 @@ AGENT_STATS: list = []   # filled by --engine inproc: one list of per-agent stat
 
 
 def ogar_bin() -> Path:
-    exe = "ogar.exe" if os.name == "nt" else "ogar"
-    return Path(os.environ.get("OGAR_BIN", ROOT / "target" / "release" / exe))
+    exe = "oxidish-server.exe" if os.name == "nt" else "oxidish-server"
+    return Path(os.environ.get("OXIDISH_BIN", ROOT / "target" / "release" / exe))
 
 
 def run_world(specs: list[str], seed: int, game_min: float, log_s: float, food_mult: float,
               port: int = 0, speed: float = 0.0) -> list[dict]:
     """One endless world; returns its [players] samples ({t, p: [{n, m, c}]})."""
-    port = port or free_port()     # a fixed port + speed make the world watchable (oxidish --spectate)
+    port = port or free_port()     # a fixed port + speed make the world watchable (oxidish-client --spectate)
     end_tick = int(game_min * TICKS_PER_MIN)
     cmd = [str(ogar_bin()), "serve", "--port", str(port), "--bind", "127.0.0.1", "--bots", "8", "--map", "7000",
            "--food-mult", str(food_mult), "--seed", str(seed), "--max-tps", str(25 * speed), "--log-players", str(log_s),
@@ -72,7 +72,7 @@ def _inproc_shard(specs: list[str], worlds: int, seed_base: int, game_min: float
         r = subprocess.run(cmd, cwd=ROOT, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                            text=True, encoding="utf-8", errors="replace")
         if r.returncode:
-            raise RuntimeError(f"ogar endless failed ({r.returncode}): " + r.stdout[-2000:])
+            raise RuntimeError(f"oxidish-server endless failed ({r.returncode}): " + r.stdout[-2000:])
         print("\n".join("   " + l for l in r.stdout.splitlines() if "wall" in l or l.startswith(("vision", "per call"))), file=sys.stderr)
         doc = json.loads(out.read_text())
         AGENT_STATS.extend(doc.get("stats", {}).get("agents", []))   # per world: each agent's counters (deaths, splits, pops, ...)
@@ -81,7 +81,7 @@ def _inproc_shard(specs: list[str], worlds: int, seed_base: int, game_min: float
 
 def run_inproc(specs: list[str], worlds: int, seed_base: int, game_min: float, log_s: float, food_mult: float,
                threads: int = 0, shards: int = 1) -> list[list[dict]]:
-    """Worlds in `ogar endless` processes (server/src/endless.rs): the same samples run_world() returns for seeds
+    """Worlds in `oxidish-server endless` processes (server/src/endless.rs): the same samples run_world() returns for seeds
     seed_base+i (bit-identical for rule bots), but the worlds of a process step in lockstep on worker threads and every
     vision agent of every world decides in one batched net call. `shards` > 1 splits the worlds over that many
     processes (one batched call each): on a GPU shared with other jobs each process gets its own time slice."""
@@ -129,10 +129,10 @@ def main() -> None:
                    help="run world 0 on this port (control port +1) at --watch-speed, to watch it with the game client")
     p.add_argument("--watch-speed", type=float, default=4.0, help="world 0's speed when watched (x real time; +/- in the client)")
     p.add_argument("--engine", choices=["serve", "inproc"], default="serve",
-                   help="serve: one `ogar serve` process per world (default); inproc: one `ogar endless` process, all worlds "
+                   help="serve: one `oxidish-server serve` process per world (default); inproc: one `oxidish-server endless` process, all worlds "
                         "in lockstep, vision agents batched across worlds (same samples, much faster with vision agents)")
     p.add_argument("--threads", type=int, default=0, help="inproc: worker threads in total (default min(worlds, --cpus))")
-    p.add_argument("--shards", type=int, default=1, help="inproc: split the worlds over this many ogar endless processes "
+    p.add_argument("--shards", type=int, default=1, help="inproc: split the worlds over this many oxidish-server endless processes "
                    "(helps when the GPU is shared with other jobs: one time slice per process)")
     p.add_argument("--cpus", type=int, default=11)
     p.add_argument("--out", help="save every world's per-window family masses (JSON)")

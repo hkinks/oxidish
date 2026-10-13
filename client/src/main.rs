@@ -68,16 +68,16 @@ fn parse_args() -> Args {
     a
 }
 
-const HELP: &str = "oxidish: native agar.io client (MultiOgar protocol 6)
+const HELP: &str = "oxidish-client: native agar.io client (MultiOgar protocol 6)
 
-usage: oxidish [options]
+usage: oxidish-client [options]
   --server URL          server to join (default from settings, ws://127.0.0.1:9600)
   --name NICK           nickname
   --spectate            start spectating (follows the largest player)
   --whole-map           start spectating the whole map
   --zoom Z              fixed zoom instead of automatic
   --font NAME|FILE      ubuntu (default), nunito, inter, quicksand, or a .ttf file
-  --config PATH         settings file (default: %APPDATA%\\agario-client\\settings.json or ~/.config/agario-client/settings.json)
+  --config PATH         settings file (default: %APPDATA%\\oxidish\\settings.json or ~/.config/oxidish/settings.json)
   --settings-open       open the settings panel (F1) at start
   --control-open        open the server control panel (F2) at start
   --selftest            scripted bot plays (steers, eats, splits, ejects) and logs [auto] lines

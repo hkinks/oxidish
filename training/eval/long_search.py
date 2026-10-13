@@ -1,4 +1,4 @@
-"""CMA-ES over the champion's genes, scored in long Rust-engine games (`ogar match`) against a fixed field.
+"""CMA-ES over the champion's genes, scored in long Rust-engine games (`oxidish-server match`) against a fixed field.
 
     uv run python -m training.eval.long_search --run long1 --init runs/champ_safe.json [--popsize 6] [--matches 6]
 

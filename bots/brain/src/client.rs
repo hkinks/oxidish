@@ -26,11 +26,11 @@ pub struct AgentStats {
     pub counters: Counters,
     pub losses: Vec<Value>,
     pub popped: u64,
-    /// virus shots fired / enemy cells popped by our viruses / mass of the popped (ogar engine only)
+    /// virus shots fired / enemy cells popped by our viruses / mass of the popped (oxidish-server engine only)
     pub virus_shots: u64,
     pub virus_pops: u64,
     pub virus_pop_mass: f64,
-    /// ogar engine: split decisions taken / kills within 3 s of one (and their mass) / eaten cells of players that had
+    /// oxidish-server engine: split decisions taken / kills within 3 s of one (and their mass) / eaten cells of players that had
     /// >= 3 cells at that moment (popped or split apart) and their mass
     pub splits: u64,
     pub split_kills: u64,

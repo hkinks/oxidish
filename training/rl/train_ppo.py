@@ -1,4 +1,4 @@
-"""M4 phase B: PPO fine-tuning of a BC net on the oxidish_env VecEnv (endless field), with a decaying teacher anchor.
+"""M4 phase B: PPO fine-tuning of a BC net on the oxidish_gym VecEnv (endless field), with a decaying teacher anchor.
 
     python training/rl/train_ppo.py --name p1 --init runs/vision/a1/final.pt --hours 2
 
@@ -21,13 +21,13 @@ from common import FIELD, ROOT, TEACHER, pin_cores, target_metrics
 from evalval import load_model
 from model import VisionNet, decode_target, heat_target
 
-import oxidish_env
+import oxidish_gym
 
 DT = 0.08
 
 # League pool: the endless field (champ, r2g9, safe, ramp_r2, ramp300) + c3_4, shoot, two hunters and other rule-bot
 # variants. DISJOINT from the held-out field (plan_c34, plan2_c34, vision_bc3, hunter_virus, see endlessH.sh).
-# Each world draws `--pick` of them. (Vision-net opponents are not available inside oxidish_env.)
+# Each world draws `--pick` of them. (Vision-net opponents are not available inside oxidish_gym.)
 LEAGUE = FIELD + [
     ("c3_4", "bots/specs/c3_4.json", 1),
     ("shoot", "bots/specs/ab/c34_shootthr.json", 1),
@@ -124,10 +124,10 @@ def main():
                             betas=(0.9, 0.99))
 
     if a.league:
-        env = oxidish_env.VecEnv(a.worlds, a.learners, opponents=[], pool=LEAGUE, pool_pick=a.pick, giant_p=a.giant_p,
+        env = oxidish_gym.VecEnv(a.worlds, a.learners, opponents=[], pool=LEAGUE, pool_pick=a.pick, giant_p=a.giant_p,
                              teacher=TEACHER, px=256, threads=a.threads, seed=a.seed, warmup=0)
     else:
-        env = oxidish_env.VecEnv(a.worlds, a.learners, opponents=FIELD, teacher=TEACHER, px=256, threads=a.threads,
+        env = oxidish_gym.VecEnv(a.worlds, a.learners, opponents=FIELD, teacher=TEACHER, px=256, threads=a.threads,
                              seed=a.seed, warmup=0, giant_p=a.giant_p)
     n = env.n
     env.set_teacher(False)

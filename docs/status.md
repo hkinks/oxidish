@@ -13,7 +13,7 @@ only if the mean improves and it wins ≥ 3 of 5 sets.
 Leaderboard names of the four reference bots in `bots/specs/best/`: **vision** (m7a), **vision-old** (p6_hunt),
 **planner** (planhv), **rules** (c34h); older results use the names in parentheses.
 
-**Vision bot** (grayscale frames rendered in the engine, ONNX net in `ogar`), held-out field (opponents never trained
+**Vision bot** (grayscale frames rendered in the engine, ONNX net in `oxidish-server`), held-out field (opponents never trained
 against: plan ×2, plan2, bc3 ×2, apos, hunter_virus + 8 server bots; `apos` was a heuristic bot since removed from the repo):
 
 | spec | what | 3000 | 11000 | 21000 | 31000 | 41000 | mean |
@@ -52,15 +52,15 @@ all vision nets) and after fleeing into walls (27%) ([human/2026-10-09-hunters.m
 | eat exploded enemies | **works**: the hunter module (lookahead commit to a popped giant's pieces, safe split-harvest, race) doubles drill capture (500 vs popped 5k: 12% → 24-33%, overtake 6% → 27-52%) and is the one skill that raised leader share for every bot type ([harvest-drill.md](harvest-drill.md)) |
 | split-eat | the rule split-kill exists; as a vision reflex it costs 11-31 points (halves get eaten); PPO that executes splits collapses. Only the hunter's safe splits are on |
 | pop others with viruses | virus-split tactic exists (11.5 pops/h as a reflex) but costs leader share; off |
-| escape a hunting human | `ogar escape` drill + `evade` / `reflex_flee` genes help in the drill (+5 s survival) but lose in the full game; off ([escape-drill.md](escape-drill.md)) |
+| escape a hunting human | `oxidish-server escape` drill + `evade` / `reflex_flee` genes help in the drill (+5 s survival) but lose in the full game; off ([escape-drill.md](escape-drill.md)) |
 
 ## What was built in this stretch
 
-- **Vision bot pipeline** (M0-M8): `server/src/render.rs` (frames), `vision.rs` + `training/env` (VecEnv for
+- **Vision bot pipeline** (M0-M8): `server/src/render.rs` (frames), `vision.rs` + `training/gym` (VecEnv for
   training, league pool, giants, scripted chaser, hunter in the loop), `visionbot.rs` + `nn.rs` (ONNX Runtime with CUDA
   graphs, batched, GRU state), `training/rl/` (BC/DAgger, PPO v1-v5, export, eval scripts). [vision-bot.md](vision-bot.md)
-- **Fast evaluator**: `ogar endless` / `training.eval.endless --engine inproc [--stats-out]` with per-skill counters.
-- **Drills**: `ogar drill` (giant pop harvest, oracle, mass-chain bound) and `ogar escape` (human-like chaser).
+- **Fast evaluator**: `oxidish-server endless` / `training.eval.endless --engine inproc [--stats-out]` with per-skill counters.
+- **Drills**: `oxidish-server drill` (giant pop harvest, oracle, mass-chain bound) and `oxidish-server escape` (human-like chaser).
 - **Skills in `bots/brain`**: `hunter.rs` (lurk/commit/split-harvest/race), `reflex.rs` (vision reflex layer:
   hunter, split-kill, harvest, virus, flee, guard), `evade.rs`, `order.rs`.
 - **Commander**: control-port orders (`hunt`, `harvest`, `virus-split`, `goto`, `flee`, ...), `scene`/`frame`, an MCP
@@ -72,23 +72,23 @@ all vision nets) and after fleeing into walls (27%) ([human/2026-10-09-hunters.m
 ## How to run
 
 ```bash
-cargo build --release      # target/release/ogar (server), target/release/oxidish (client); .exe on Windows
+cargo build --release      # target/release/oxidish-server (server), target/release/oxidish-client (client); .exe on Windows
 
 # live server with the best bots and recording; vision bots need ONNX Runtime (see training.md)
-target/release/ogar serve --port 9600 --bots 12 --food-mult 2 --map 10000 --control-port 9601 \
+target/release/oxidish-server serve --port 9600 --bots 12 --food-mult 2 --map 10000 --control-port 9601 \
   --record logs/human --record-all --agents vision=bots/specs/best/vision.json:6 planner=bots/specs/best/planner.json:6 \
   rules=bots/specs/best/rules.json:4 vision-old=bots/specs/best/vision-old.json:4
-target/release/oxidish --name you    # or scripts/client.sh; server address is saved in the client settings
+target/release/oxidish-client --name you    # or scripts/client.sh; server address is saved in the client settings
 uv run python -m training.eval.human_report logs/human --session <stamp> --out docs/human/<date>.md   # after playing
 
 # leader share of a candidate: scripts/eval.sh, or directly (held-out lineup in vision-bot.md)
 uv run python -m training.eval.endless --candidate vis --agents vis=<spec>:2 <field> --worlds 8 --game-min 240 \
   --seed-base 3000 --engine inproc --stats-out out.json
-target/release/ogar drill --agents me=<spec> --scenario giant_popped   # harvest drill; ogar escape for the escape drill
+target/release/oxidish-server drill --agents me=<spec> --scenario giant_popped   # harvest drill; oxidish-server escape for the escape drill
 ```
 
 The vision models are in `bots/models/`. With CUDA 12 the nets run on the GPU (on Windows the CUDA DLL folders go in
-`OGAR_DLL_DIRS`, see [harvest-drill.md](harvest-drill.md)); otherwise they fall back to the CPU.
+`OXIDISH_DLL_DIRS`, see [harvest-drill.md](harvest-drill.md)); otherwise they fall back to the CPU.
 
 ## If work resumes
 

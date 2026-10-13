@@ -5,21 +5,21 @@ How do our bots die when a bigger player chases them, and does a better flee fix
 at a wall, 101 in a corner), 29% while split into pieces, 10% without fleeing at all; against all players 50% / 33%. The typical
 scene: a 6.5-7k bot flees a 10k human in a straight line with the gap near 1000 for 3 s, is herded into the wall and killed.
 
-The drill is a seeded, repeatable version of that scene: `ogar escape` (`server/src/escape.rs`), tables from
-`training/eval/escape_report.py`. It is separate from `ogar drill` (own subcommand and file) to keep the merge with the harvest/hunter work easy.
+The drill is a seeded, repeatable version of that scene: `oxidish-server escape` (`server/src/escape.rs`), tables from
+`training/eval/escape_report.py`. It is separate from `oxidish-server drill` (own subcommand and file) to keep the merge with the harvest/hunter work easy.
 
 ## Running it
 
     # vision specs load models from bots/models/ and need ONNX Runtime (ORT_DYLIB_PATH); on Windows with CUDA, nets need
-    # OGAR_DLL_DIRS (torch wheel lib) and OGAR_VISION_EP=cuda_plain, --threads 2 (the faster "cuda" backend died in cuDNN with several threads)
+    # OXIDISH_DLL_DIRS (torch wheel lib) and OXIDISH_VISION_EP=cuda_plain, --threads 2 (the faster "cuda" backend died in cuDNN with several threads)
     cargo build --release -j 2 --manifest-path server/Cargo.toml        # your own CARGO_TARGET_DIR
-    ogar escape --agents c3_4=bots/specs/c3_4.json evade=bots/specs/escape/evade.json oracle=oracle \
+    oxidish-server escape --agents c3_4=bots/specs/c3_4.json evade=bots/specs/escape/evade.json oracle=oracle \
                 --our-mass 1000,3000,7000 --ratio 1.4,2,4 --gap 1200,2000 --place open,wall,corner [--virus 0,1] [--pieces 1,2,4] \
                 --reps 30 --seed 1 --threads 3 --horizon 60 --out runs/esc/x.json
     python -m training.eval.escape_report runs/esc/x.json [--base c3_4] [--what pooled|cells|methods]
 
-Every list option is a grid (one cell per combination); rep `i` of every agent and cell uses seed `seed + i` (paired). `OGAR_ESC_TRACE=1`
-prints a line per second. Tests: `cargo test --release escape` (ogar) and `cargo test --release evade` (arena_client).
+Every list option is a grid (one cell per combination); rep `i` of every agent and cell uses seed `seed + i` (paired). `OXIDISH_ESC_TRACE=1`
+prints a line per second. Tests: `cargo test --release escape` (oxidish-server) and `cargo test --release evade` (oxidish-bot).
 
 ## The scene
 
@@ -222,7 +222,7 @@ Parameter sweep on M 3000 x 1.4 / 2 / 4 x gap 1200 x open + wall (N = 40 per cel
 `training.eval.endless --engine inproc`, 8 worlds x 240 game-min, candidate x2 against the training field (champ, r2g9, safe, ramp_r2, ramp300, each x2), leader share of the candidate per seed base, rule: a gene is kept only if
 the mean improves **and** it wins >= 3 of the 5 sets.
 
-Leader share (dominance in brackets), binary of this branch, `OGAR_BIN` copy, 8 worlds x 240 min per cell, the training field. `c3_4` lineup (candidate = `bots/specs/c3_4.json` + genes):
+Leader share (dominance in brackets), binary of this branch, `OXIDISH_BIN` copy, 8 worlds x 240 min per cell, the training field. `c3_4` lineup (candidate = `bots/specs/c3_4.json` + genes):
 
 | set | c3_4 | + `nowall` (wall genes off) | + `evade` | + `evade` at total mass >= 1500 (`evade_big`) |
 |---|---|---|---|---|

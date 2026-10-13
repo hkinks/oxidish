@@ -1,10 +1,10 @@
-"""MCP server (stdio) that lets a Claude session command the bots of an ogar server over its control port.
+"""MCP server (stdio) that lets a Claude session command the bots of an oxidish-server server over its control port.
 
 Register it yourself (this repo does not touch any config):
 
     claude mcp add agar-commander -- uv run --no-project --with "mcp<2" python training/eval/commander_mcp.py --port 9601
 
-Environment: OGAR_CONTROL_HOST / OGAR_CONTROL_PORT / OGAR_CONTROL_TOKEN override the defaults (127.0.0.1:9601, no token).
+Environment: OXIDISH_CONTROL_HOST / OXIDISH_CONTROL_PORT / OXIDISH_CONTROL_TOKEN override the defaults (127.0.0.1:9601, no token).
 """
 
 import argparse
@@ -21,14 +21,14 @@ from mcp.server.fastmcp import FastMCP, Image  # noqa: E402
 from training.eval.commander import Control  # noqa: E402
 
 ap = argparse.ArgumentParser()
-ap.add_argument("--host", default=os.environ.get("OGAR_CONTROL_HOST", "127.0.0.1"))
-ap.add_argument("--port", type=int, default=int(os.environ.get("OGAR_CONTROL_PORT", "9601")))
-ap.add_argument("--token", default=os.environ.get("OGAR_CONTROL_TOKEN"))
+ap.add_argument("--host", default=os.environ.get("OXIDISH_CONTROL_HOST", "127.0.0.1"))
+ap.add_argument("--port", type=int, default=int(os.environ.get("OXIDISH_CONTROL_PORT", "9601")))
+ap.add_argument("--token", default=os.environ.get("OXIDISH_CONTROL_TOKEN"))
 args, _ = ap.parse_known_args()
 ctl = Control(args.host, args.port, args.token)
 
 mcp = FastMCP("agar-commander", instructions=(
-    "Command the rule-bot / planner / vision agents of an agar.io ogar server. Call list_agents, then scene(agent) to see "
+    "Command the rule-bot / planner / vision agents of an agar.io oxidish-server server. Call list_agents, then scene(agent) to see "
     "what an agent sees, then order(agent, verb, arg, ttl). Orders expire (default 10 s game time) and never override the "
     "bot's reflexes: it will not walk into a bigger cell."))
 

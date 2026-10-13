@@ -1,4 +1,4 @@
-"""Read `ogar serve --record DIR` recordings (events / scenes / humans, gzip JSONL) and classify loss scenes.
+"""Read `oxidish-server serve --record DIR` recordings (events / scenes / humans, gzip JSONL) and classify loss scenes.
 
 Used by training.eval.human_report. Truncated gzip files (a killed server) are read as far
 as they go.

@@ -1,4 +1,4 @@
-//! Persistent client settings (%APPDATA%\agario-client\settings.json, or --config PATH).
+//! Persistent client settings (%APPDATA%\oxidish\settings.json, ~/.config/oxidish/settings.json, or --config PATH).
 
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -54,25 +54,36 @@ impl Default for Settings {
     }
 }
 
-pub fn config_path() -> PathBuf {
+fn config_arg() -> Option<PathBuf> {
     let mut it = std::env::args();
     while let Some(a) = it.next() {
         if a == "--config" {
-            if let Some(p) = it.next() {
-                return PathBuf::from(p);
-            }
+            return it.next().map(PathBuf::from);
         }
     }
-    let base = std::env::var_os("APPDATA")
+    None
+}
+
+fn config_base() -> PathBuf {
+    std::env::var_os("APPDATA")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-        .unwrap_or_else(|| PathBuf::from("."));
-    base.join("agario-client").join("settings.json")
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+pub fn config_path() -> PathBuf {
+    config_arg().unwrap_or_else(|| config_base().join("oxidish").join("settings.json"))
 }
 
 impl Settings {
     pub fn load() -> Settings {
-        Settings::load_from(&config_path())
+        let path = config_path();
+        // settings saved before the rename live in agario-client/; read them once, the next save writes the new path
+        let old = config_base().join("agario-client").join("settings.json");
+        if config_arg().is_none() && !path.exists() && old.exists() {
+            return Settings::load_from(&old);
+        }
+        Settings::load_from(&path)
     }
 
     pub fn load_from(path: &std::path::Path) -> Settings {
@@ -147,7 +158,7 @@ mod tests {
 
     #[test]
     fn roundtrip() {
-        let dir = std::env::temp_dir().join("agario-client-test");
+        let dir = std::env::temp_dir().join("oxidish-settings-test");
         let path = dir.join("settings.json");
         let mut s = Settings::default();
         s.server = "ws://example:1".into();

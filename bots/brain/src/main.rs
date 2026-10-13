@@ -1,18 +1,18 @@
 //! Rust lockstep client + rule bot for the agar.io arena.
 //!
-//!   arena_client run --port 9601 --agents route:4 champ=bots/specs/final_champion.json:4 --ticks 3000 --seed 1 --out rows.json
-//!   arena_client parity dump.jsonl       # replay Python-recorded snapshots, compare decisions
-//!   arena_client bench dump.jsonl        # decisions per second on the recorded snapshots
+//!   oxidish-bot run --port 9601 --agents route:4 champ=bots/specs/final_champion.json:4 --ticks 3000 --seed 1 --out rows.json
+//!   oxidish-bot parity dump.jsonl       # replay Python-recorded snapshots, compare decisions
+//!   oxidish-bot bench dump.jsonl        # decisions per second on the recorded snapshots
 
 use std::collections::HashMap;
 use std::time::Instant;
 
 use serde_json::Value;
 
-use arena_client::client::{AgentClient, AgentStats};
-use arena_client::game::{Border, Cell, Kind, Snapshot};
-use arena_client::lineup::parse_lineup;
-use arena_client::policy::Policy;
+use oxidish_bot::client::{AgentClient, AgentStats};
+use oxidish_bot::game::{Border, Cell, Kind, Snapshot};
+use oxidish_bot::lineup::parse_lineup;
+use oxidish_bot::policy::Policy;
 
 struct Opts {
     host: String,
@@ -250,7 +250,7 @@ fn main() {
         Some("bench") => bench(args.get(1).map(String::as_str).unwrap_or("dump.jsonl"),
                                args.get(2).and_then(|r| r.parse().ok()).unwrap_or(3)),
         Some("run") => run(&args[1..]),
-        _ => Err("usage: arena_client run|parity|bench ...".into()),
+        _ => Err("usage: oxidish-bot run|parity|bench ...".into()),
     };
     if let Err(e) = result {
         eprintln!("error: {e}");

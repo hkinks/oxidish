@@ -1,4 +1,4 @@
-"""Markdown tables from `ogar drill --out` files (docs/harvest-drill.md).
+"""Markdown tables from `oxidish-server drill --out` files (docs/harvest-drill.md).
 
     python -m training.eval.drill_report runs/drill/main_rule.json runs/drill/main_vision.json [--what main|diag|sweep|first]
 

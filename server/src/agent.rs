@@ -1,10 +1,10 @@
-//! In-process rule-bot agents: what arena_client does over the network, without the network.
+//! In-process rule-bot agents: what oxidish-bot does over the network, without the network.
 //! The Snapshot is built from the player's server-side view box exactly as the protocol-6 client
 //! would reconstruct it (integer positions / sizes, cells in the view box).
 
-use arena_client::client::AgentStats;
-use arena_client::game::{Border, Cell, Kind, Snapshot};
-use arena_client::policy::Policy;
+use oxidish_bot::client::AgentStats;
+use oxidish_bot::game::{Border, Cell, Kind, Snapshot};
+use oxidish_bot::policy::Policy;
 use serde_json::{json, Value};
 
 use crate::world::{PKind, World, T_EJECT, T_FOOD, T_VIRUS};
@@ -112,7 +112,7 @@ impl AgentDriver {
             None
         };
         #[cfg(not(feature = "vision-net"))]
-        assert!(!is_vision, "this ogar build has no vision-net feature");
+        assert!(!is_vision, "this oxidish-server build has no vision-net feature");
         AgentDriver {
             pi,
             name: name.to_string(),

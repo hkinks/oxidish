@@ -91,7 +91,7 @@ claude mcp add agar-commander -- uv run --no-project --with "mcp<2" python train
 ```
 
 Run it from the repo root (or give the absolute script path). Host/port/token: `--host --port --token` or
-`OGAR_CONTROL_HOST / OGAR_CONTROL_PORT / OGAR_CONTROL_TOKEN`. Then ask the session e.g. "list the agents, look at the
+`OXIDISH_CONTROL_HOST / OXIDISH_CONTROL_PORT / OXIDISH_CONTROL_TOKEN`. Then ask the session e.g. "list the agents, look at the
 planner's scene, and have it hunt the leader for 15 s". Tested end to end with an MCP client (initialize, list tools,
 `list_agents`, `order`, `frame`, `scene`, `set_speed`).
 
@@ -132,7 +132,7 @@ proportionally more.
 
 ## Measurement
 
-`training/eval/commander_eval.py`: per world an `ogar serve` (own ports) with the candidate, the usual rule-bot field (champ, r2g9,
+`training/eval/commander_eval.py`: per world an `oxidish-server serve` (own ports) with the candidate, the usual rule-bot field (champ, r2g9,
 safe, ramp_r2, ramp300) and 8 server bots; leader share = share of 5 s samples (after a 2 game-minute warm-up) where the heaviest
 player of the whole world is the candidate; mean mass counts death as 0.
 

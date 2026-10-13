@@ -1,8 +1,8 @@
 # Lookahead planner (`"kind": "plan"`)
 
 Rust-only policy (`bots/brain/src/plan.rs`) that wraps a rule bot and, when it predicts a loss for the
-rule bot's action, simulates a ~2 game-second horizon and may replace the action. Runs in `ogar match|serve`,
-`arena_client run`, `training.eval.endless`, `training.eval.tournament --engine ogar`.
+rule bot's action, simulates a ~2 game-second horizon and may replace the action. Runs in `oxidish-server match|serve`,
+`oxidish-bot run`, `training.eval.endless`, `training.eval.tournament`.
 
 ```json
 {"kind": "plan", "base": "bots/specs/c3_4.json", "need_loss": 0.1}

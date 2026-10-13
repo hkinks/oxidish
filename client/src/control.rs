@@ -1,4 +1,4 @@
-//! Server control page (F2): talks to `ogar serve --control-port` over a plain TCP line protocol on a
+//! Server control page (F2): talks to `oxidish-server serve --control-port` over a plain TCP line protocol on a
 //! background thread, so the render loop never blocks. Shows status and offers speed / pause / food /
 //! add-bot / remove-bot actions.
 

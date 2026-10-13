@@ -1,4 +1,4 @@
-//! ogar: a Rust port of the MultiOgar game server (FFA) for fast headless evaluation matches and
+//! oxidish-server: a Rust port of the MultiOgar game server (FFA) for fast headless evaluation matches and
 //! for a real-time websocket server that speaks MultiOgar's client protocol.
 
 pub mod agent;

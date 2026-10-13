@@ -14,7 +14,7 @@ import numpy as np
 
 from common import FIELD, TEACHER, pin_cores
 
-import oxidish_env
+import oxidish_gym
 
 
 def save(path, buf):
@@ -69,7 +69,7 @@ def main():
     a = p.parse_args()
     pin_cores()
     os.makedirs(a.out, exist_ok=True)
-    env = oxidish_env.VecEnv(a.worlds, a.learners, opponents=FIELD, teacher=TEACHER, px=256, threads=a.threads,
+    env = oxidish_gym.VecEnv(a.worlds, a.learners, opponents=FIELD, teacher=TEACHER, px=256, threads=a.threads,
                          seed=a.seed, warmup=0)
     env.set_teacher(True)
     obs = env.reset()

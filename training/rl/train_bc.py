@@ -1,4 +1,4 @@
-"""Behaviour cloning + DAgger on the oxidish_env VecEnv, streaming (no shards). Run from the repo root:
+"""Behaviour cloning + DAgger on the oxidish_gym VecEnv, streaming (no shards). Run from the repo root:
 
     python training/rl/train_bc.py --name bc1 --hours 1.5
 
@@ -23,7 +23,7 @@ from evalval import evaluate, load_windows
 from model import VisionNet, decode_target, heat_target
 from store import FrameStore, PosStore
 
-import oxidish_env
+import oxidish_gym
 
 
 def augment(view, wide, tgt, px=256):
@@ -63,7 +63,7 @@ class Shared:
 
 def collector(a, sh, store, pos, infer, danger=None):
     try:
-        env = oxidish_env.VecEnv(a.worlds, a.learners, opponents=FIELD, teacher=TEACHER, px=256, threads=a.threads,
+        env = oxidish_gym.VecEnv(a.worlds, a.learners, opponents=FIELD, teacher=TEACHER, px=256, threads=a.threads,
                              seed=a.seed, warmup=0)
         n = env.n
         assert n == store.N

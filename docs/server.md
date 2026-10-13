@@ -1,9 +1,9 @@
-# ogar: the Rust MultiOgar server (`server/`)
+# oxidish-server: the Rust MultiOgar server (`server/`)
 
 A port of [MultiOgar](https://github.com/agarian-2/MultiOgar) (FFA mode), the Node.js server the project used
 first, plus the extras of our former Node launcher (arena.js). The Node code is no longer in the repo; the validation
-below was measured against it. Two uses: a headless match runner for evaluation throughput (`ogar match`) and a
-real-time websocket server (`ogar serve`, see [playing.md](playing.md)).
+below was measured against it. Two uses: a headless match runner for evaluation throughput (`oxidish-server match`) and a
+real-time websocket server (`oxidish-server serve`, see [playing.md](playing.md)).
 It reuses the rule-bot policy code of `bots/brain` (now also a library crate), so in-process agents make
 the same decisions as the network client; they see the same Snapshot (integer positions/sizes, cells in the
 server's view box for that player).
@@ -14,8 +14,8 @@ min 59.66, virus 100.5 / 141.9, eject 36.56 / loss 41.73, eject spawn chance .5,
 (map 7000 → food 367 x `--food-mult`, 12 viruses min, scrambleLevel 0).
 
 ## Validation (15 game-min, food x2, 8 server bots, 5 rule bots in each match)
-Node = the Node.js MultiOgar server with Rust network clients (the removed `arena.tournament --rust` path), 48 matches, seeds 1-48. ogar = 144 matches
-(seeds 1-48 and 1000-1095). Cells show Node | ogar (relative difference). 95% CIs over matches are about
+Node = the Node.js MultiOgar server with Rust network clients (the removed `arena.tournament --rust` path), 48 matches, seeds 1-48. oxidish-server = 144 matches
+(seeds 1-48 and 1000-1095). Cells show Node | oxidish-server (relative difference). 95% CIs over matches are about
 ±0.2 on log-mass, ±20% on avg/peak mass, ±0.5-0.8 on deaths.
 
 | bot | log-mass | avg mass | peak | deaths | kills |
@@ -27,14 +27,14 @@ Node = the Node.js MultiOgar server with Rust network clients (the removed `aren
 | champ | 6.63 / 6.81 (+3%) | 963 / 1153 (+20%) | 3005 / 3693 (+23%) | 4.08 / 3.45 (-15%) | 47.2 / 49.3 (+5%) |
 
 Head-to-head (row beats column, share of matches by mean log-mass): the orderings agree up to noise.
-Node: ramp_r2 > ramp300 (58%) > safe ~ r2g9 (50%) > champ; ogar: ramp300 ~ ramp_r2 (50%) > r2g9 (62% vs safe) ~ safe > champ
-(champ loses to every other bot in both, 29-38% on ogar vs 27-46% on Node). Every pair difference is inside the
-Wilson intervals (±14%). Systematic tendencies worth knowing: in ogar the spread between bots is slightly
+Node: ramp_r2 > ramp300 (58%) > safe ~ r2g9 (50%) > champ; oxidish-server: ramp300 ~ ramp_r2 (50%) > r2g9 (62% vs safe) ~ safe > champ
+(champ loses to every other bot in both, 29-38% on oxidish-server vs 27-46% on Node). Every pair difference is inside the
+Wilson intervals (±14%). Systematic tendencies worth knowing: in oxidish-server the spread between bots is slightly
 compressed (the weakest bot, champ, looks a bit better; ramp_r2 a bit worse), the loss shares by killer type match
 (server bots 24% / 23% of all lost mass). For a close call, use more seeds rather than trusting a small difference.
 
 Speed (one 22500-tick match, 5 rule bots + 8 server bots, machine at ~70% load): Node + Rust client 24 s wall
-(two busy processes), ogar 5.4 s on one core (7 s/match when 2 threads share the machine) = about 4.5x faster
+(two busy processes), oxidish-server 5.4 s on one core (7 s/match when 2 threads share the machine) = about 4.5x faster
 per match and ~7-9x per core: ~500-660 long matches per hour per core vs ~75-150 for Node. Serve mode runs
 unthrottled at ~100x real time with 8 in-process agents.
 
@@ -49,9 +49,9 @@ unthrottled at ~100x real time with 8 in-process agents.
 
 ## Run
 ```bash
-cargo build --release -p ogar
-target/release/ogar match --agents <lineup> --ticks 22500 --food-mult 2 --seed 1 --matches 48 --threads 2 --out rows.json
+cargo build --release -p oxidish-server
+target/release/oxidish-server match --agents <lineup> --ticks 22500 --food-mult 2 --seed 1 --matches 48 --threads 2 --out rows.json
 uv run python -m training.eval.tournament --agents <lineup> --matches 48 --workers 2 --ticks 22500 --food-mult 2
 uv run python -m training.eval.verdict --candidate <name> --agents <lineup> --out verdict.json   # sequential A/B test
 ```
-Lineup syntax as in training.eval.tournament (`name=genome.json:N`, `route:N`, `field:N`). `OGAR_BIN` overrides the binary path.
+Lineup syntax as in training.eval.tournament (`name=genome.json:N`, `route:N`, `field:N`). `OXIDISH_BIN` overrides the binary path.

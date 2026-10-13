@@ -3,10 +3,10 @@ requires = ["maturin>=1.7,<2"]
 build-backend = "maturin"
 
 [project]
-name = "oxidish_env"
+name = "oxidish_gym"
 version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = ["numpy>=1.26"]
 
 [tool.maturin]
-module-name = "oxidish_env"
+module-name = "oxidish_gym"

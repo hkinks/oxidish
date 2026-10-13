@@ -1,9 +1,9 @@
 """Parity of the Rust vision agent (ONNX Runtime) against torch on recorded frames.
 
-    ogar vdump --agents vis=bots/specs/vision_bc3.json:2 champ=bots/specs/final_champion.json:2 --count 1000 --out logs/vision/parity
+    oxidish-server vdump --agents vis=bots/specs/vision_bc3.json:2 champ=bots/specs/final_champion.json:2 --count 1000 --out logs/vision/parity
     python training/rl/parity.py logs/vision/parity bots/models/vision_bc3.pt
 
-Loads view.u8 / wide.u8 / rust.f32 written by `ogar vdump`, runs the TorchScript export on the same frames (fp32,
+Loads view.u8 / wide.u8 / rust.f32 written by `oxidish-server vdump`, runs the TorchScript export on the same frames (fp32,
 CPU), decodes the target with model.decode_target and compares with the Rust target: pixel distance and the angle
 between the two headings seen from the frame centre (what the game uses), plus the split-logit difference.
 """

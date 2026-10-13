@@ -8,9 +8,9 @@ use serde_json::Value;
 use crate::agent::{step_all, AgentDriver};
 use crate::config::Config;
 use crate::world::World;
-use arena_client::client::AgentStats;
+use oxidish_bot::client::AgentStats;
 
-pub use arena_client::lineup::parse_lineup;
+pub use oxidish_bot::lineup::parse_lineup;
 
 #[derive(Clone)]
 pub struct MatchOpts {

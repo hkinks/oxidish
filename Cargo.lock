@@ -15,16 +15,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
-name = "arena_client"
-version = "0.1.0"
-dependencies = [
- "futures-util",
- "serde_json",
- "tokio",
- "tokio-tungstenite",
-]
-
-[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -516,20 +506,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ogar"
-version = "0.1.0"
-dependencies = [
- "arena_client",
- "flate2",
- "futures-util",
- "libloading",
- "ort",
- "serde_json",
- "tokio",
- "tokio-tungstenite",
-]
-
-[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -555,7 +531,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf211e3776eea6aec988552fa118dd746d70e1b1e5e244058d1c98015f3e5872"
 
 [[package]]
-name = "oxidish"
+name = "oxidish-bot"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite",
+]
+
+[[package]]
+name = "oxidish-client"
 version = "0.1.0"
 dependencies = [
  "macroquad",
@@ -564,13 +550,27 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxidish_env"
+name = "oxidish-gym"
 version = "0.1.0"
 dependencies = [
  "numpy",
- "ogar",
+ "oxidish-server",
  "pyo3",
  "serde_json",
+]
+
+[[package]]
+name = "oxidish-server"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "futures-util",
+ "libloading",
+ "ort",
+ "oxidish-bot",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite",
 ]
 
 [[package]]

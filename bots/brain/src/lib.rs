@@ -1,4 +1,4 @@
-//! Rule-bot policy code + lockstep client, shared by the `arena_client` binary and the `ogar` engine.
+//! Rule-bot policy code + lockstep client, shared by the `oxidish-bot` binary and the `oxidish-server` engine.
 
 pub mod client;
 pub mod evade;

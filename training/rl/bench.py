@@ -1,4 +1,4 @@
-"""Throughput of the oxidish_env VecEnv: learner decisions per second (render + teacher + world ticks + opponents).
+"""Throughput of the oxidish_gym VecEnv: learner decisions per second (render + teacher + world ticks + opponents).
 
     python training/rl/bench.py --worlds 32 --learners 4 --threads 4 8 10 --steps 300
 """
@@ -6,11 +6,11 @@ import argparse
 import time
 
 import numpy as np
-import oxidish_env
+import oxidish_gym
 
 
 def run(args, threads):
-    env = oxidish_env.VecEnv(
+    env = oxidish_gym.VecEnv(
         args.worlds, args.learners, opponents=[("c34", args.opponent, args.opponents)], teacher=args.teacher,
         px=args.px, threads=threads, seed=1, warmup=args.warmup, label=not args.no_label)
     env.set_teacher(True)

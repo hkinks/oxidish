@@ -11,7 +11,7 @@
 use std::sync::Mutex;
 use std::time::Instant;
 
-use arena_client::policy::Policy;
+use oxidish_bot::policy::Policy;
 use serde_json::Value;
 
 use crate::agent::{snapshot, step_all, AgentDriver};
@@ -159,7 +159,7 @@ impl FrameStack {
     }
 
     /// Shift in this decision's frames from the player's own snapshot `s` and view box.
-    pub fn prepare(&mut self, w: &World, pi: usize, s: &arena_client::game::Snapshot) {
+    pub fn prepare(&mut self, w: &World, pi: usize, s: &oxidish_bot::game::Snapshot) {
         let px = self.px;
         let (vs, ws) = (px * px, (px / 2) * (px / 2));
         let (vx0, vy0, vx1, vy1) = w.view_box(pi);
@@ -216,9 +216,9 @@ struct Learner {
     lost_mass: f32,
     pops_prev: u32,
     /// only for the `reflex_split` label in `events`
-    probe: arena_client::reflex::Reflex,
+    probe: oxidish_bot::reflex::Reflex,
     /// M7 hunter reflex (None = the env has no hunter) and its override for the current observation (world x, y, split, eject)
-    hunter: Option<arena_client::reflex::Reflex>,
+    hunter: Option<oxidish_bot::reflex::Reflex>,
     hunter_was_on: bool,
     ovr: Option<(f64, f64, bool, bool)>,
 }
@@ -351,8 +351,8 @@ impl WorldEnv {
                 big_kill_mass: 0.0,
                 lost_mass: 0.0,
                 pops_prev: 0,
-                probe: arena_client::reflex::Reflex::from_spec(&serde_json::json!({"reflex_split": true})).expect("reflex probe"),
-                hunter: o.hunter.as_ref().and_then(arena_client::reflex::Reflex::from_spec),
+                probe: oxidish_bot::reflex::Reflex::from_spec(&serde_json::json!({"reflex_split": true})).expect("reflex probe"),
+                hunter: o.hunter.as_ref().and_then(oxidish_bot::reflex::Reflex::from_spec),
                 hunter_was_on: false,
                 ovr: None,
             });
@@ -493,7 +493,7 @@ impl WorldEnv {
                     h.reset();
                 }
                 if !s.mine.is_empty() {
-                    let sentinel = arena_client::policy::Out { x: f64::NAN, y: f64::NAN, split: false, eject: false };
+                    let sentinel = oxidish_bot::policy::Out { x: f64::NAN, y: f64::NAN, split: false, eject: false };
                     let r = h.apply(&s, sentinel);
                     if !r.x.is_nan() {
                         l.ovr = Some((r.x, r.y, r.split, r.eject));

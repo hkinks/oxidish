@@ -1,5 +1,5 @@
 [package]
-name = "arena_client"
+name = "oxidish-bot"
 version = "0.1.0"
 edition = "2021"
 license = "WTFPL"

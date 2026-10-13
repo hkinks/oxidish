@@ -6,9 +6,9 @@ around it. Start with [training.md](training.md) to run things and [status.md](s
 ## Start here
 | Doc | What |
 |---|---|
-| [training.md](training.md) | write, test, evaluate and train bots: specs, the external-bot protocol, `ogar match/endless/drill`, `scripts/*.sh`, vision PPO |
+| [training.md](training.md) | write, test, evaluate and train bots: specs, the external-bot protocol, `oxidish-server match/endless/drill`, `scripts/*.sh`, vision PPO |
 | [status.md](status.md) | results tables, the best bots (`bots/specs/best/`: vision, vision-old, planner, rules), next steps |
-| [playing.md](playing.md) | play against the bots: `ogar serve`, the control port, the native client, recording human games |
+| [playing.md](playing.md) | play against the bots: `oxidish-server serve`, the control port, the native client, recording human games |
 | [learnings.md](learnings.md) | what we learned: metrics, genes, vision bot, drills, pitfalls |
 
 ## Bots and skills
@@ -22,23 +22,23 @@ around it. Start with [training.md](training.md) to run things and [status.md](s
 ## Measurements
 | Doc | What |
 |---|---|
-| [harvest-drill.md](harvest-drill.md) | `ogar drill`: eating a giant that just popped on a virus |
-| [escape-drill.md](escape-drill.md) | `ogar escape`: fleeing a bigger human-like chaser |
+| [harvest-drill.md](harvest-drill.md) | `oxidish-server drill`: eating a giant that just popped on a virus |
+| [escape-drill.md](escape-drill.md) | `oxidish-server escape`: fleeing a bigger human-like chaser |
 | [human/](human/) | generated reports of recorded human games (scenes, who ate whom) |
 
 ## Server
 | Doc | What |
 |---|---|
-| [ogar.md](ogar.md) | the Rust server: validation against MultiOgar, known gaps, how to run |
+| [server.md](server.md) | the Rust server: validation against MultiOgar, known gaps, how to run |
 
 ## Layout
 ```
-server/            ogar: server, engine, frame renderer, drills, endless evaluator, vision inference (Apache-2.0)
+server/            oxidish-server: server, engine, frame renderer, drills, endless evaluator, vision inference (Apache-2.0)
 client/            oxidish: the native client
-bots/brain/        bot policies in Rust: rules, planner, hunter, reflexes, evade (crate arena_client)
+bots/brain/        bot policies in Rust: rules, planner, hunter, reflexes, evade (crate oxidish-bot)
 bots/specs/        JSON bot specs; best/ holds the four reference bots
 bots/models/       ONNX models of the vision bots
-training/env/      oxidish_env: the engine as a Python module (PyO3) for RL
+training/gym/      oxidish_gym: the engine as a Python module (PyO3) for RL
 training/rl/       vision-bot training (imitation, DAgger, PPO) and ONNX export
 training/eval/     evaluation and report tools (endless, tournament, verdict, drill / escape / human reports, commander)
 scripts/           client.sh, train.sh, eval.sh, export.sh

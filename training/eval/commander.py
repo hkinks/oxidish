@@ -1,4 +1,4 @@
-"""Autonomous commander: every ~1.5 game-seconds per commanded agent, read the agent's `scene` from the ogar
+"""Autonomous commander: every ~1.5 game-seconds per commanded agent, read the agent's `scene` from the oxidish-server
 control port, ask a backend for one order, apply it. Log every decision to logs/commander-*.jsonl.
 
     uv run python -m training.eval.commander --port 9811 --agents plan --backend heuristic
@@ -28,7 +28,7 @@ VERBS = ("hunt", "goto", "farm", "flee", "hide", "virus-split", "harvest", "free
 
 
 class Control:
-    """Line protocol client of `ogar serve --control-port` (one request, one reply line)."""
+    """Line protocol client of `oxidish-server serve --control-port` (one request, one reply line)."""
 
     def __init__(self, host="127.0.0.1", port=9601, token=None, timeout=30.0):
         self.addr, self.token, self.timeout = (host, port), token, timeout
@@ -307,8 +307,8 @@ def resolve_agents(ctl: Control, prefixes: list[str]) -> list[str]:
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--port", type=int, default=9601, help="ogar control port")
-    ap.add_argument("--token", default=os.environ.get("OGAR_CONTROL_TOKEN"))
+    ap.add_argument("--port", type=int, default=9601, help="oxidish-server control port")
+    ap.add_argument("--token", default=os.environ.get("OXIDISH_CONTROL_TOKEN"))
     ap.add_argument("--agents", nargs="+", required=True, help="agent name prefixes to command (e.g. plan)")
     ap.add_argument("--backend", choices=["heuristic", "jev", "anthropic"], default="heuristic")
     ap.add_argument("--interval", type=float, default=DEFAULT_INTERVAL_S, help="game seconds between decisions per agent")

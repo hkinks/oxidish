@@ -1,4 +1,4 @@
-"""Summarize human play recorded by `ogar serve --record DIR` into a markdown report of bot weaknesses.
+"""Summarize human play recorded by `oxidish-server serve --record DIR` into a markdown report of bot weaknesses.
 
     uv run python -m training.eval.human_report logs/human                  # all sessions in the dir
     uv run python -m training.eval.human_report logs/human --session 1791371135 --top 8 --out docs/human/2026-10-07.md
@@ -155,7 +155,7 @@ def build_report(rec_dir: str, session: str | None, top_n: int) -> str:
 
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("dir", help="recording dir (ogar serve --record)")
+    p.add_argument("dir", help="recording dir (oxidish-server serve --record)")
     p.add_argument("--session", help="one session stamp (the number in events-<stamp>.jsonl.gz); default all")
     p.add_argument("--top", type=int, default=6, help="how many worst scenes to render")
     p.add_argument("--out", help="write markdown here (e.g. docs/human/<date>.md); default stdout")

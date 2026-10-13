@@ -1,4 +1,4 @@
-"""Collect behaviour-cloning shards from the oxidish_env VecEnv (M2 input).
+"""Collect behaviour-cloning shards from the oxidish_gym VecEnv (M2 input).
 
     python training/rl/collect.py --out data/vision/bc0 --shards 4 --steps 500 --worlds 32 --learners 4 --threads 10
 
@@ -23,7 +23,7 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
-import oxidish_env
+import oxidish_gym
 
 
 def save_shard(save, path, buf):
@@ -57,7 +57,7 @@ def main():
     a = p.parse_args()
 
     os.makedirs(a.out, exist_ok=True)
-    env = oxidish_env.VecEnv(a.worlds, a.learners, opponents=[("opp", a.opponent, a.opponents)], teacher=a.teacher,
+    env = oxidish_gym.VecEnv(a.worlds, a.learners, opponents=[("opp", a.opponent, a.opponents)], teacher=a.teacher,
                          px=a.px, threads=a.threads, seed=a.seed, warmup=a.warmup)
     env.set_teacher(a.noise == 0.0)
     rng = np.random.default_rng(a.seed)

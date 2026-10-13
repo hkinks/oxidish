@@ -1,20 +1,20 @@
 # Playing against the bots
 
-The Rust server (`ogar serve`) runs the game in real time with bots inside it; the native client (`oxidish`) connects
+The Rust server (`oxidish-server serve`) runs the game in real time with bots inside it; the native client (`oxidish-client`) connects
 over the MultiOgar wire protocol (protocol 6). Any MultiOgar-protocol web client works too.
 
 ## Server
 
 ```bash
-cargo build --release                      # target/release/ogar and target/release/oxidish
-target/release/ogar serve --port 9600 --bots 12 --food-mult 2 --map 10000 --control-port 9601 --log-players 5 \
+cargo build --release                      # target/release/oxidish-server and target/release/oxidish-client
+target/release/oxidish-server serve --port 9600 --bots 12 --food-mult 2 --map 10000 --control-port 9601 --log-players 5 \
     --agents vision=bots/specs/best/vision.json:4 vision-old=bots/specs/best/vision-old.json:4 \
              planner=bots/specs/best/planner.json:4 rules=bots/specs/best/rules.json:4
 ```
 
 - `--agents name=spec.json:N` starts N in-process bots from a spec; the name prefix is what the leaderboard shows
   (`vision-0`, `vision-1`, ...). Vision specs need ONNX Runtime at run time (`ORT_DYLIB_PATH` on Linux,
-  `onnxruntime.dll` next to `ogar.exe` on Windows); they use CUDA 12 when it loads and the CPU otherwise.
+  `onnxruntime.dll` next to `oxidish-server.exe` on Windows); they use CUDA 12 when it loads and the CPU otherwise.
 - `--bots N` adds MultiOgar's own server bots, `--food-mult` scales the food target, `--map` sets the map size.
 - `--follow PREFIX` makes spectators follow the largest bot with that name prefix; `--log-players N` writes a
   `[players]` line with the top N every few seconds (input for `training.eval.showcase_stats`).
@@ -46,10 +46,10 @@ For non-local use, start with `--control-token T`: every control line must then 
 or send `auth T` once per connection. `--control-bind ADDR` moves the control port off 127.0.0.1; use it only with a
 token.
 
-## Native client (`oxidish`)
+## Native client (`oxidish-client`)
 
 ```bash
-target/release/oxidish --name you                    # default server ws://127.0.0.1:9600
+target/release/oxidish-client --name you                    # default server ws://127.0.0.1:9600
 scripts/client.sh --name you --server ws://HOST:PORT  # builds it first if needed; sets up X11/GL on NixOS
 ```
 
@@ -62,7 +62,7 @@ scripts/client.sh --name you --server ws://HOST:PORT  # builds it first if neede
   player: server scale). The wheel switches to manual zoom.
 - **Settings (Esc or F1):** server address, nickname, auto zoom, mass / names / grid / FPS, vsync (applies on
   restart), FPS cap, interpolation smoothing, cell outline, dark / light background. Saved to
-  `~/.config/agario-client/settings.json` on Linux and `%APPDATA%\agario-client\settings.json` on Windows
+  `~/.config/oxidish/settings.json` on Linux and `%APPDATA%\oxidish\settings.json` on Windows (settings from the older `agario-client` folder are read once)
   (`--config PATH` overrides). `--server` / `--name` override the saved values. `--font ubuntu|nunito|inter|quicksand`
   or a `.ttf` path changes the font.
 - **Server control (F2):** talks to the control port from a background thread. Fields: control address (default:
@@ -80,7 +80,7 @@ Every time a human eats a bot is a weakness to fix. Start the server with `--rec
 session is written to `DIR` as gzip JSONL, flushed every 5 s:
 
 ```bash
-target/release/ogar serve --port 9600 ... --record logs/human [--record-all]
+target/release/oxidish-server serve --port 9600 ... --record logs/human [--record-all]
 uv run python -m training.eval.human_report logs/human --out docs/human/<date>.md      # --session STAMP, --top N
 uv run python -m training.eval.showcase_stats --log logs/serve.txt   # server stdout with --log-players: mass, deaths per player
 ```

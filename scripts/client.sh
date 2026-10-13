@@ -3,8 +3,8 @@
 # On NixOS the X11/GL libraries macroquad loads at run time are not on a standard path; they are taken from nixpkgs.
 set -e
 root=$(cd "$(dirname "$0")/.." && pwd)
-bin=$root/target/release/oxidish
-[ -x "$bin" ] || cargo build --release -p oxidish --manifest-path "$root/Cargo.toml"
+bin=$root/target/release/oxidish-client
+[ -x "$bin" ] || cargo build --release -p oxidish-client --manifest-path "$root/Cargo.toml"
 if [ -e /etc/NIXOS ]; then
   libs=$(nix build --no-link --print-out-paths nixpkgs#libx11.out nixpkgs#libxi.out nixpkgs#libGL.out nixpkgs#libxkbcommon.out | sed 's|$|/lib|' | paste -sd:)
   export LD_LIBRARY_PATH=$libs:/run/opengl-driver/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}

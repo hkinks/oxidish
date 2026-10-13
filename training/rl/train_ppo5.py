@@ -3,7 +3,7 @@
     python training/rl/train_ppo5.py --name m7a --init runs/vision/p6/final.pt --ref runs/vision/p6/final.pt --hours 2
 
 Differences to train_ppo2.py:
-  * the learners (and the frozen "hunter" copies) run the hunter reflex inside the env (`oxidish_env.VecEnv(hunter=genes)`,
+  * the learners (and the frozen "hunter" copies) run the hunter reflex inside the env (`oxidish_gym.VecEnv(hunter=genes)`,
     `set_hunter`): while its commit phase is active the env replaces the net's aim / split / eject; `info["hunter"]` marks
     those observations and their policy-gradient and entropy terms are masked out (off-policy: the net did not act);
     the value head still trains on them;
@@ -35,7 +35,7 @@ from common import FIELD, ROOT, pin_cores
 from evalval import load_model
 from model import decode_target
 
-import oxidish_env
+import oxidish_gym
 
 DT = 0.08
 
@@ -156,7 +156,7 @@ def main():
     hunt = not a.no_hunter
     p6net = perm_frozen[-1]
 
-    env = oxidish_env.VecEnv(a.worlds, a.learners, opponents=[], pool=LEAGUE, pool_pick=a.pick, giant_p=a.giant_p,
+    env = oxidish_gym.VecEnv(a.worlds, a.learners, opponents=[], pool=LEAGUE, pool_pick=a.pick, giant_p=a.giant_p,
                          teacher="bots/specs/plan_c34.json", px=256, threads=a.threads, seed=a.seed, warmup=0, label=False,
                          hunter=HUNT_GENES if hunt else None, chaser_p=a.chaser_p)
     n = env.n

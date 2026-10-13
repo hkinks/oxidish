@@ -1,4 +1,4 @@
-//! `ogar serve --record DIR`: recordings of human play for learning from it (off by default).
+//! `oxidish-server serve --record DIR`: recordings of human play for learning from it (off by default).
 //!
 //! Three gzip JSONL files per session, `<kind>-<stamp>.jsonl.gz`:
 //!   events - `eat` (every player cell eaten by another player: tick, eater / victim name, kind

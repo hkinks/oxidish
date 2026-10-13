@@ -5,12 +5,12 @@
 //! f32[B,64,64] logits, `split`, `eject`, `value` f32[B]. A recurrent model (M5, `"gru": N` in its json) has one more input
 //! `h` f32[B,N] (zeros for a new life) and one more output `h_out` f32[B,N]; the caller keeps the state per agent.
 //!
-//! Execution provider: spec `"ep"` or env `OGAR_VISION_EP`:
+//! Execution provider: spec `"ep"` or env `OXIDISH_VISION_EP`:
 //!   `auto` (default)  `cuda`, or `cpu` when CUDA does not load
 //!   `cuda`            CUDA EP with CUDA graphs; the batch is padded to a power of two, one captured graph per size
 //!   `cuda_plain`      CUDA EP, a normal session run per call
 //!   `cpu`             CPU EP (about 18 ms per frame: only for tests); intra-op threads: spec `"threads"` / env
-//!                     `OGAR_VISION_THREADS` (default 1)
+//!                     `OXIDISH_VISION_THREADS` (default 1)
 //! onnxruntime itself is loaded at run time (`runs/vision/ort/onnxruntime*.dll`, see `init_runtime`).
 
 use std::collections::HashMap;
@@ -111,7 +111,7 @@ fn cache() -> &'static Mutex<HashMap<String, Arc<Net>>> {
 
 /// Load the onnxruntime shared library once: `ORT_DYLIB_PATH`, else `onnxruntime.dll` next to the exe, else
 /// `runs/vision/ort/` (relative to the cwd, e.g. the repo root). The CUDA provider needs cuDNN 9 and CUDA 12 runtime
-/// DLLs: directories from `OGAR_DLL_DIRS` (and the repo venv's torch wheel, `.venv/Lib/site-packages/torch/lib`) are
+/// DLLs: directories from `OXIDISH_DLL_DIRS` (and the repo venv's torch wheel, `.venv/Lib/site-packages/torch/lib`) are
 /// put on PATH first.
 fn init_runtime() -> Result<(), String> {
     static INIT: OnceLock<Result<(), String>> = OnceLock::new();
@@ -127,7 +127,7 @@ fn init_runtime() -> Result<(), String> {
         cands.push(std::path::Path::new("runs/vision/ort").join(lib));
         let path = cands.iter().find(|p| p.exists()).ok_or(format!("{lib} not found (set ORT_DYLIB_PATH); tried {cands:?}"))?;
         let path = path.canonicalize().map_err(|e| e.to_string())?;
-        let mut dirs: Vec<std::path::PathBuf> = std::env::var("OGAR_DLL_DIRS").map(|v| std::env::split_paths(&v).collect()).unwrap_or_default();
+        let mut dirs: Vec<std::path::PathBuf> = std::env::var("OXIDISH_DLL_DIRS").map(|v| std::env::split_paths(&v).collect()).unwrap_or_default();
         dirs.push(std::path::PathBuf::from(".venv/Lib/site-packages/torch/lib"));
         let mut paths: Vec<std::path::PathBuf> = dirs.into_iter().filter(|d| d.is_dir()).filter_map(|d| d.canonicalize().ok()).collect();
         paths.extend(std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect::<Vec<_>>()).unwrap_or_default());
@@ -153,7 +153,7 @@ impl Cudart {
     fn load() -> Result<Cudart, String> {
         unsafe {
             let name = if cfg!(windows) { "cudart64_12.dll" } else { "libcudart.so.12" };
-            let lib = libloading::Library::new(name).map_err(|e| format!("{name}: {e} (set OGAR_DLL_DIRS)"))?;
+            let lib = libloading::Library::new(name).map_err(|e| format!("{name}: {e} (set OXIDISH_DLL_DIRS)"))?;
             let memcpy = *lib.get::<unsafe extern "C" fn(*mut CVoid, *const CVoid, usize, i32) -> i32>(b"cudaMemcpy\0").map_err(|e| e.to_string())?;
             let sync = *lib.get::<unsafe extern "C" fn() -> i32>(b"cudaDeviceSynchronize\0").map_err(|e| e.to_string())?;
             Ok(Cudart { _lib: lib, memcpy, sync })

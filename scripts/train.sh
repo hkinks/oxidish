@@ -1,6 +1,6 @@
 #!/bin/bash
 # League PPO with the hunter reflex in the loop (how m7a was trained). usage: scripts/train.sh name [extra args]
-# needs the oxidish_env module (uv run maturin develop --release --uv in training/env) and torch
+# needs the oxidish_gym module (uv run maturin develop --release --uv in training/gym) and torch
 # INIT = the checkpoint to start from (m7a started from p6; train your own first, see docs/training.md)
 n=$1; shift
 init=${INIT:-runs/vision/p6/final.pt}

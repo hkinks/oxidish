@@ -288,7 +288,7 @@ pub struct World {
     pub eaten: HashMap<u32, u32>,
     pub track_eats: bool,
     pub kill_log: Vec<KillEvent>,
-    /// opt-in (`ogar serve --record`): rich eat events for recordings; drained by the recorder
+    /// opt-in (`oxidish-server serve --record`): rich eat events for recordings; drained by the recorder
     pub record_eats: bool,
     pub eat_events: Vec<EatEvent>,
     shooter: i32,
