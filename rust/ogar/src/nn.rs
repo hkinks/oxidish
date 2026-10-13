@@ -6,7 +6,8 @@
 //! `h` f32[B,N] (zeros for a new life) and one more output `h_out` f32[B,N]; the caller keeps the state per agent.
 //!
 //! Execution provider: spec `"ep"` or env `OGAR_VISION_EP`:
-//!   `cuda` (default)  CUDA EP with CUDA graphs; the batch is padded to a power of two, one captured graph per size
+//!   `auto` (default)  `cuda`, or `cpu` when CUDA does not load
+//!   `cuda`            CUDA EP with CUDA graphs; the batch is padded to a power of two, one captured graph per size
 //!   `cuda_plain`      CUDA EP, a normal session run per call
 //!   `cpu`             CPU EP (about 18 ms per frame: only for tests); intra-op threads: spec `"threads"` / env
 //!                     `OGAR_VISION_THREADS` (default 1)
@@ -151,7 +152,8 @@ struct Cudart {
 impl Cudart {
     fn load() -> Result<Cudart, String> {
         unsafe {
-            let lib = libloading::Library::new("cudart64_12.dll").map_err(|e| format!("cudart64_12.dll: {e} (set OGAR_DLL_DIRS)"))?;
+            let name = if cfg!(windows) { "cudart64_12.dll" } else { "libcudart.so.12" };
+            let lib = libloading::Library::new(name).map_err(|e| format!("{name}: {e} (set OGAR_DLL_DIRS)"))?;
             let memcpy = *lib.get::<unsafe extern "C" fn(*mut CVoid, *const CVoid, usize, i32) -> i32>(b"cudaMemcpy\0").map_err(|e| e.to_string())?;
             let sync = *lib.get::<unsafe extern "C" fn() -> i32>(b"cudaDeviceSynchronize\0").map_err(|e| e.to_string())?;
             Ok(Cudart { _lib: lib, memcpy, sync })
@@ -303,18 +305,26 @@ impl Net {
         let meta = std::fs::read_to_string(std::path::Path::new(path).with_extension("json")).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
         let rec = meta.as_ref().and_then(|v| v["cfg"]["gru"].as_u64()).unwrap_or(0) as usize;
         let e = |e: &dyn std::fmt::Display| format!("{path}: {e}");
-        let backend = match ep {
-            "cpu" => Backend::Plain(Mutex::new(
+        let cpu = || -> Result<Backend, String> {
+            Ok(Backend::Plain(Mutex::new(
                 Session::builder().map_err(|x| e(&x))?.with_intra_threads(threads).map_err(|x| e(&x))?.commit_from_file(path).map_err(|x| e(&x))?,
-            )),
+            )))
+        };
+        let cuda = || -> Result<Backend, String> {
+            let cudart = Cudart::load()?;
+            let mut runs = HashMap::new();
+            runs.insert(2, GraphRun::new(path, threads, 2, rec, &cudart)?); // fail early if CUDA does not work
+            Ok(Backend::Graph(Mutex::new(Graphs { path: path.to_string(), threads, rec, runs, cudart })))
+        };
+        let backend = match ep {
+            "cpu" => cpu()?,
             "cuda_plain" => Backend::Plain(Mutex::new(cuda_session(path, threads, false)?)),
-            "cuda" => {
-                let cudart = Cudart::load()?;
-                let mut runs = HashMap::new();
-                runs.insert(2, GraphRun::new(path, threads, 2, rec, &cudart)?); // fail early if CUDA does not work
-                Backend::Graph(Mutex::new(Graphs { path: path.to_string(), threads, rec, runs, cudart }))
-            }
-            _ => return Err(format!("unknown execution provider {ep:?} (cpu | cuda | cuda_plain)")),
+            "cuda" => cuda()?,
+            "auto" => cuda().or_else(|err| {
+                eprintln!("[vision] CUDA unavailable ({err}); running {path} on the CPU");
+                cpu()
+            })?,
+            _ => return Err(format!("unknown execution provider {ep:?} (auto | cpu | cuda | cuda_plain)")),
         };
         let split_thr = std::fs::read_to_string(std::path::Path::new(path).with_extension("json"))
             .ok()

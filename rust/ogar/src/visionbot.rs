@@ -39,7 +39,7 @@ pub struct VisionBot {
 impl VisionBot {
     pub fn from_spec(spec: &Value) -> Result<VisionBot, String> {
         let model = spec["model"].as_str().ok_or("vision spec needs \"model\"")?;
-        let ep = spec["ep"].as_str().map(String::from).or_else(|| std::env::var("OGAR_VISION_EP").ok()).unwrap_or_else(|| "cuda".into());
+        let ep = spec["ep"].as_str().map(String::from).or_else(|| std::env::var("OGAR_VISION_EP").ok()).unwrap_or_else(|| "auto".into());
         let threads = spec["threads"]
             .as_u64()
             .map(|t| t as usize)
