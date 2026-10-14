@@ -6,6 +6,7 @@ mod control;
 mod menu;
 mod net;
 mod settings;
+mod video;
 mod world;
 
 use macroquad::prelude::*;
@@ -36,10 +37,13 @@ struct Args {
     screenshot: Option<String>,
     shot_at: f64,
     font: Option<String>,
+    video: Option<String>,
+    video_secs: f64,
+    follow: Option<String>,
 }
 
 fn parse_args() -> Args {
-    let mut a = Args { server: None, name: None, spectate: false, whole_map: false, settings_open: false, control_open: false, zoom: None, selftest: false, screenshot: None, shot_at: 9.0, font: None };
+    let mut a = Args { server: None, name: None, spectate: false, whole_map: false, settings_open: false, control_open: false, zoom: None, selftest: false, screenshot: None, shot_at: 9.0, font: None, video: None, video_secs: 30.0, follow: None };
     let mut it = std::env::args().skip(1);
     while let Some(k) = it.next() {
         match k.as_str() {
@@ -51,6 +55,10 @@ fn parse_args() -> Args {
                 it.next();
             }
             "--spectate" => a.spectate = true,
+            "--follow" => {
+                a.spectate = true;
+                a.follow = it.next();
+            }
             "--whole-map" => {
                 a.spectate = true;
                 a.whole_map = true;
@@ -60,6 +68,8 @@ fn parse_args() -> Args {
             "--zoom" => a.zoom = it.next().and_then(|v| v.parse().ok()),
             "--screenshot" => a.screenshot = it.next(),
             "--font" => a.font = it.next(),
+            "--video" => a.video = it.next(),
+            "--video-secs" => a.video_secs = it.next().and_then(|v| v.parse().ok()).unwrap_or(30.0),
             "--shot-at" => a.shot_at = it.next().and_then(|v| v.parse().ok()).unwrap_or(9.0),
             "-h" | "--help" => {}
             other => eprintln!("ignoring unknown argument {other}"),
@@ -75,6 +85,7 @@ usage: oxidish-client [options]
   --name NICK           nickname
   --spectate            start spectating (follows the largest player)
   --whole-map           start spectating the whole map
+  --follow NAME         start spectating the player whose name starts with NAME
   --zoom Z              fixed zoom instead of automatic
   --font NAME|FILE      ubuntu (default), nunito, inter, quicksand, or a .ttf file
   --config PATH         settings file (default: %APPDATA%\\oxidish\\settings.json or ~/.config/oxidish/settings.json)
@@ -84,6 +95,9 @@ usage: oxidish-client [options]
   --screenshot FILE     save a screenshot after --shot-at seconds (default 9) and quit; the scripted bot
                         plays meanwhile (or spectates with --spectate / --whole-map)
   --shot-at SECS
+  --video FILE          record --video-secs seconds (default 30) at 25 fps into FILE (e.g. .mp4, needs ffmpeg),
+                        starting after --shot-at seconds, then quit; use with --spectate or --whole-map
+  --video-secs SECS
   -h, --help            this help
 
 keys: mouse steer, Space split, W eject, Tab spectate, Q follow / whole map, Z auto zoom, M +500 mass,
@@ -102,8 +116,11 @@ fn window_conf() -> Conf {
         window_resizable: true,
         sample_count: 4,
         platform: macroquad::miniquad::conf::Platform {
-            // vsync is on by default (caps FPS at the monitor refresh); --novsync uncaps it
-            swap_interval: if std::env::args().any(|a| a == "--novsync") || !Settings::load().vsync { Some(0) } else { None },
+            // vsync is on by default (caps FPS at the monitor refresh); --novsync uncaps it. --video turns it off too:
+            // a compositor throttles vsync for a window that is not visible, and the recording would stall
+            swap_interval: if std::env::args().any(|a| a == "--novsync" || a == "--video") || !Settings::load().vsync { Some(0) } else { None },
+            // X11 window class, so window managers can match it (e.g. a Hyprland rule placing it on a workspace)
+            linux_wm_class: "oxidish-client",
             ..Default::default()
         },
         ..Default::default()
@@ -305,6 +322,8 @@ struct Game {
     fonts: Fonts,
     whole_map: bool,
     following: Option<String>,
+    /// --follow: the name prefix spectating follows instead of the largest player
+    follow_start: Option<String>,
     set: Settings,
     saved: Settings,
     settings_open: bool,
@@ -334,11 +353,11 @@ impl Game {
         self.mode = Mode::Spectating;
         self.had_cells = false;
         self.whole_map = false;   // the server's free roam is off after a spawn
-        self.following = None;
-        let mut auto = vec![0xCA];  // follow the largest player (arena extension: name prefix, "" = auto)
-        auto.extend_from_slice(b"");
-        self.send(auto);
-        if self.set.spectate_whole_map {
+        self.following = self.follow_start.clone();
+        let mut follow = vec![0xCA];  // follow by name prefix (arena extension; "" = the largest player)
+        follow.extend_from_slice(self.following.as_deref().unwrap_or("").as_bytes());
+        self.send(follow);
+        if self.set.spectate_whole_map && self.following.is_none() {
             self.send(vec![18]); // Q: the server's free roam = the whole map
             self.send(vec![19]);
             self.whole_map = true;
@@ -794,6 +813,7 @@ async fn main() {
         fonts: Fonts::load(&set.font),
         whole_map: false,
         following: None,
+        follow_start: args.follow.clone(),
         saved: set.clone(),
         set,
         settings_open: args.settings_open,
@@ -808,7 +828,7 @@ async fn main() {
         game.cam.manual = true;
         game.cam.manual_z = z;
     }
-    let mut auto = if args.selftest || args.screenshot.is_some() {
+    let mut auto = if args.selftest || args.screenshot.is_some() || args.video.is_some() {
         if game.nick.is_empty() {
             game.nick = "selftest".into();
         }
@@ -816,8 +836,10 @@ async fn main() {
     } else {
         None
     };
-    let vsync_on = game.set.vsync && !std::env::args().any(|a| a == "--novsync");
+    let vsync_on = game.set.vsync && !std::env::args().any(|a| a == "--novsync" || a == "--video");
     let mut shot_pending: Option<String> = None;
+    let mut video: Option<video::Video> = None;
+    let video_from = get_time() + args.shot_at;
     loop {
         let now = get_time();
         let dt = get_frame_time() as f64;
@@ -873,6 +895,16 @@ async fn main() {
             println!("[auto] screenshot saved to {path}");
             if !args.selftest {
                 break;
+            }
+        }
+        if let Some(path) = &args.video {
+            if now >= video_from {
+                let v = video.get_or_insert_with(|| video::Video::start(path, now));
+                if v.frame(now) && now - v.t0 >= args.video_secs {
+                    video.take().unwrap().finish();
+                    println!("[auto] video saved to {path}");
+                    break;
+                }
             }
         }
         if auto.as_ref().map_or(false, |a| a.finished) {
