@@ -5,10 +5,10 @@ plays from raw pixels, the tools to test and train your own bot, and a native cl
 
 The server is a Rust port of [MultiOgar](https://github.com/agarian-2/MultiOgar), the open-source agar.io server.
 It runs bots inside the game loop, so headless matches go hundreds of times faster than real time. The strongest bot
-sees only grayscale frames like the one below and decides where to move. Against bots it never trained against, it
+sees only grayscale frames of the game and decides where to move. Against bots it never trained against, it
 tops the leaderboard 64% of the time. A good human still beats it.
 
-![What the vision bot sees: its own cells in white, other players in gray, viruses as spiky outlines](docs/img/cnn-view.png)
+![The whole map in the client: vision bots hold the top of the leaderboard](docs/img/spectate.png)
 
 ## Quick start
 
@@ -73,9 +73,12 @@ All four use the **hunter**: when a big player bursts on a virus, it judges whic
 and splits onto them only when that is safe. It is the one skill that improved every bot type.
 
 **The vision bot** gets two grayscale views from the server (a 256 px local view and a 128 px wide view, each also 4
-ticks earlier, to see motion) and nothing else: no mass numbers, no threat flags. The net outputs a heat map over the
-local view; the brightest pixel is where it moves. It also decides on split and eject, and acts every 80 ms. It was
-trained in three steps:
+ticks earlier, to see motion) and nothing else: no mass numbers, no threat flags.
+
+![What the vision bot sees: its own cells in white, other players in gray, viruses as spiky outlines](docs/img/cnn-view.png)
+
+The net outputs a heat map over the local view; the brightest pixel is where it moves. It also decides on split and
+eject, and acts every 80 ms. It was trained in three steps:
 
 1. **Imitation:** copy the planner's moves, then let the net drive while the planner corrects it (DAgger).
 2. **League PPO:** reinforcement learning, rewarded for growing and for being #1, against rule bots, the planner and
@@ -146,7 +149,7 @@ of headless games. [docs/training.md](docs/training.md) shows how, and covers th
 - training faster than real time: unthrottled servers, gene search and the vision pipeline (`scripts/train.sh`,
   `scripts/export.sh`).
 
-## FAQ
+## Notes
 
 - **Does it work on the real agar.io?** No. The bots are for local servers only.
 - **Do I need a GPU?** Not to play or evaluate. Training the vision nets does.
